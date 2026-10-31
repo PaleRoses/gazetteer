@@ -11,7 +11,7 @@ export const signalKind = z.enum(['off-route', 'slow-steaming', 'stationary-outs
 
 export const author = z.discriminatedUnion('role', [
   z.object({ role: z.literal('port'), id: portId }),
-  z.object({ role: z.literal('ship'), id: z.string().min(1), vessel: z.string().min(1) }),
+  z.object({ role: z.literal('ship'), id: z.string().min(1), vessel: z.string().min(1), /** The mind aboard that speaks for the ship; absent only on messages posted before ships were named. */ agent: z.string().min(1).optional() }),
 ]);
 
 const envelope = { id: z.string().min(1), author, at: instant, summary: z.string().min(1).max(280) };

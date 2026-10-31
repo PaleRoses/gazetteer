@@ -13,14 +13,20 @@ const readings: Readonly<Record<string, string>> = {
 };
 
 /** Every number in a ship's own summary is read from the message it summarises; constants appear only as words. */
-export const observationSummary = (vessel: string, titles: readonly string[], measured: NonNullable<ShipObservation['measured']>, nearPort: PortId | null): string =>
-  clip(`${vessel}: ${titles.join('; ')}${nearPort ? ` near ${portName(nearPort)}` : ''}. ${Object.entries(readings).flatMap(([key, label]) => {
+const opening = (agent: string, vessel: string): string => `${agent}, aboard ${vessel}`;
+
+export const observationSummary = (agent: string, vessel: string, titles: readonly string[], measured: NonNullable<ShipObservation['measured']>, nearPort: PortId | null): string =>
+  clip(`${opening(agent, vessel)}: ${titles.join('; ')}${nearPort ? ` near ${portName(nearPort)}` : ''}. ${Object.entries(readings).flatMap(([key, label]) => {
     const value = measured[key];
     return typeof value === 'number' ? [`${value} ${label}`] : [];
   }).join(', ')}.`.replace(/ \.$/, '.'));
 
-export const ruleAssessmentSummary = (vessel: string, message: Pick<ShipAssessment, 'risk' | 'eta' | 'delayHours' | 'basis'>, reasons: readonly string[]): string =>
-  clip(`${vessel}, by rule: ${message.risk}. ${reasons.join('; ')}.${message.basis ? ` ${message.basis.anchored} anchored at ${portName(message.basis.portId)}, ${message.delayHours?.likely ?? 0} h likely queue delay.` : ''} ETA ${utc(message.eta)}.`);
+export const ruleAssessmentSummary = (agent: string, vessel: string, message: Pick<ShipAssessment, 'risk' | 'eta' | 'delayHours' | 'basis'>, reasons: readonly string[]): string =>
+  clip(`${opening(agent, vessel)}, by rule: ${message.risk}. ${reasons.join('; ')}.${message.basis ? ` ${message.basis.anchored} anchored at ${portName(message.basis.portId)}, ${message.delayHours?.likely ?? 0} h likely queue delay.` : ''} ETA ${utc(message.eta)}.`);
 
-export const etaSummary = (vessel: string, portId: PortId, eta: string, previousEta: string): string =>
-  clip(`${vessel} expects ${portName(portId)} at ${utc(eta)}${eta === previousEta ? '' : `, from ${utc(previousEta)}`}.`);
+export const etaSummary = (agent: string, vessel: string, portId: PortId, eta: string, previousEta: string): string =>
+  clip(`${opening(agent, vessel)} expects ${portName(portId)} at ${utc(eta)}${eta === previousEta ? '' : `, from ${utc(previousEta)}`}.`);
+
+/** The ship introduces what its model, or the arithmetic fallback, concluded; the prose after the colon is the model's own and is labelled by the assessment's method. */
+export const assessedSummary = (agent: string, vessel: string, message: Pick<ShipAssessment, 'risk' | 'eta'>, change: string): string =>
+  clip(`${opening(agent, vessel)}: ${message.risk}, ETA ${utc(message.eta)}. ${change}`);

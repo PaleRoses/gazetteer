@@ -8,6 +8,8 @@ import type { BoardMessage } from '../../../core/board';
 import type { ShipBoardMemory } from './board';
 import type { Reactions } from './react';
 import { think } from './think';
+import { demoShipments } from '../../../core/demo';
+import { named } from '../../../core/names';
 import type { TelemetryState } from './watch';
 import { mmsiPattern } from '../../telemetry/telemetry';
 import { telemetrySourceFromEnv } from '../../telemetry/source';
@@ -36,7 +38,7 @@ export class ShipmentAgent extends Actor {
 
   async resume(): Promise<void> {
     if (!this.state) return;
-    this.state = { ...this.state, synced: false };
+    this.state = { ...this.state, shipment: named(this.state.shipment, demoShipments().map(item => item.id)), synced: false };
     this.nextCheckAt = this.nextCheckAt ?? Date.now();
     this.alarm.set(this.nextCheckAt);
   }

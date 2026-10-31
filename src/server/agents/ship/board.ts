@@ -9,7 +9,7 @@ import type { BoardEvidence } from '../../assessment/prompt';
 import { describeError, type LonLat } from '../../telemetry/telemetry';
 import type { Situation } from '../../telemetry/watcher';
 import type { RiskFloor } from './risk-floor';
-import { clip, etaSummary, observationSummary, ruleAssessmentSummary } from './voice';
+import { assessedSummary, etaSummary, observationSummary, ruleAssessmentSummary } from './voice';
 
 /** A ship counts a port as "near" when it is inside the approach zone where a queue forms. Declared, not tuned. */
 export const approachKm = 150;
@@ -57,8 +57,8 @@ const observationOf = ({ shipment, situation, now }: DecisionInput, memory: Ship
   const measured = Object.assign({}, ...(shipment.signals ?? []).map(signal => signal.measured)) as NonNullable<ShipObservation['measured']>;
   const nearPort = nearestPortId(telemetry.position);
   const message: ShipObservation = {
-    id: `obs:${situation.id}`, kind: 'ship.observation', author: { role: 'ship', id: shipment.id, vessel: shipment.vessel }, at: now,
-    summary: observationSummary(shipment.vessel, shipment.signals?.map(signal => signal.title) ?? signals, measured, nearPort),
+    id: `obs:${situation.id}`, kind: 'ship.observation', author: { role: 'ship', id: shipment.id, vessel: shipment.vessel, agent: shipment.agent }, at: now,
+    summary: observationSummary(shipment.agent, shipment.vessel, shipment.signals?.map(signal => signal.title) ?? signals, measured, nearPort),
     shipmentId: shipment.id, signals, measured, position: [telemetry.position[0], telemetry.position[1]], nearPort, provider: telemetry.provider, observedAt: telemetry.observedAt,
   };
   return [{ message, remember: current => ({ ...current, observed: situation.id }) }];
@@ -72,22 +72,22 @@ const assessmentOf = ({ shipment, situation, now, society = noSociety }: Decisio
   const rule = !modelled ? society.floor : null;
   const queue = rule ? society.queues[0] : undefined;
   const base = {
-    id: `asm:${shipment.id}:${shipment.eta}:${shipment.risk}:${situation?.id ?? 'none'}`, kind: 'ship.assessment' as const, author: { role: 'ship' as const, id: shipment.id, vessel: shipment.vessel }, at: now,
-    summary: clip(`${shipment.reference} ${shipment.vessel}: ${shipment.risk}, ETA ${shipment.eta.slice(0, 16)}Z (+${shipment.delayHours}h). ${shipment.change}`),
+    id: `asm:${shipment.id}:${shipment.eta}:${shipment.risk}:${situation?.id ?? 'none'}`, kind: 'ship.assessment' as const, author: { role: 'ship' as const, id: shipment.id, vessel: shipment.vessel, agent: shipment.agent }, at: now,
+    summary: assessedSummary(shipment.agent, shipment.vessel, { risk: shipment.risk, eta: shipment.eta }, shipment.change),
     shipmentId: shipment.id, risk: shipment.risk, eta: shipment.eta, ports: remainingCalls(shipment).map(call => call.portId),
   };
   const message: ShipAssessment = rule
     ? { ...base, summary: '', delayHours: queue?.hours ?? null, confidence: null, method: 'rule-based', citedEvidence: [...rule.citedEvidence], ...(queue ? { basis: { rule: queue.rule, portId: queue.portId, anchored: queue.anchored, serviceRate: queue.serviceRate } } : {}) }
     : { ...base, delayHours: record?.delayHours ?? null, confidence: record ? record.confidence : null, method: record?.method ?? 'deterministic', citedEvidence: [...(record?.citedEvidence ?? [])] };
-  const spoken = rule ? { ...message, summary: ruleAssessmentSummary(shipment.vessel, message, rule.reasons) } : message;
+  const spoken = rule ? { ...message, summary: ruleAssessmentSummary(shipment.agent, shipment.vessel, message, rule.reasons) } : message;
   return [{ message: spoken, remember: current => ({ ...current, assessed: { risk: shipment.risk, eta: shipment.eta } }) }];
 };
 
 const etasOf = ({ shipment, situation, now }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] =>
   remainingCalls(shipment).flatMap(({ portId, eta }) => memory.etas[portId] === eta ? [] : [{
     message: {
-      id: `eta:${shipment.id}:${portId}:${eta}`, kind: 'ship.eta' as const, author: { role: 'ship' as const, id: shipment.id, vessel: shipment.vessel }, at: now,
-      summary: etaSummary(shipment.vessel, portId, eta, memory.etas[portId] ?? afterHours(eta, -shipment.delayHours)), shipmentId: shipment.id, portId, eta, ...(memory.etas[portId] ? { citedEvidence: [`asm:${shipment.id}:${shipment.eta}:${shipment.risk}:${situation?.id ?? 'none'}`] } : {}), previousEta: memory.etas[portId] ?? afterHours(eta, -shipment.delayHours),
+      id: `eta:${shipment.id}:${portId}:${eta}`, kind: 'ship.eta' as const, author: { role: 'ship' as const, id: shipment.id, vessel: shipment.vessel, agent: shipment.agent }, at: now,
+      summary: etaSummary(shipment.agent, shipment.vessel, portId, eta, memory.etas[portId] ?? afterHours(eta, -shipment.delayHours)), shipmentId: shipment.id, portId, eta, ...(memory.etas[portId] ? { citedEvidence: [`asm:${shipment.id}:${shipment.eta}:${shipment.risk}:${situation?.id ?? 'none'}`] } : {}), previousEta: memory.etas[portId] ?? afterHours(eta, -shipment.delayHours),
     },
     remember: (current: ShipBoardMemory) => ({ ...current, etas: { ...current.etas, [portId]: eta } }),
   }]);

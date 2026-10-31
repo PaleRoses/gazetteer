@@ -8,7 +8,7 @@ type EvidenceBody = Readonly<{ id: string; title: string; detail: string; observ
 export type Evidence = EvidenceBody & (Readonly<{ source: 'simulation' }> | Readonly<{ source: 'live'; provider: string; url: string }>);
 type Milestone = Readonly<{ label: string; at: string; status: 'complete' | 'current' | 'upcoming' }>;
 export type Shipment = Readonly<{
-  id: string; vessel: string; reference: string; cargo: string; containers: number;
+  id: string; vessel: string; /** The mind aboard: named once, from the ship's place in the fleet, and never renamed. */ agent: string; reference: string; cargo: string; containers: number;
   origin: PortId; destination: PortId; via: readonly PortId[];
   coordinates: readonly [number, number]; route: readonly (readonly [number, number])[];
   baselineEta: string; eta: string; risk: Risk; delayHours: number;

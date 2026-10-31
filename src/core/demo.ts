@@ -1,3 +1,4 @@
+import { shipMindFor } from './names.js';
 import { portById, ports, type PortId } from './ports.js';
 import { positionAlong, routeLengthKm, sharedLengthKm, voyageRoute } from './routes.js';
 import type { Disruption, Shipment } from './types.js';
@@ -44,9 +45,11 @@ const voyages: readonly Voyage[] = [
 ];
 
 
+type Unnamed = Omit<Shipment, 'agent'>;
+
 export function demoShipments(now: Date = new Date()): readonly Shipment[] {
   const at = now.toISOString();
-  const voyage = (shipment: Pick<Shipment, 'id' | 'vessel' | 'reference' | 'cargo' | 'containers' | 'origin' | 'destination' | 'via' | 'coordinates' | 'route'>, arrivalHours: number, departedHoursAgo = 96): Shipment => ({
+  const voyage = (shipment: Pick<Shipment, 'id' | 'vessel' | 'reference' | 'cargo' | 'containers' | 'origin' | 'destination' | 'via' | 'coordinates' | 'route'>, arrivalHours: number, departedHoursAgo = 96): Unnamed => ({
     ...shipment, baselineEta: afterHours(at, arrivalHours), eta: afterHours(at, arrivalHours),
     risk: 'on-track', delayHours: 0, change: 'No change to the arrival estimate.', action: null,
     milestones: [
@@ -56,7 +59,7 @@ export function demoShipments(now: Date = new Date()): readonly Shipment[] {
     ], evidence: [], appliedDisruptions: [],
   });
   /** A table row placed on its lane: the voyage takes the lane's length at the row's service speed, so the ETA follows from geometry. */
-  const placed = (row: Voyage): Shipment => {
+  const placed = (row: Voyage): Unnamed => {
     const route = voyageRoute({ ...row, via: [] }) ?? [];
     const kmPerHour = row.knots * kmPerNauticalMile;
     const durationHours = routeLengthKm(route) / kmPerHour;
@@ -72,7 +75,7 @@ export function demoShipments(now: Date = new Date()): readonly Shipment[] {
     voyage({ id: 'gz-1044', vessel: 'Atlas Venture', reference: 'GZ-1044', cargo: 'Industrial machinery', containers: 12, origin: 'rotterdam', destination: 'singapore', via: [], coordinates: [75, 3], route: [[4.48,51.92],[-5,48],[-15,32],[-12,7],[12,-28],[22,-36],[58,-12],[75,3],[103.82,1.26]] }, 120),
     voyage({ id: 'gz-1045', vessel: 'Northern Passage', reference: 'GZ-1045', cargo: 'Textiles & apparel', containers: 32, origin: 'los-angeles', destination: 'shanghai', via: [], coordinates: [-150, 32], route: [[-118.26,33.74],[-150,32],[-175,30],[180,30],[155,28],[130,25],[121.5,31.2]] }, 240),
     ...voyages.map(placed),
-  ];
+  ].map((shipment, index): Shipment => ({ ...shipment, agent: shipMindFor(index) }));
 }
 
 /** Synthetic exposure model: only upcoming calls can be affected; evidence IDs are idempotency keys. */

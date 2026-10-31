@@ -29,6 +29,17 @@ describe('the society on a fake clock, model off', () => {
     expect(ships.size).toBeGreaterThan(0);
   });
 
+  test('every ship message is spoken by the ship\'s own mind, and says so first', async () => {
+    const { board, ships } = await runSociety();
+    const spoken = board.filter(message => message.author.role === 'ship');
+    expect(spoken.length).toBeGreaterThan(0);
+    spoken.forEach(message => {
+      const mind = message.author.role === 'ship' ? ships.get(message.author.id)!.shipment.agent : '';
+      expect(message.author.role === 'ship' ? message.author.agent : undefined).toBe(mind);
+      expect(message.summary.startsWith(`${mind}, aboard ${message.author.role === 'ship' ? message.author.vessel : ''}`)).toBe(true);
+    });
+  });
+
   test('the head of the queue is delayed by its own measured stop with its ETA untouched; the ship behind it is held by the queue ahead', async () => {
     const { board, ships } = await runSociety();
     const stops = board.filter((message): message is ShipObservation => message.kind === 'ship.observation' && message.signals.includes('stationary-outside-port'));
