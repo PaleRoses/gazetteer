@@ -20,7 +20,7 @@ export type Subject = Readonly<{ id: string; basis: Basis; label: string; eviden
 export type Provenanced = Readonly<{ assessment: Assessment; model: string; assessedAt: string }>;
 
 const severity: Readonly<Record<Risk, number>> = { 'on-track': 0, watch: 1, delayed: 2 };
-const worse = (a: Risk, b: Risk): Risk => severity[a] >= severity[b] ? a : b;
+export const worse = (a: Risk, b: Risk): Risk => severity[a] >= severity[b] ? a : b;
 const portName = (id: string): string => ports.find(port => port.id === id)?.name ?? id;
 const record = (shipment: AssessedShipment, entry: AssessmentRecord): readonly AssessmentRecord[] => [...(shipment.assessments ?? []), entry];
 

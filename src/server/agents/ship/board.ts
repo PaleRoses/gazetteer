@@ -1,6 +1,6 @@
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import { lineString, point } from '@turf/helpers';
-import type { BoardMessage, ShipAssessment, ShipObservation } from '../../../core/board';
+import type { BoardMessage, QueueDrainBasis, ShipAssessment, ShipObservation } from '../../../core/board';
 import { ports, type PortId } from '../../../core/ports';
 import { distanceKm, voyageRoute } from '../../../core/routes';
 import type { RelayOutcome, Risk } from '../../../core/types';
@@ -8,6 +8,8 @@ import type { AssessedShipment } from '../../assessment/apply';
 import type { BoardEvidence } from '../../assessment/prompt';
 import { describeError, type LonLat } from '../../telemetry/telemetry';
 import type { Situation } from '../../telemetry/watcher';
+import type { RiskFloor } from './risk-floor';
+import { clip, etaSummary, observationSummary, ruleAssessmentSummary } from './voice';
 
 /** A ship counts a port as "near" when it is inside the approach zone where a queue forms. Declared, not tuned. */
 export const approachKm = 150;
@@ -23,7 +25,6 @@ export const emptyBoardMemory: ShipBoardMemory = { observed: null, assessed: nul
 /** A message to post and what the ship may remember once the post is acknowledged. A failed post leaves the memory alone, so the next alarm decides the same thing again with the same id. */
 export type Outbound = Readonly<{ message: BoardMessage; remember: (memory: ShipBoardMemory) => ShipBoardMemory }>;
 
-const clip = (text: string): string => text.length <= 280 ? text : `${text.slice(0, 277)}...`;
 const afterHours = (at: string, hours: number): string => new Date(Date.parse(at) + hours * 3_600_000).toISOString();
 
 const nearestPortId = (position: LonLat): PortId | null =>
@@ -43,39 +44,50 @@ export function remainingCalls(shipment: AssessedShipment): readonly Readonly<{ 
   ];
 }
 
-export type DecisionInput = Readonly<{ shipment: AssessedShipment; situation: Situation | null; now: string }>;
+/** What the ship concluded from the board this cycle: the rule-based floor, the queue estimates it moved, and every board message it relied on. */
+export type Society = Readonly<{ floor: RiskFloor | null; queues: readonly Readonly<QueueDrainBasis & { bulletinId: string; hours: Readonly<{ low: number; likely: number; high: number }> }>[]}>;
+export const noSociety: Society = { floor: null, queues: [] };
+export type DecisionInput = Readonly<{ shipment: AssessedShipment; situation: Situation | null; now: string; society?: Society }>;
 
 const observationOf = ({ shipment, situation, now }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] => {
   const telemetry = shipment.telemetry;
   if (!situation || !telemetry || situation.id === memory.observed) return [];
   const active = shipment.signals?.map(signal => signal.kind) ?? [];
   const signals = [...new Set(active.length ? active : situation.kinds)];
+  const measured = Object.assign({}, ...(shipment.signals ?? []).map(signal => signal.measured)) as NonNullable<ShipObservation['measured']>;
+  const nearPort = nearestPortId(telemetry.position);
   const message: ShipObservation = {
     id: `obs:${situation.id}`, kind: 'ship.observation', author: { role: 'ship', id: shipment.id, vessel: shipment.vessel }, at: now,
-    summary: clip(`${shipment.vessel}: ${shipment.signals?.map(signal => signal.title).join('; ') || signals.join(', ')}.`),
-    shipmentId: shipment.id, signals, position: [telemetry.position[0], telemetry.position[1]], nearPort: nearestPortId(telemetry.position), provider: telemetry.provider, observedAt: telemetry.observedAt,
+    summary: observationSummary(shipment.vessel, shipment.signals?.map(signal => signal.title) ?? signals, measured, nearPort),
+    shipmentId: shipment.id, signals, measured, position: [telemetry.position[0], telemetry.position[1]], nearPort, provider: telemetry.provider, observedAt: telemetry.observedAt,
   };
   return [{ message, remember: current => ({ ...current, observed: situation.id }) }];
 };
 
-const assessmentOf = ({ shipment, now }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] => {
+const assessmentOf = ({ shipment, situation, now, society = noSociety }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] => {
   const known = memory.assessed ?? { risk: 'on-track' as Risk, eta: shipment.baselineEta };
   if (known.risk === shipment.risk && known.eta === shipment.eta) return [];
   const record = shipment.assessments?.[shipment.assessments.length - 1];
-  const message: ShipAssessment = {
-    id: `asm:${shipment.id}:${shipment.eta}:${shipment.risk}`, kind: 'ship.assessment', author: { role: 'ship', id: shipment.id, vessel: shipment.vessel }, at: now,
+  const modelled = record?.method === 'ai-assessed' && (!situation || Date.parse(record.assessedAt) >= Date.parse(situation.startedAt));
+  const rule = !modelled ? society.floor : null;
+  const queue = rule ? society.queues[0] : undefined;
+  const base = {
+    id: `asm:${shipment.id}:${shipment.eta}:${shipment.risk}:${situation?.id ?? 'none'}`, kind: 'ship.assessment' as const, author: { role: 'ship' as const, id: shipment.id, vessel: shipment.vessel }, at: now,
     summary: clip(`${shipment.reference} ${shipment.vessel}: ${shipment.risk}, ETA ${shipment.eta.slice(0, 16)}Z (+${shipment.delayHours}h). ${shipment.change}`),
-    shipmentId: shipment.id, risk: shipment.risk, eta: shipment.eta, delayHours: record?.delayHours ?? null, confidence: record?.confidence ?? 0,
-    method: record?.method ?? 'deterministic', citedEvidence: [...(record?.citedEvidence ?? [])], ports: remainingCalls(shipment).map(call => call.portId),
+    shipmentId: shipment.id, risk: shipment.risk, eta: shipment.eta, ports: remainingCalls(shipment).map(call => call.portId),
   };
-  return [{ message, remember: current => ({ ...current, assessed: { risk: shipment.risk, eta: shipment.eta } }) }];
+  const message: ShipAssessment = rule
+    ? { ...base, summary: '', delayHours: queue?.hours ?? null, confidence: null, method: 'rule-based', citedEvidence: [...rule.citedEvidence], ...(queue ? { basis: { rule: queue.rule, portId: queue.portId, anchored: queue.anchored, serviceRate: queue.serviceRate } } : {}) }
+    : { ...base, delayHours: record?.delayHours ?? null, confidence: record ? record.confidence : null, method: record?.method ?? 'deterministic', citedEvidence: [...(record?.citedEvidence ?? [])] };
+  const spoken = rule ? { ...message, summary: ruleAssessmentSummary(shipment.vessel, message, rule.reasons) } : message;
+  return [{ message: spoken, remember: current => ({ ...current, assessed: { risk: shipment.risk, eta: shipment.eta } }) }];
 };
 
-const etasOf = ({ shipment, now }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] =>
+const etasOf = ({ shipment, situation, now }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] =>
   remainingCalls(shipment).flatMap(({ portId, eta }) => memory.etas[portId] === eta ? [] : [{
     message: {
       id: `eta:${shipment.id}:${portId}:${eta}`, kind: 'ship.eta' as const, author: { role: 'ship' as const, id: shipment.id, vessel: shipment.vessel }, at: now,
-      summary: clip(`${shipment.vessel} expects ${portId} at ${eta.slice(0, 16)}Z.`), shipmentId: shipment.id, portId, eta, previousEta: memory.etas[portId] ?? afterHours(eta, -shipment.delayHours),
+      summary: etaSummary(shipment.vessel, portId, eta, memory.etas[portId] ?? afterHours(eta, -shipment.delayHours)), shipmentId: shipment.id, portId, eta, ...(memory.etas[portId] ? { citedEvidence: [`asm:${shipment.id}:${shipment.eta}:${shipment.risk}:${situation?.id ?? 'none'}`] } : {}), previousEta: memory.etas[portId] ?? afterHours(eta, -shipment.delayHours),
     },
     remember: (current: ShipBoardMemory) => ({ ...current, etas: { ...current.etas, [portId]: eta } }),
   }]);
@@ -93,7 +105,7 @@ export const commitDecisions = (memory: ShipBoardMemory, outbound: readonly Outb
   messages: outbound.map(item => item.message),
 });
 
-const inHorizon = (at: string, now: string): boolean => Date.parse(now) - Date.parse(at) <= peerHorizonHours * 3_600_000 && Date.parse(at) <= Date.parse(now) + 60_000;
+export const inHorizon = (at: string, now: string): boolean => Date.parse(now) - Date.parse(at) <= peerHorizonHours * 3_600_000 && Date.parse(at) <= Date.parse(now) + 60_000;
 
 /** Pure: port bulletins for the ports still ahead and peers' observations near this ship's route, as assessment evidence cited by message id. */
 export function selectBoardEvidence(shipment: AssessedShipment, board: readonly BoardMessage[], now: string): readonly BoardEvidence[] {

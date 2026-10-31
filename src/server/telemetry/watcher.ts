@@ -78,7 +78,7 @@ export function observe(plan: Plan, telemetry: Telemetry, now: string, threshold
     && telemetry.sogKnots < thresholds.slowRatio * impliedKnots
     ? [signal('slow-steaming', 'Speed below what the ETA needs',
       `${telemetry.sogKnots} kn over ground against ${round(impliedKnots)} kn needed to cover ${Math.round(progress.remainingKm)} km by the ETA (threshold ${Math.round(thresholds.slowRatio * 100)}% of required).`,
-      { sogKnots: telemetry.sogKnots, impliedKnots: round(impliedKnots), remainingKm: Math.round(progress.remainingKm) }, { slowRatio: thresholds.slowRatio, minImpliedKnots: thresholds.minImpliedKnots, slowCheckMinRemainingKm: thresholds.slowCheckMinRemainingKm })] : [];
+      { sogKnots: telemetry.sogKnots, impliedKnots: round(impliedKnots), remainingKm: Math.round(progress.remainingKm), projectedSlipHours: telemetry.sogKnots > 0 ? round(progress.remainingKm / kmPerNauticalMile / telemetry.sogKnots - hoursToEta) : null }, { slowRatio: thresholds.slowRatio, minImpliedKnots: thresholds.minImpliedKnots, slowCheckMinRemainingKm: thresholds.slowCheckMinRemainingKm })] : [];
 
   return { reading, track, signals: [...offRoute, ...stopped, ...slow] };
 }

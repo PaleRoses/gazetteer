@@ -31,10 +31,22 @@ export const shipObservation = z.object({
   kind: z.literal('ship.observation'),
   shipmentId: z.string().min(1),
   signals: z.array(signalKind).min(1),
+  /** The numbers behind the signals, as the watcher measured them. */
+  measured: z.record(z.string(), z.union([z.number(), z.string(), z.null()])).optional(),
   position,
   nearPort: portId.nullable(),
   provider: z.string().min(1),
   observedAt: instant,
+});
+
+const assessmentMethod = z.enum(['ai-assessed', 'deterministic-fallback', 'deterministic', 'rule-based']);
+
+/** Why a rule-based assessment says what it says: the rule, the port, the queue it saw and the service rate it divided by, with that rate's provenance. */
+const queueDrainBasis = z.object({
+  rule: z.literal('queue-drain'),
+  portId,
+  anchored: z.number().int().nonnegative(),
+  serviceRate: z.object({ departuresPerHour: z.number().positive(), provenance: z.enum(['assumed', 'measured']) }),
 });
 
 export const shipAssessment = z.object({
@@ -44,11 +56,13 @@ export const shipAssessment = z.object({
   risk,
   eta: instant,
   delayHours: z.object({ low: z.number(), likely: z.number(), high: z.number() }).nullable(),
-  confidence: z.number().min(0).max(1),
-  method: z.enum(['ai-assessed', 'deterministic-fallback', 'deterministic']),
+  /** Null exactly when the method is rule-based: a rule has no confidence to state, and zero would claim one. */
+  confidence: z.number().min(0).max(1).nullable(),
+  method: assessmentMethod,
   citedEvidence: z.array(z.string()),
+  basis: queueDrainBasis.optional(),
   ports: z.array(portId),
-});
+}).refine(message => (message.confidence === null) === (message.method === 'rule-based'), { message: 'confidence is null exactly when the method is rule-based', path: ['confidence'] });
 
 export const etaNotice = z.object({
   ...envelope,
@@ -57,6 +71,8 @@ export const etaNotice = z.object({
   portId,
   eta: instant,
   previousEta: instant,
+  /** The assessment that moved this estimate, when one did. */
+  citedEvidence: z.array(z.string()).optional(),
 });
 
 export const boardMessage = z.discriminatedUnion('kind', [portBulletin, shipObservation, shipAssessment, etaNotice]);
@@ -65,6 +81,7 @@ export type PortRisk = z.infer<typeof portRisk>;
 export type BoardAuthor = z.infer<typeof author>;
 export type PortBulletin = z.infer<typeof portBulletin>;
 export type ShipObservation = z.infer<typeof shipObservation>;
+export type QueueDrainBasis = z.infer<typeof queueDrainBasis>;
 export type ShipAssessment = z.infer<typeof shipAssessment>;
 export type EtaNotice = z.infer<typeof etaNotice>;
 export type BoardMessage = z.infer<typeof boardMessage>;
@@ -83,6 +100,16 @@ export const concerns = (message: BoardMessage): Readonly<{ ports: readonly z.in
     case 'ship.observation': return { ports: message.nearPort ? [message.nearPort] : [], shipmentId: message.shipmentId };
     case 'ship.assessment': return { ports: message.ports, shipmentId: message.shipmentId };
     case 'ship.eta': return { ports: [message.portId], shipmentId: message.shipmentId };
+  }
+};
+
+/** Who a message heard: the ids it cites. The one derivation every reader of the board uses. */
+export const citations = (message: BoardMessage): readonly string[] => {
+  switch (message.kind) {
+    case 'port.bulletin': return message.evidenceIds;
+    case 'ship.assessment': return message.citedEvidence;
+    case 'ship.eta': return message.citedEvidence ?? [];
+    case 'ship.observation': return [];
   }
 };
 

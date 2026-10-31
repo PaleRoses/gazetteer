@@ -1,0 +1,45 @@
+import type { BoardMessage } from '../../../core/board';
+import type { Risk, Shipment } from '../../../core/types';
+import { assessNotices, type AssessDeps, type AssessmentCache } from '../../assessment/assess';
+import type { ChannelRead } from '../../relay/board';
+import type { Binding } from '../../telemetry/simulation';
+import { commitDecisions, decideBoard, emptyBoardMemory, rememberBoard, selectBoardEvidence, type ShipBoardMemory } from './board';
+import { react, type Reactions } from './react';
+import { applyFloor, floorChange, riskFloor } from './risk-floor';
+import { emptyTelemetryState, watchShipment, type TelemetryState } from './watch';
+
+/** What a ship carries from one cycle to the next. */
+export type Thoughts = Readonly<{
+  shipment: Shipment; mmsi?: string; telemetry?: TelemetryState; assessmentCache?: AssessmentCache; board?: ShipBoardMemory;
+  seen?: readonly BoardMessage[]; mind?: string | null; baseRisk?: Risk; reactions?: Reactions;
+}>;
+export type Thinker = Readonly<{ assess: AssessDeps; binding: (shipment: Shipment, mmsi: string | undefined) => Binding | null }>;
+export type Thought = Readonly<{ state: Thoughts; messages: readonly BoardMessage[] }>;
+
+/**
+ * One cycle of a ship's mind, in the order that keeps risk honest: restore the assessed risk, watch the water, react to the board, assess,
+ * remember the assessed risk, then floor it with the rules. `read` is null when the channel could not be read: the ship still watches and says nothing.
+ */
+export async function think(thinker: Thinker, start: Thoughts, read: ChannelRead | null, now: string): Promise<Thought> {
+  const seen = read ? rememberBoard(start.seen ?? [], read.board, now) : start.seen ?? [];
+  const evidence = selectBoardEvidence(start.shipment, seen, now);
+  const restored: Shipment = { ...start.shipment, risk: start.baseRisk ?? start.shipment.risk };
+  const binding = thinker.binding(restored, start.mmsi);
+  const assess = { ...thinker.assess, session: start.mind ?? null };
+  const watched = binding
+    ? await watchShipment({ source: binding.source, assess, board: evidence, now: () => now }, restored, binding.key, start.telemetry ?? emptyTelemetryState, start.assessmentCache ?? {})
+    : { shipment: restored, state: start.telemetry, cache: start.assessmentCache ?? {}, session: assess.session };
+  if (!read) return { messages: [], state: { ...start, shipment: watched.shipment, baseRisk: watched.shipment.risk, assessmentCache: watched.cache, telemetry: watched.state, seen, mind: watched.session } };
+  const own = start.board?.observed ? `obs:${start.board.observed}` : null;
+  const reacted = react(watched.shipment, seen, start.reactions ?? {}, own, now);
+  const assessed = await assessNotices({ ...assess, session: watched.session }, watched.cache, reacted.shipment, read.disruptions, evidence);
+  const floor = riskFloor(assessed.shipment.signals ?? [], reacted.summary);
+  const modelled = assessed.shipment.change !== start.shipment.change;
+  const shipment: Shipment = { ...assessed.shipment, risk: applyFloor(assessed.shipment.risk, floor), ...(floor && !modelled ? { change: floorChange(floor, reacted.summary.hours) } : {}) };
+  const memory = start.board ?? emptyBoardMemory;
+  const decided = commitDecisions(memory, decideBoard(memory, { shipment, situation: watched.state?.situation ?? null, now, society: { floor, queues: reacted.changed } }));
+  return {
+    messages: decided.messages,
+    state: { ...start, shipment, baseRisk: assessed.shipment.risk, reactions: reacted.reactions, assessmentCache: assessed.cache, mind: assessed.session, telemetry: watched.state, board: decided.memory, seen },
+  };
+}

@@ -1,12 +1,14 @@
 import { Actor, Persisted } from 'durable-actors';
-import { relaySuccess, type Disruption, type RelayOutcome, type Shipment } from '../../../core/types';
+import { relaySuccess, type Disruption, type RelayOutcome, type Risk, type Shipment } from '../../../core/types';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { shipMindFromEnv } from '../../assessment/mind';
-import { assessNotices, type AssessmentCache } from '../../assessment/assess';
+import type { AssessmentCache } from '../../assessment/assess';
 import { postBoard, readChannel, type ChannelRead } from '../../relay/board';
 import type { BoardMessage } from '../../../core/board';
-import { commitDecisions, decideBoard, emptyBoardMemory, rememberBoard, selectBoardEvidence, type ShipBoardMemory } from './board';
-import { emptyTelemetryState, watchShipment, type TelemetryState } from './watch';
+import type { ShipBoardMemory } from './board';
+import type { Reactions } from './react';
+import { think } from './think';
+import type { TelemetryState } from './watch';
 import { mmsiPattern } from '../../telemetry/telemetry';
 import { telemetrySourceFromEnv } from '../../telemetry/source';
 import { demoEnabled, telemetryBinding } from '../../telemetry/simulation';
@@ -17,7 +19,7 @@ import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } f
 import { checkIntervalMs } from '../alarm';
 import { connect } from '../../relay/connect';
 
-type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; mind?: string | null; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
+type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; baseRisk?: Risk; reactions?: Reactions; mind?: string | null; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
 const assessment = shipMindFromEnv(process.env, query);
 const telemetrySource = telemetrySourceFromEnv(process.env);
 const demo = demoEnabled(process.env);
@@ -77,21 +79,13 @@ export class ShipmentAgent extends Actor {
     const channel: RelayOutcome<ChannelRead> = start.synced
       ? relaySuccess({ board: heard.board, disruptions: heard.disruptions, cursor: start.cursor ?? null })
       : connection.status === 'unavailable' ? connection : unionHeard(await readChannel(start.relay, start.cursor ?? null), heard);
-    const seen = channel.status === 'ok' ? rememberBoard(start.seen ?? [], channel.value.board, now) : start.seen ?? [];
-    const evidence = selectBoardEvidence(start.shipment, seen, now);
-    const binding = telemetryBinding(start.shipment, start.mmsi, demo, telemetrySource);
-    const mind = { ...assessment, session: start.mind ?? null };
-    const watched = binding
-      ? await watchShipment({ source: binding.source, assess: mind, board: evidence }, start.shipment, binding.key, start.telemetry ?? emptyTelemetryState, start.assessmentCache ?? {})
-      : { shipment: start.shipment, state: start.telemetry, cache: start.assessmentCache ?? {}, session: mind.session };
+    const thought = await think({ assess: assessment, binding: (shipment, mmsi) => telemetryBinding(shipment, mmsi, demo, telemetrySource) }, start, channel.status === 'ok' ? channel.value : null, now);
     if (channel.status === 'unavailable') {
-      this.state = { ...start, shipment: watched.shipment, assessmentCache: watched.cache, telemetry: watched.state, seen, mind: watched.session };
+      this.state = { ...start, ...thought.state };
       return channel;
     }
-    const assessed = await assessNotices({ ...mind, session: watched.session }, watched.cache, watched.shipment, channel.value.disruptions, evidence);
-    const decided = commitDecisions(start.board ?? emptyBoardMemory, decideBoard(start.board ?? emptyBoardMemory, { shipment: assessed.shipment, situation: watched.state?.situation ?? null, now }));
     const latest = this.state ?? start;
-    this.state = { ...start, ready: true, shipment: assessed.shipment, assessmentCache: assessed.cache, mind: assessed.session, cursor: channel.value.cursor, telemetry: watched.state, board: decided.memory, seen, checkedAt: now, synced: true, inbox: drainInbox(latest.inbox, heard), boardOutbox: enqueue(latest.boardOutbox ?? [], decided.messages) };
+    this.state = { ...start, ...thought.state, ready: true, cursor: channel.value.cursor, checkedAt: now, synced: true, inbox: drainInbox(latest.inbox, heard), boardOutbox: enqueue(latest.boardOutbox ?? [], thought.messages) };
     return relaySuccess(this.state.shipment);
   }
 
