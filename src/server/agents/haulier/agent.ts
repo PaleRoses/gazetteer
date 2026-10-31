@@ -47,7 +47,7 @@ export class HaulierAgent extends Actor {
   }
 
   async initialize(workspaceId: string, city: PortId, workspaceKey: string, createChannel: boolean, bookingsPath: string, trucks: readonly Truck[]): Promise<RelayOutcome<null>> {
-    if (this.state?.ready) { this.state = { ...this.state, trucks }; return relaySuccess(null); }
+    if (this.state?.ready) return relaySuccess(null);
     await this.scheduleCheck();
     if (!this.state) {
       const registration = await attemptRelay(() => registerParticipant(workspaceKey, this.id, relayChannel(workspaceId)), 'Agent Relay registration is unavailable. Retry initialization.');

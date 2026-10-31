@@ -21,6 +21,7 @@ import type { Inbox } from '../relay/inbox';
 import { createLimiter, createStartup, type StartupTask } from './startup';
 import { fileSeqStore, startRelayLive } from '../relay/live';
 import { createHub, type Subscribe } from './hub';
+import { actorClients, createRecovery } from './recovery';
 import { attemptRelay, disruptionFrom, publishDisruption, relayChannel, workspaceOfChannel } from '../relay/client';
 
 type TrafficClient = Pick<TrafficWatch, 'initialize' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
@@ -47,6 +48,9 @@ export type Monitoring = Readonly<{
   /** Push channel behind GET /api/workspaces/:id/events. */
   subscribe: Subscribe;
   publishComment(workspaceId: string, shipmentId: string, comment: Comment): void;
+  /** Demo controls for act 2: the haulier withdraws its last truck; the cargo agent resumes from its persisted case. Each answers with the dashboard. */
+  withdrawTruck(workspaceId: string): Promise<RelayOutcome<Dashboard>>;
+  restartCargo(workspaceId: string): Promise<RelayOutcome<Dashboard>>;
   /** The ship's mind answers as itself, read-only; unavailable (never thrown) without the model or past its deadline. */
   ask(workspaceId: string, shipmentId: string, question: string): Promise<ShipAnswer>;
   close(): Promise<void>;
@@ -152,6 +156,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const begin = (workspaceId: string): void => {
     if (startup.isStarted(workspaceId)) return;
     startup.ensure(workspaceId);
+    recovery.begin(workspaceId);
     void captureQueued(workspaceId);
   };
 
@@ -166,6 +171,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
       runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
       relayHealth: { state: relayHealth.failingSince ? 'reconnecting' : 'live', since: relayHealth.failingSince, lastPostAt: relayHealth.lastPostAt },
+      ...(recovery.view(workspaceId) ? { recovery: recovery.view(workspaceId) } : {}),
       ...(status.complete ? {} : { startup: { ready: status.ready, total: status.total, ...(queued > 0 ? { queued } : {}) } }),
     };
     hub.publishDashboard(workspaceId, built);
@@ -204,6 +210,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     fresh.board.filter(message => message.kind === 'ship.observation' || message.kind === 'ship.eta').forEach(message => concerns(message).ports.forEach(id => wake.add(id)));
     touched.set(workspaceId, wake);
     delivery.record(workspaceId, fresh);
+    void recovery.deliver(workspaceId, fresh);
     await Promise.all([
       ...actorPorts.filter(value => startup.isReady(workspaceId, cityKey(value.id, 'traffic'))).map(value => deliverTo(workspaceId, cityKey(value.id, 'traffic'))),
       ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, shipKey(seed.id))).map(seed => deliverTo(workspaceId, shipKey(seed.id))),
@@ -256,11 +263,22 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     const wake = [...(touched.get(workspaceId) ?? [])];
     touched.delete(workspaceId);
     const spoken = await Promise.all([
+      recovery.step(workspaceId),
       ...wake.filter(id => startup.isReady(workspaceId, cityKey(id, 'traffic'))).map(id => cityStep(workspaceId, id, 'traffic')),
       ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, shipKey(seed.id))).map(seed => shipStep(workspaceId, seed.id).then(count => { if (hub.subscribers(workspaceId) > 0) void announce(workspaceId); return count; })),
     ]);
     if (spoken.some(count => count > 0) && round + 1 < rounds) return settle(workspaceId, round + 1);
   };
+  const recovery = createRecovery({
+    clients: actorClients(transport), workspaceKey, bookingsPath: resolve(dataDir, '..', 'bookings.sqlite'), limit: relayLimit,
+    meridianStar: workspaceId => shipment(workspaceId, 'gz-1042').snapshot(),
+    send: async outgoing => {
+      const sent = await relayLimit(() => transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) }));
+      noteTransmit(sent);
+      return sent;
+    },
+    absorb, announce: workspaceId => { if (hub.subscribers(workspaceId) > 0) void announce(workspaceId); },
+  });
   const refresh = createCoalescer(async workspaceId => {
     begin(workspaceId);
     await settle(workspaceId);
@@ -324,10 +342,25 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       await Promise.race([accepted, new Promise(done => setTimeout(done, simulateWaitMs))]);
       return dashboard(workspaceId);
     },
+    withdrawTruck: async workspaceId => {
+      begin(workspaceId);
+      const done = await recovery.withdrawTruck(workspaceId);
+      if (done.status !== 'ok') return done;
+      await refresh(workspaceId);
+      return dashboard(workspaceId);
+    },
+    restartCargo: async workspaceId => {
+      begin(workspaceId);
+      const done = await recovery.restartCargo(workspaceId);
+      if (done.status !== 'ok') return done;
+      await refresh(workspaceId);
+      return dashboard(workspaceId);
+    },
     subscribe: hub.subscribe,
     publishComment: (workspaceId, shipmentId, comment) => hub.publish(workspaceId, { event: 'comment', data: { shipmentId, comment } }),
     close: async () => {
       startup.close();
+      recovery.close();
       delivery.close();
       if (live.status === 'ok') await live.value.close();
       await runtime.stop();
