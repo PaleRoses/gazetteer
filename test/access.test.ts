@@ -32,6 +32,8 @@ describe("workspace access", () => {
     if (!workspace) throw new Error("Owner workspace missing");
     const invitation = unwrap(access.invite(owner.user.id, workspace.id, member.user.email));
     expect(unwrap(access.acceptInvite(member.user.id, invitation.token)).role).toBe("member");
+    expect(access.workspaceIds()).toHaveLength(2);
+    expect(access.workspaceIds()).toContain(workspace.id);
     const entry = unwrap(access.comment(member.user.id, workspace.id, "GZ-1042", "Check the revised berth window."));
     expect(unwrap(access.comments(owner.user.id, workspace.id, "GZ-1042"))).toEqual([entry]);
     access.close();

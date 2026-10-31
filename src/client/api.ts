@@ -30,7 +30,9 @@ export type Member = z.infer<typeof membersSchema>['members'][number];
 export type Invitation = z.infer<typeof invitationSchema>;
 export type ApiResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: string; status: number }>;
 export async function request<T>(path: string, schema: z.ZodType<T>, body?: unknown, signal?: AbortSignal): Promise<ApiResult<T>> {
-  return fetch(path, { credentials: 'same-origin', signal, ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) })
+  const deadline = AbortSignal.timeout(125_000);
+  const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  return fetch(path, { credentials: 'same-origin', signal: requestSignal, ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) })
     .then(async response => {
       const json: unknown = await response.json();
       if (!response.ok) {
@@ -40,5 +42,5 @@ export async function request<T>(path: string, schema: z.ZodType<T>, body?: unkn
       const parsed = schema.safeParse(json);
       return parsed.success ? { ok: true as const, value: parsed.data } : { ok: false as const, error: 'The server returned an unexpected response. Please refresh.', status: 502 };
     })
-    .catch((error: unknown) => ({ ok: false as const, error: error instanceof Error && error.name === 'AbortError' ? 'Request cancelled.' : 'Cannot reach the workspace. Check the server connection.', status: 0 }));
+    .catch((error: unknown) => ({ ok: false as const, error: deadline.aborted ? 'Request timed out; its outcome is unconfirmed. Refresh before trying again.' : error instanceof Error && error.name === 'AbortError' ? 'Request cancelled.' : 'Cannot reach the workspace. Check the server connection.', status: 0 }));
 }

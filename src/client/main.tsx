@@ -128,18 +128,22 @@ function WorkspaceScreen({ session, onSession, onLogout }: Readonly<{ session: S
   const [error, setError] = useState<string | null>(null);
   const [inviteToken, setInviteToken] = useState(new URLSearchParams(window.location.search).get('invite'));
   const workspace = session.workspaces.find(item => item.id === workspaceId);
+  function clearInvitation() {
+    setInviteToken(null); setError(null);
+    window.history.replaceState(null, '', window.location.pathname);
+  }
   async function acceptInvitation() {
     setAccepting(true); setError(null);
     const result = await request('/api/invitations/accept', workspaceSchema, { token: inviteToken });
     setAccepting(false);
-    if (result.ok) { onSession({ ...session, workspaces: [...session.workspaces.filter(item => item.id !== result.value.id), result.value] }); setWorkspaceId(result.value.id); setTeamOpen(false); setInviteToken(null); window.history.replaceState(null, '', window.location.pathname); } else setError(result.error);
+    if (result.ok) { onSession({ ...session, workspaces: [...session.workspaces.filter(item => item.id !== result.value.id), result.value] }); setWorkspaceId(result.value.id); setTeamOpen(false); clearInvitation(); } else setError(result.error);
   }
   return <div className="workspace-shell"><header className="topbar"><Brand /><div className="workspace-picker"><Layers3 size={15} /><label className="sr-only" htmlFor="workspace">Workspace</label><select id="workspace" value={workspaceId} onChange={event => { setWorkspaceId(event.target.value); setTeamOpen(false); }}>{session.workspaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={13} /></div><div className="topbar-right"><span className="demo-tag"><FlaskConical size={12} /> DEMO WORKSPACE</span><button className="team-button" onClick={() => setTeamOpen(true)} disabled={!workspace}><Users size={15} />Team</button><span className="avatar" title={session.user.email}>{session.user.name.slice(0, 1).toUpperCase()}</span><button className="icon-button" onClick={onLogout} aria-label="Sign out"><LogOut size={16} /></button></div></header>
     <div className="simulation-banner"><span><span className="simulation-light" />Synthetic data<span className="banner-separator">/</span>Not live vessel tracking. Test a disruption to see its impact.</span><span className="banner-scope">ALL TIMES UTC</span></div>
-    {inviteToken && <div className="invite-banner"><span><Users size={16} />You have a workspace invitation. Signed in as {session.user.email}.</span><button disabled={accepting} onClick={() => { void acceptInvitation(); }}>{accepting ? 'Joining…' : 'Accept invitation'}<ArrowRight size={14} /></button></div>}
+    {inviteToken && <div className="invite-banner"><span><Users size={16} />You have a workspace invitation. Signed in as {session.user.email}.</span><div className="invite-actions"><button disabled={accepting} onClick={() => { void acceptInvitation(); }}>{accepting ? 'Joining…' : 'Accept invitation'}<ArrowRight size={14} /></button><button disabled={accepting} onClick={clearInvitation}>Use my workspace instead</button></div></div>}
     {error && <div className="global-error">{errorMessage(error)}</div>}
-    {workspace && <WorkspaceOperations key={workspace.id} workspaceId={workspace.id} />}
-    {teamOpen && workspace && <TeamPanel key={workspace.id} workspace={workspace} onClose={() => setTeamOpen(false)} />}</div>;
+    {workspace && !inviteToken && <WorkspaceOperations key={workspace.id} workspaceId={workspace.id} />}
+    {teamOpen && workspace && <TeamPanel key={`team/${workspace.id}`} workspace={workspace} onClose={() => setTeamOpen(false)} />}</div>;
 }
 
 function App() {

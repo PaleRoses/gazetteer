@@ -1,9 +1,14 @@
 import { AgentRelay, type RelayAgentClient, type RelayMessage } from '@agent-relay/sdk';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import type { Disruption } from '../shared';
+import { relaySuccess, type Disruption, type RelayOutcome } from '../shared';
 
 export type RelayIdentity = Readonly<{ token: string; channel: string }>;
+/** Expected provider failures cross actor and HTTP boundaries as data, never fabricated success. */
+export async function attemptRelay<A>(operation: () => Promise<A>, message: string): Promise<RelayOutcome<A>> {
+  try { return relaySuccess(await operation()); }
+  catch { return { status: 'unavailable', message }; }
+}
 export const relayChannel = (workspaceId: string): string => `gazetteer-${workspaceId}`;
 
 const disruptionSchema = z.object({

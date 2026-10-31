@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { demoShipments, ports } from '../src/domain';
-import type { Dashboard } from '../src/shared';
+import { relaySuccess, type Dashboard } from '../src/shared';
 import { createAccess } from '../src/server/access';
 import { createApi } from '../src/server/http';
 import type { Monitoring } from '../src/server/monitoring';
@@ -14,8 +14,8 @@ const dashboard: Dashboard = {
 };
 // HTTP authorization contract only. Actor/Relay integration is tested by its actual runtime owner.
 const monitoringFixture: Pick<Monitoring, 'dashboard' | 'simulate'> = {
-  dashboard: async () => dashboard,
-  simulate: async () => dashboard,
+  dashboard: async () => relaySuccess(dashboard),
+  simulate: async () => relaySuccess(dashboard),
 };
 const authBody = z.object({ user: z.object({ id: z.string(), name: z.string(), email: z.string() }), workspaces: z.array(z.object({ id: z.string(), name: z.string(), role: z.enum(['owner', 'member']) })) });
 const inviteBody = z.object({ email: z.string(), url: z.string().url(), delivery: z.literal('link-only') });
@@ -46,6 +46,19 @@ const signup = async (api: ReturnType<typeof createApi>, name: string) => {
 };
 
 describe('HTTP access boundary', () => {
+  test('provider unavailability retains its retry outcome at the HTTP boundary', async () => {
+    const access = createAccess(':memory:');
+    const unavailable = { status: 'unavailable', message: 'The disruption remains queued for retry.' } as const;
+    const api = createApi({ access, origin, monitoring: { dashboard: async () => unavailable, simulate: async () => unavailable } });
+    const owner = await signup(api, 'owner');
+    const workspace = owner.workspaces[0];
+    if (!workspace) throw new Error('Missing test workspace');
+    const response = await api(request(`/api/workspaces/${workspace.id}/disruptions`, owner.cookie, { portId: 'singapore', delayHours: 36 }));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: unavailable.message });
+    access.close();
+  });
+
   test.each(mailCases)('reports $name honestly and retains an email-bound usable link', async ({ response, delivery }) => {
     const access = createAccess(':memory:');
     const api = createApi({ access, monitoring: monitoringFixture, origin,

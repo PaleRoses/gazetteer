@@ -58,6 +58,8 @@ There is no password reset, account email verification, membership removal, prod
 
 The port actor retains a disruption outbox; shipment actors replay Relay events through the pure assessment. Durable state lives under `DATA_DIR` (default `.data`). Keep that directory and `.env` across restarts; do not commit either. Startup fails explicitly if Relay is not configured.
 
+Terse's local control plane keeps its alarm index in memory. Gazetteer therefore persists each actor's next-check deadline and restores native alarms at startup from the canonical workspace inventory. Dashboard polling does not reschedule or postpone those checks; there is no second application scheduler.
+
 ## Development and checks
 
 ```sh
@@ -65,6 +67,14 @@ npm run check
 npm test
 npm run build
 ```
+
+The real-provider restart/alarm/replay check is opt-in:
+
+```sh
+npm run test:runtime
+```
+
+It uses the configured Relay workspace, isolated `.data/runtime-check` actor data and a synthetic test channel. It publishes a one-hour test disruption, restarts Terse, and checks scheduled delivery and duplicate replay. Allow several minutes; do not run it concurrently with another process using that test data directory. The regular test suite skips this external-provider check explicitly.
 
 For UI hot reload, run `APP_ORIGIN=http://localhost:5173 npm run dev` and `npm run dev:ui` in separate terminals, then visit `http://localhost:5173`. API requests proxy to port 4310.
 

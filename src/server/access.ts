@@ -179,6 +179,7 @@ export const createAccess = (databasePath: string) => {
 
   return {
     allowAuth, signup, login, session, workspaces, createWorkspace, membership, members, invite, acceptInvite, comments, comment,
+    workspaceIds: (): readonly string[] => db.query<Readonly<{ id: string }>, []>('SELECT id FROM workspaces ORDER BY id').all().map(workspace => workspace.id),
     logout: (token: string): Result<null> => { db.query("DELETE FROM sessions WHERE token_hash = ?").run(digest(token)); return success(null); },
     close: (): void => db.close(),
   };

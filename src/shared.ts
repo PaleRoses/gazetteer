@@ -1,4 +1,6 @@
 export type Risk = 'on-track' | 'watch' | 'delayed';
+export type RelayOutcome<A> = Readonly<{ status: 'ok'; value: A }> | Readonly<{ status: 'unavailable'; message: string }>;
+export const relaySuccess = <A>(value: A): RelayOutcome<A> => ({ status: 'ok', value });
 export type PortId = 'singapore' | 'rotterdam' | 'shanghai' | 'los-angeles';
 export type Port = Readonly<{ id: PortId; name: string; country: string; coordinates: readonly [number, number] }>;
 export type Evidence = Readonly<{ id: string; source: 'simulation'; title: string; detail: string; observedAt: string }>;

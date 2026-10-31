@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Access, AccessError, Result, Session } from './access';
 import type { Monitoring } from './monitoring';
+import type { Dashboard, RelayOutcome } from '../shared';
 export type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
@@ -16,6 +17,8 @@ const accessStatus: Record<AccessError, number> = {
 };
 const respond = <T>(result: Result<T>, project: (value: T) => unknown = value => value): Response =>
   result.ok ? json(project(result.value)) : json({ error: result.error.replaceAll('_', ' ') }, accessStatus[result.error]);
+const monitoringResponse = (outcome: RelayOutcome<Dashboard>): Response =>
+  outcome.status === 'ok' ? json(outcome.value) : json({ error: outcome.message }, 503);
 const tokenFrom = (request: Request): string | undefined => request.headers.get('Cookie')?.split(';').map(value => value.trim()).find(value => value.startsWith('gazetteer_session='))?.slice('gazetteer_session='.length);
 const email = z.string().trim().email().max(254);
 const password = z.string().min(12).max(1024);
@@ -61,9 +64,9 @@ export function createApi({ access, monitoring, origin, mail, mailTransport = fe
     const resource = match[2];
     const membership = access.membership(user.id, workspaceId);
     if (!membership.ok) return respond(membership);
-    if (resource === 'dashboard' && request.method === 'GET') return json(await monitoring.dashboard(workspaceId));
+    if (resource === 'dashboard' && request.method === 'GET') return monitoringResponse(await monitoring.dashboard(workspaceId));
     if (resource === 'members' && request.method === 'GET') return respond(access.members(user.id, workspaceId), members => ({ members }));
-    if (resource === 'disruptions' && request.method === 'POST') return bodyWith(request, disruptionSchema, async input => json(await monitoring.simulate(workspaceId, input.portId, input.delayHours)));
+    if (resource === 'disruptions' && request.method === 'POST') return bodyWith(request, disruptionSchema, async input => monitoringResponse(await monitoring.simulate(workspaceId, input.portId, input.delayHours)));
     if (resource === 'invitations' && request.method === 'POST') return bodyWith(request, z.object({ email }), async input => {
       const invitation = access.invite(user.id, workspaceId, input.email);
       if (!invitation.ok) return respond(invitation);
@@ -83,7 +86,8 @@ export function createApi({ access, monitoring, origin, mail, mailTransport = fe
     const shipmentId = match[3];
     if (shipmentId) {
       const dashboard = await monitoring.dashboard(workspaceId);
-      if (!dashboard.shipments.some(shipment => shipment.id === shipmentId)) return json({ error: 'Shipment not found' }, 404);
+      if (dashboard.status === 'unavailable') return monitoringResponse(dashboard);
+      if (!dashboard.value.shipments.some(shipment => shipment.id === shipmentId)) return json({ error: 'Shipment not found' }, 404);
       if (request.method === 'GET') return respond(access.comments(user.id, workspaceId, shipmentId), comments => ({ comments }));
       return bodyWith(request, z.object({ body: z.string().trim().min(1).max(4000) }), input => {
         const added = access.comment(user.id, workspaceId, shipmentId, input.body);
