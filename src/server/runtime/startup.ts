@@ -23,6 +23,7 @@ export type Startup = Readonly<{
   /** Single-flight per workspace: the first call starts the work in the background, later calls are free. */
   ensure(workspaceId: string): void;
   status(workspaceId: string): StartupStatus;
+  isStarted(workspaceId: string): boolean;
   isReady(workspaceId: string, key: string): boolean;
   close(): void;
 }>;
@@ -70,6 +71,7 @@ export function createStartup({ tasksOf, limit, onReady = () => undefined, delay
       const entry = workspaces.get(workspaceId);
       return { ready: entry?.ready.size ?? 0, total: entry?.keys.length ?? 0, complete: entry !== undefined && entry.ready.size === entry.keys.length };
     },
+    isStarted: workspaceId => workspaces.has(workspaceId),
     isReady: (workspaceId, key) => workspaces.get(workspaceId)?.ready.has(key) ?? false,
     close: () => { closed = true; },
   };

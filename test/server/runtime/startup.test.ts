@@ -91,7 +91,10 @@ describe('createStartup', () => {
     let attempts = 0;
     const tasks: readonly StartupTask[] = [{ key: 'never', run: async () => { attempts += 1; return false; } }];
     const startup = createStartup({ tasksOf: () => { listed += 1; return tasks; }, limit: createLimiter(3), delaysMs: [1], sleep: async () => { await pause(1); } });
+    expect(startup.isStarted('w')).toBe(false);
     startup.ensure('w'); startup.ensure('w'); startup.ensure('w');
+    expect(startup.isStarted('w')).toBe(true);
+    expect(startup.isStarted('other')).toBe(false);
     await settled(() => attempts >= 3);
     startup.close();
     await pause(10);

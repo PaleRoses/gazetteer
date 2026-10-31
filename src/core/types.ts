@@ -1,8 +1,8 @@
 import type { BoardMessage, PortStatus } from './board.js';
+import type { PortId } from './ports.js';
 export type Risk = 'on-track' | 'watch' | 'delayed';
 export type RelayOutcome<A> = Readonly<{ status: 'ok'; value: A }> | Readonly<{ status: 'unavailable'; message: string }>;
 export const relaySuccess = <A>(value: A): RelayOutcome<A> => ({ status: 'ok', value });
-export type PortId = 'singapore' | 'rotterdam' | 'shanghai' | 'los-angeles';
 export type Port = Readonly<{ id: PortId; name: string; country: string; coordinates: readonly [number, number] }>;
 type EvidenceBody = Readonly<{ id: string; title: string; detail: string; observedAt: string }>;
 export type Evidence = EvidenceBody & (Readonly<{ source: 'simulation' }> | Readonly<{ source: 'live'; provider: string; url: string }>);
@@ -27,4 +27,6 @@ export type Dashboard = Readonly<{
   portStatus?: readonly PortStatus[]; board?: readonly BoardMessage[];
   /** Present only while the workspace's actors are still starting; the shipments shown for the rest are their seed state. `queued` counts simulated disruptions waiting for their port actor. */
   startup?: Readonly<{ ready: number; total: number; queued?: number }>;
+  /** The board transport, as data: `reconnecting` since T while posts fail, `live` with the last acknowledged post at T. Never a status code. */
+  relayHealth?: Readonly<{ state: 'live' | 'reconnecting'; since: string | null; lastPostAt: string | null }>;
 }>;

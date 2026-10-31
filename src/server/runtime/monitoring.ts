@@ -4,13 +4,14 @@ import { resolve } from 'node:path';
 import { chmod, mkdir } from 'node:fs/promises';
 import { startLocalActors } from 'durable-actors/dev';
 import { createActorStub, createActorTransport, type ActorRpcMethod } from 'durable-actors/backend';
-import { demoShipments, ports } from '../../core/demo';
-import { relaySuccess, type Comment, type Dashboard, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../../core/types';
+import { demoShipments } from '../../core/demo';
+import { ports, type PortId } from '../../core/ports';
+import { relaySuccess, type Comment, type Dashboard, type Disruption, type RelayOutcome, type Shipment } from '../../core/types';
 import type { PortAgent } from '../agents/port/agent';
 import type { ShipmentAgent } from '../agents/ship/agent';
 import { createBoardModel, recentBoard } from '../relay/model';
 import { boardFrom, postBoard } from '../relay/board';
-import { transmit } from '../relay/outbox';
+import { transmit, type Transmitted } from '../relay/outbox';
 import { portStatuses } from '../agents/port/status';
 import { concerns } from '../../core/board';
 import { createCoalescer } from './coalesce';
@@ -92,29 +93,58 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     ...ports.filter(value => value.id !== 'singapore').map((value): StartupTask => ({ key: portKey(value.id), after: portKey('singapore'), run: bringUp(() => port(workspaceId, value.id).initialize(workspaceId, value.id, workspaceKey, false), () => port(workspaceId, value.id).check()) })),
     ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: shipKey(seed.id), after: portKey('singapore'), run: bringUp(() => shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey), () => shipment(workspaceId, seed.id).check()) })),
   ];
-  /** Simulated disruptions wait in their port actor's persisted state, not here: a restart cannot lose them. */
-  const waitingOn = async (workspaceId: string): Promise<number> =>
-    (await Promise.all(ports.map(value => port(workspaceId, value.id).queued().catch(() => 0)))).reduce((total, count) => total + count, 0);
+  /**
+   * The read model. The dashboard is served from here and never calls an actor: Terse serialises calls per actor, so a read would wait
+   * behind that actor's in-flight alarm. Actors feed it in the background (`capture`, `captureQueued`), and the SSE stream carries each
+   * change. Ships start as their catalog seed, which IS the actor's initial state, so a cold workspace renders its whole fleet at once.
+   */
+  const snapshots = new Map<string, Map<string, Shipment>>();
+  const shipmentsOf = (workspaceId: string): readonly Shipment[] => seedsOf(workspaceId).map(seed => snapshots.get(workspaceId)?.get(seed.id) ?? seed);
+  const capture = createCoalescer(async key => {
+    const [workspaceId, id] = key.split('\u0000') as [string, string];
+    const latest = await shipment(workspaceId, id).snapshot();
+    if (!latest) return;
+    snapshots.set(workspaceId, (snapshots.get(workspaceId) ?? new Map<string, Shipment>()).set(id, latest));
+    if (hub.subscribers(workspaceId) > 0) void announce(workspaceId);
+  }, error => console.error('Snapshot capture failed:', error instanceof Error ? error.message : 'unknown error'));
+  /** Simulated disruptions wait in their port actor's persisted state, so a restart cannot lose them; this is the last count heard from the ports. */
+  const waiting = new Map<string, Map<PortId, number>>();
+  const waitingIn = (workspaceId: string): number => [...(waiting.get(workspaceId)?.values() ?? [])].reduce((total, count) => total + count, 0);
+  const captureQueued = createCoalescer(async workspaceId => {
+    const counts = await Promise.all(ports.map(async value => [value.id, await port(workspaceId, value.id).queued().catch(() => 0)] as const));
+    waiting.set(workspaceId, new Map(counts));
+    if (hub.subscribers(workspaceId) > 0) void announce(workspaceId);
+  }, error => console.error('Queue count failed:', error instanceof Error ? error.message : 'unknown error'));
+  /** Relay's health is data on the dashboard, never a status code: failing since T, or live with the last acknowledged post at T. */
+  const relayHealth = { failingSince: null as string | null, lastPostAt: null as string | null };
+  const noteTransmit = (sent: Transmitted): void => {
+    const now = new Date().toISOString();
+    if (sent.board.length + sent.disruptions.length > 0) relayHealth.lastPostAt = now;
+    relayHealth.failingSince = sent.failure === null ? null : relayHealth.failingSince ?? now;
+  };
+
+  /** First touch of a workspace starts its actors and counts what already waits for them, both in the background. */
+  const begin = (workspaceId: string): void => {
+    if (startup.isStarted(workspaceId)) return;
+    startup.ensure(workspaceId);
+    void captureQueued(workspaceId);
+  };
 
   const dashboard = async (workspaceId: string): Promise<RelayOutcome<Dashboard>> => {
-    startup.ensure(workspaceId);
+    begin(workspaceId);
     const status = startup.status(workspaceId);
-    try {
-      const retained = await Promise.all(seedsOf(workspaceId).map(async seed =>
-        (startup.isReady(workspaceId, shipKey(seed.id)) ? await shipment(workspaceId, seed.id).snapshot().catch(() => null) : null) ?? seed));
-      const posts = board.board(workspaceId);
-      const waiting = status.complete ? 0 : await waitingOn(workspaceId);
-      const built: Dashboard = {
-        shipments: retained, ports, ...(posts ? { board: posts, portStatus: portStatuses(ports, retained, posts) } : {}),
-        updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
-        runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
-        ...(status.complete ? {} : { startup: { ready: status.ready, total: status.total, ...(waiting > 0 ? { queued: waiting } : {}) } }),
-      };
-      hub.publishDashboard(workspaceId, built);
-      return relaySuccess(built);
-    } catch {
-      return { status: 'unavailable', message: 'The workspace could not be read. Retry shortly.' };
-    }
+    const retained = shipmentsOf(workspaceId);
+    const posts = board.board(workspaceId);
+    const queued = waitingIn(workspaceId);
+    const built: Dashboard = {
+      shipments: retained, ports, ...(posts ? { board: posts, portStatus: portStatuses(ports, retained, posts) } : {}),
+      updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
+      runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
+      relayHealth: { state: relayHealth.failingSince ? 'reconnecting' : 'live', since: relayHealth.failingSince, lastPostAt: relayHealth.lastPostAt },
+      ...(status.complete ? {} : { startup: { ready: status.ready, total: status.total, ...(queued > 0 ? { queued } : {}) } }),
+    };
+    hub.publishDashboard(workspaceId, built);
+    return relaySuccess(built);
   };
 
   const announce = createCoalescer(async workspaceId => { await dashboard(workspaceId); }, error => console.error('Board announcement failed:', error instanceof Error ? error.message : 'unknown error'));
@@ -158,6 +188,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       post: message => postBoard(outgoing.relay, message),
       publish: disruption => attemptRelay(() => publishDisruption(outgoing.relay, disruption), 'Agent Relay publication is unavailable.'),
     }));
+    noteTransmit(sent);
     await port(workspaceId, id).acknowledge({ board: sent.board, disruptions: sent.disruptions });
   });
   const publishShip = createCoalescer(async key => {
@@ -165,6 +196,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     const outgoing = await shipment(workspaceId, id).unpublished();
     if (!outgoing || outgoing.board.length === 0) return;
     const sent = await relayLimit(() => transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) }));
+    noteTransmit(sent);
     await shipment(workspaceId, id).acknowledge(sent.board);
   });
   const shipStep = async (workspaceId: string, id: string): Promise<number> => {
@@ -172,6 +204,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     const outgoing = await shipment(workspaceId, id).unpublished().catch(() => null);
     const echoed = await absorb(workspaceId, { board: outgoing?.board ?? [], disruptions: [] });
     void publishShip(`${workspaceId}\u0000${id}`);
+    void capture(`${workspaceId}\u0000${id}`);
     return echoed;
   };
   const portStep = async (workspaceId: string, id: PortId): Promise<number> => {
@@ -195,7 +228,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     if (spoken.some(count => count > 0) && round + 1 < rounds) return settle(workspaceId, round + 1);
   };
   const refresh = createCoalescer(async workspaceId => {
-    startup.ensure(workspaceId);
+    begin(workspaceId);
     await settle(workspaceId);
     await dashboard(workspaceId);
   }, error => console.error('Realtime refresh failed:', error instanceof Error ? error.message : 'unknown error'));
@@ -209,6 +242,8 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     tasksOf, limit: relayLimit,
     onReady: (workspaceId, key) => {
       const arrived = ports.find(value => portKey(value.id) === key);
+      const ship = seedsOf(workspaceId).find(seed => shipKey(seed.id) === key);
+      if (ship) void capture(`${workspaceId}\u0000${ship.id}`);
       void (arrived ? deliverQueued(workspaceId, arrived.id) : Promise.resolve())
         .catch(error => console.error('Queued disruption delivery failed:', error instanceof Error ? error.message : 'unknown error'))
         .then(() => (hub.subscribers(workspaceId) > 0 ? announce(workspaceId) : undefined));
@@ -233,17 +268,23 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   return {
     dashboard,
     simulate: async (workspaceId, portId, delayHours) => {
-      startup.ensure(workspaceId);
+      begin(workspaceId);
       const id = randomUUID();
       const disruption: Disruption = {
         id, portId, delayHours,
         evidence: { id, source: 'simulation', title: 'Simulated port congestion', detail: `Synthetic terminal bulletin: a ${delayHours}-hour berth delay at ${ports.find(value => value.id === portId)?.name ?? portId}. Deterministic demo assessment; not live intelligence.`, observedAt: new Date().toISOString() },
       };
-      await port(workspaceId, portId).simulate(disruption);
-      if (!startup.isReady(workspaceId, portKey(portId))) return dashboard(workspaceId);
-      await absorb(workspaceId, { board: [], disruptions: [disruption] });
-      void publishPort(`${workspaceId}\u0000${portId}`);
-      await Promise.race([refresh(workspaceId), new Promise(done => setTimeout(done, simulateWaitMs))]);
+      /** Accepted into the port's durable queue is the answer; echoing, publishing and the actors' reactions follow in the background. */
+      const accepted = port(workspaceId, portId).simulate(disruption)
+        .then(async () => {
+          void captureQueued(workspaceId);
+          if (!startup.isReady(workspaceId, portKey(portId))) return;
+          await absorb(workspaceId, { board: [], disruptions: [disruption] });
+          void publishPort(`${workspaceId}\u0000${portId}`);
+          await refresh(workspaceId);
+        })
+        .catch(error => console.error('Simulated disruption failed:', error instanceof Error ? error.message : 'unknown error'));
+      await Promise.race([accepted, new Promise(done => setTimeout(done, simulateWaitMs))]);
       return dashboard(workspaceId);
     },
     subscribe: hub.subscribe,
