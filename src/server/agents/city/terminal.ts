@@ -76,7 +76,7 @@ const summaryOf = (city: PortId, offer: TerminalOffer): string => offer.service 
 const answer = (context: TerminalContext, memory: TerminalMemory, request: Message<'recovery.request'>): Decision => {
   if (request.service === 'truck') return { memory, posts: [] };
   const offer = quoteFree(context, memory, request.caseId, { service: request.service, ...(request.after ? { after: request.after } : {}), ...(request.until ? { until: request.until } : {}) });
-  if (!offer) return { memory, posts: [] };
+  if (!offer || (offer.service === 'storage' && request.powered === true && !offer.powered)) return { memory, posts: [] };
   const message: Message<'recovery.offer'> = {
     id: `offer:${request.caseId}:${offer.id}`, kind: 'recovery.offer', author: author(context.city), at: context.now, caseId: request.caseId,
     answers: [request.id], offer, summary: summaryOf(context.city, offer).slice(0, 280),

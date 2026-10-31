@@ -49,6 +49,18 @@ describe('the terminal desk answers', () => {
     expect(offers(first.posts)).toMatchObject([{ service: 'unload', id: 'rotterdam:unload:unload-1800', at: t('18:00'), priceEur: 140, provider }]);
     expect(first.posts[0]).toMatchObject({ kind: 'recovery.offer', caseId: 'case-1', answers: ['case-1/request/unload/open'], author: provider });
     expect(run(context(), first.memory, [request('case-1', 'unload')]).posts).toEqual([]);
+    expect(run(context(), emptyTerminalMemory, [request('case-1', 'unload')]).posts.map(post => post.id)).toEqual(first.posts.map(post => post.id));
+  });
+
+  test('storage without power is refused to a cargo that needs power, and offered to one that does not', () => {
+    const { context } = fresh();
+    const unpowered = (at: string) => (ask: TerminalRequest): Offer | null => {
+      const offered = quote(at)(ask);
+      return offered && offered.service === 'storage' ? { ...offered, powered: false } : offered;
+    };
+    const cold = { ...context(), quote: unpowered(now) };
+    expect(run(cold, emptyTerminalMemory, [request('case-1', 'storage', { powered: true })]).posts).toEqual([]);
+    expect(offers(run(cold, emptyTerminalMemory, [request('case-1', 'storage', { powered: false })]).posts)).toMatchObject([{ service: 'storage', powered: false }]);
   });
 
   test('powered storage from the unload window, and a longer interval as a new offer when asked to extend', () => {
@@ -75,7 +87,7 @@ describe('the terminal desk keeps the ledger', () => {
     const opened = run(context(), emptyTerminalMemory, [request('case-1', 'storage')]);
     const offerId = offers(opened.posts)[0]!.id;
     const held = run(context(), opened.memory, [act('recovery.hold', 'case-1', offerId)]);
-    expect(ledger.find(bookingKey('case-1', offerId))).toMatchObject({ status: 'held', resource: 'rotterdam:plug:R-114', start: t('18:00'), end: t('19:00'), priceEur: 95 });
+    expect(ledger.find(bookingKey('case-1', offerId))).toMatchObject({ status: 'held', resource: 'rotterdam:plug:R-114', start: t('18:00'), end: t('19:00'), priceEur: 95, heldBy: 'cargo:cargo-1' });
     const confirmed = run(context(), held.memory, [act('recovery.confirm', 'case-1', offerId)]);
     expect(ledger.find(bookingKey('case-1', offerId))?.status).toBe('confirmed');
     run(context(), confirmed.memory, [act('recovery.release', 'case-1', offerId)]);
