@@ -51,6 +51,7 @@ function fakes() {
   const record = { initialized: [] as unknown[][], delivered: new Map<string, Inbox[]>(), resumed: [] as string[], withdrawn: [] as unknown[][], acknowledged: [] as string[][] };
   const outbox = new Map<string, BoardMessage[]>();
   const member = (name: string) => ({
+    join: async () => relaySuccess(null),
     check: async () => relaySuccess(null),
     resume: async () => { record.resumed.push(name); },
     deliver: async (batch: Inbox) => { record.delivered.set(name, [...(record.delivered.get(name) ?? []), batch]); },
@@ -98,6 +99,20 @@ describe('act 2 at runtime', () => {
     expect(byName.terminal).toEqual(['terminal', 'w1', 'rotterdam', 'key', false, '/data/bookings.sqlite', anchor]);
     expect(byName.haulier?.slice(0, 6)).toEqual(['haulier', 'w1', 'rotterdam', 'key', false, '/data/bookings.sqlite']);
     expect(byName.cargo?.slice(0, 5)).toEqual(['cargo', 'w1', 'key', '/data/bookings.sqlite', 'case:gz-1042:MSTU4182651']);
+    expect(recovery.view('w1')).toEqual({ case: null, reservations: [] });
+    recovery.close();
+  });
+
+  test('pressing twice opens one case: the actors are started once', async () => {
+    const { recovery, record } = world();
+    await recovery.step('w1');
+    expect(recovery.view('w1')).toBeUndefined();
+    expect(record.initialized).toEqual([]);
+    recovery.begin('w1');
+    recovery.begin('w1');
+    await until(() => record.initialized.length === 3);
+    await Bun.sleep(30);
+    expect(record.initialized).toHaveLength(3);
     expect(recovery.view('w1')).toEqual({ case: null, reservations: [] });
     recovery.close();
   });

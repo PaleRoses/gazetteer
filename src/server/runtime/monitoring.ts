@@ -57,6 +57,8 @@ export type Monitoring = Readonly<{
   /** Push channel behind GET /api/workspaces/:id/events. */
   subscribe: Subscribe;
   publishComment(workspaceId: string, shipmentId: string, comment: Comment): void;
+  /** Opens act 2: the declared 6 h delay of Meridian Star starts the cargo agent, the desk and the haulier. Idempotent: a second press returns the open case. */
+  delayMeridianStar(workspaceId: string): Promise<RelayOutcome<Dashboard>>;
   /** Demo controls for act 2: the haulier withdraws its last truck; the cargo agent resumes from its persisted case. Each answers with the dashboard. */
   withdrawTruck(workspaceId: string): Promise<RelayOutcome<Dashboard>>;
   restartCargo(workspaceId: string): Promise<RelayOutcome<Dashboard>>;
@@ -166,7 +168,6 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     const started = startup.isStarted(workspaceId);
     startup.ensure(workspaceId);
     if (started) return;
-    recovery.begin(workspaceId);
     void captureQueued(workspaceId);
   };
 
@@ -393,6 +394,12 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
         })
         .catch(error => console.error('Simulated disruption failed:', error instanceof Error ? error.message : 'unknown error'));
       await Promise.race([accepted, new Promise(done => setTimeout(done, simulateWaitMs))]);
+      return dashboard(workspaceId);
+    },
+    delayMeridianStar: async workspaceId => {
+      begin(workspaceId);
+      recovery.begin(workspaceId);
+      await refresh(workspaceId);
       return dashboard(workspaceId);
     },
     withdrawTruck: async workspaceId => {

@@ -50,7 +50,8 @@ const cachedSweep = (ttlMs: number, fetcher: Fetcher = fetch, selected: readonly
   };
 };
 
-export const liveSweep = cachedSweep(5 * 60_000);
+/** One minute is the slowest lifetime the providers declare (USGS: `max-age=60`, "updated every minute"; NWS: `max-age=5`; GDACS declares none): polling faster would only re-read USGS's cached copy, and one request per provider per minute is polite for all fourteen cities together. */
+export const liveSweep = cachedSweep(60_000);
 
 /** What a port agent asks on each alarm: failures are data, so this never rejects. */
 export const pollPort = async (portId: PortId, now: Date = new Date(), enabled: boolean = process.env.GAZETTEER_LIVE_SOURCES !== 'off'): Promise<readonly PortNotice[]> =>

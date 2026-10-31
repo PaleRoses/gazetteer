@@ -251,6 +251,7 @@ describe('the act 2 demo controls', () => {
     const called: string[] = [];
     const monitoring = {
       ...monitoringFixture,
+      delayMeridianStar: async (workspaceId: string) => { called.push(`delay:${workspaceId}`); return relaySuccess(dashboard); },
       withdrawTruck: async (workspaceId: string) => { called.push(`withdraw:${workspaceId}`); return relaySuccess(dashboard); },
       restartCargo: async (workspaceId: string) => { called.push(`restart:${workspaceId}`); return { status: 'unavailable' as const, message: 'The cargo agent is not ready yet.' }; },
     };
@@ -259,17 +260,21 @@ describe('the act 2 demo controls', () => {
     const other = await signup(api, 'other');
     const mine = owner.workspaces[0];
     if (!mine) throw new Error('Workspace missing');
+    const delay = `/api/workspaces/${mine.id}/delay-meridian-star`;
     const withdraw = `/api/workspaces/${mine.id}/withdraw-truck`;
     const restart = `/api/workspaces/${mine.id}/restart-cargo`;
     expect((await api(request(withdraw, undefined, {}))).status).toBe(401);
     expect((await api(request(withdraw, other.cookie, {}))).status).toBe(403);
+    expect((await api(request(delay, other.cookie, {}))).status).toBe(403);
+    expect((await api(request(delay, owner.cookie))).status).toBe(405);
     expect(called).toEqual([]);
+    expect((await api(request(delay, owner.cookie, {}))).status).toBe(200);
     const done = await api(request(withdraw, owner.cookie, {}));
     expect(done.status).toBe(200);
     expect((await done.json() as Dashboard).updatedAt).toBe(dashboard.updatedAt);
     const refused = await api(request(restart, owner.cookie, {}));
     expect(refused.status).toBe(503);
-    expect(called).toEqual([`withdraw:${mine.id}`, `restart:${mine.id}`]);
+    expect(called).toEqual([`delay:${mine.id}`, `withdraw:${mine.id}`, `restart:${mine.id}`]);
     expect((await api(request(withdraw, owner.cookie))).status).toBe(405);
     expect((await api(request(restart, owner.cookie))).status).toBe(405);
     access.close();
