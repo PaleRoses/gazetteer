@@ -13,6 +13,8 @@ import { MapBackdrop, ShipmentMap } from './Map';
 import { mergeComment, type CommentEvent } from './feed';
 import { createChangeFlash, createWorkspaceFeed, type FeedMode } from './live';
 import { AgentBoard } from './AgentBoard';
+import { SimulationPage } from './SimulationPage';
+import type { SimulationResult } from '../core/simulation';
 import { NewsPage } from './NewsPage';
 import './feed-pages.css';
 import { RouteCard, RouteDetails, routeName } from './Routes';
@@ -133,11 +135,11 @@ function ShipmentCard(props: Readonly<{ shipment: Shipment; ports: Dashboard['po
 }
 
 function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
-  const [simulating, setSimulating] = createSignal(false);
+  const [simulation, setSimulation] = createSignal<SimulationResult | null>(null);
   const [editing, setEditing] = createSignal<Shipment | 'new' | null>(null);
   const [operating, setOperating] = createSignal(false);
   const [operationError, setOperationError] = createSignal<string | null>(null);
-  const feed = createWorkspaceFeed(props.workspaceId, simulating);
+  const feed = createWorkspaceFeed(props.workspaceId, () => false);
   const dashboard = feed.dashboard;
   const [view, setView] = createSignal<View>(readView(window.location.hash, props.workspaceId));
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
@@ -165,7 +167,7 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
   const route = createMemo(() => { const current = view(); return current.kind === 'route' ? dashboard()?.routes?.find(r => r.id === current.id) : undefined; });
   const selected = createMemo(() => { const current = view(); return dashboard()?.shipments.find(s => s.id === (current.kind === 'voyage' ? current.id : selectedId())); });
   const detail = () => view().kind === 'route' || view().kind === 'voyage';
-  const feedPage = () => view().kind === 'news' || view().kind === 'activity' || view().kind === 'alerts';
+  const feedPage = () => view().kind === 'news' || view().kind === 'activity' || view().kind === 'alerts' || view().kind === 'simulation';
   const routesMode = () => view().kind === 'routes' || view().kind === 'route';
   const shipments = createMemo(() => dashboard()?.shipments.filter(s => (filter() === 'all' || s.risk !== 'on-track') && `${s.vessel} ${s.identity?.imo ?? ''} ${s.identity?.mmsi ?? ''} ${s.reference} ${s.cargo} ${dashboard()?.ports.find(p => p.id === s.origin)?.name} ${dashboard()?.ports.find(p => p.id === s.destination)?.name}`.toLowerCase().includes(query().trim().toLowerCase())) ?? []);
   const routes = createMemo(() => dashboard()?.routes?.filter(r => (filter() === 'all' || r.attention > 0) && routeName(r, dashboard()!).toLowerCase().includes(query().trim().toLowerCase())) ?? []);
@@ -184,16 +186,12 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
     if (operation.action === 'remove') { setSelectedId(null); navigate({ kind: 'shipments' }); }
     return true;
   }
-  async function simulate() {
-    setSimulating(true); setError(null);
-    const result = await request(`/api/workspaces/${props.workspaceId}/disruptions`, dashboardSchema, { portId: 'singapore', delayHours: 36 }); setSimulating(false);
-    if (result.ok) feed.accept(result.value); else setError(result.error);
-  }
   return <>
     <Show when={failure()}>{message => <div class="global-error"><ErrorNote message={message()} /><button class="retry-button" onClick={() => { setError(null); feed.retry(); }}>Retry</button></div>}</Show>
-    <nav class="operations-nav" aria-label="Monitoring views"><button classList={{ active: !routesMode() && !feedPage() }} aria-pressed={!routesMode() && !feedPage()} onClick={() => { setSelectedId(null); navigate({ kind: 'shipments' }); }}><Ship size={16} />Shipments<span>{dashboard()?.shipments.length ?? '—'}</span></button><button classList={{ active: routesMode() }} aria-pressed={routesMode()} onClick={() => { setSelectedId(null); navigate({ kind: 'routes' }); }}><RouteIcon size={16} />Routes<span>{dashboard()?.routes?.length ?? '—'}</span></button><button classList={{ active: view().kind === 'news' }} aria-pressed={view().kind === 'news'} onClick={() => navigate({ kind: 'news' })}><Newspaper size={16} />News<span>{dashboard()?.intelligence?.items.length ?? '—'}</span></button><button classList={{ active: view().kind === 'activity' }} aria-pressed={view().kind === 'activity'} onClick={() => navigate({ kind: 'activity' })}><Activity size={16} />Agent activity<span>{dashboard()?.board?.length ?? '—'}</span></button><button classList={{ active: view().kind === 'alerts' }} aria-pressed={view().kind === 'alerts'} onClick={() => navigate({ kind: 'alerts' })}><Bell size={16} />Alerts<span>{dashboard()?.operations?.alerts.filter(a => !a.acknowledgedAt).length ?? 0}</span></button><span class="monitoring-note">{view().kind === 'news' ? 'Reports from external sources' : view().kind === 'activity' ? 'Messages from ship & port agents' : routesMode() ? 'Shared corridors · both directions' : 'Your cargo, vessels & arrivals'}</span></nav>
+    <nav class="operations-nav" aria-label="Monitoring views"><button classList={{ active: !routesMode() && !feedPage() }} aria-pressed={!routesMode() && !feedPage()} onClick={() => { setSelectedId(null); navigate({ kind: 'shipments' }); }}><Ship size={16} />Shipments<span>{dashboard()?.shipments.length ?? '—'}</span></button><button classList={{ active: routesMode() }} aria-pressed={routesMode()} onClick={() => { setSelectedId(null); navigate({ kind: 'routes' }); }}><RouteIcon size={16} />Routes<span>{dashboard()?.routes?.length ?? '—'}</span></button><button classList={{ active: view().kind === 'news' }} aria-pressed={view().kind === 'news'} onClick={() => navigate({ kind: 'news' })}><Newspaper size={16} />News<span>{dashboard()?.intelligence?.items.length ?? '—'}</span></button><button classList={{ active: view().kind === 'activity' }} aria-pressed={view().kind === 'activity'} onClick={() => navigate({ kind: 'activity' })}><Activity size={16} />Agent activity<span>{dashboard()?.board?.length ?? '—'}</span></button><button classList={{ active: view().kind === 'alerts' }} aria-pressed={view().kind === 'alerts'} onClick={() => navigate({ kind: 'alerts' })}><Bell size={16} />Alerts<span>{dashboard()?.operations?.alerts.filter(a => !a.acknowledgedAt).length ?? 0}</span></button><button classList={{ active: view().kind === 'simulation' }} aria-pressed={view().kind === 'simulation'} onClick={() => navigate({ kind: 'simulation' })}><FlaskConical size={16} />Simulation</button><span class="monitoring-note">{view().kind === 'simulation' ? 'Isolated what-if scenarios' : view().kind === 'news' ? 'Reports from external sources' : view().kind === 'activity' ? 'Messages from ship & port agents' : routesMode() ? 'Shared corridors · both directions' : 'Your cargo, vessels & arrivals'}</span></nav>
     <Show when={editing()} keyed>{item => <Show when={dashboard()}>{current => <VesselEditor shipment={item === 'new' ? undefined : item} dashboard={current()} busy={operating()} error={operationError()} execute={operate} close={() => setEditing(null)} />}</Show>}</Show>
     <Show when={view().kind === 'alerts'}><AlertsPage dashboard={dashboard()} busy={operating()} error={operationError()} execute={operate} openVoyage={openVoyage} notifications={notifications} /></Show>
+    <Show when={view().kind === 'simulation'}><SimulationPage dashboard={dashboard()} result={simulation()} onResult={setSimulation} /></Show>
     <Show when={view().kind === 'news'}><NewsPage dashboard={dashboard()} onInspect={option => { openVoyage(option.shipmentId); setInspected(option); }} /></Show>
     <Show when={view().kind === 'activity'}><div class="activity-page"><details class="activity-evidence"><summary>Port risk & attributed evidence chains</summary><Show when={dashboard()}>{current => <SocietyPanel dashboard={current()} onSelectShip={openVoyage} />}</Show></details><AgentBoard dashboard={dashboard()} connection={feed.mode()} /></div></Show>
     <Show when={!feedPage()}>
@@ -205,7 +203,7 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
       <footer class="list-footer"><span class={`status-dot ${feed.mode()}`} /><span>{dashboard() ? `Updated ${time(dashboard()!.updatedAt)} UTC` : 'Connecting'}</span><span class={`feed-mode ${feed.mode()}`}>{feedLabel[feed.mode()]}</span></footer></aside></div></Show>
       <section class="map-panel" aria-label={routesMode() ? 'Route overview map' : 'Shipment overview map'}><div class="map-heading"><span><span class="status-dot" />{routesMode() ? 'MONITORED CORRIDORS' : 'OCEAN FREIGHT'}</span><Show when={dashboard()?.startup}>{startup => <span class="startup-chip" role="status">Agents starting · {startup().ready}/{startup().total}<Show when={startup().queued}> · {startup().queued} queued</Show></span>}</Show></div><ShipmentMap dashboard={mapDashboard()} selected={selected()} focusId={selectedId()} onSelect={selectShip} onOpen={() => { if (selected()) openVoyage(selected()!.id); }} onDismiss={() => setSelectedId(null)} inspected={inspected()} corridor={route()} routeMode={routesMode()} onRoute={openRoute} showPopup={Boolean(selected()) && view().kind !== 'voyage' && !inspected()} />
       <Show when={selected() && view().kind !== 'voyage'}><button class="selected-voyage-link" onClick={() => openVoyage(selected()!.id)}>Open {selected()?.vessel} briefing<ArrowRight size={14} /></button></Show>
-      <Show when={!route() || route()!.endpoints.includes('singapore')}><div class="simulation-card"><span class="simulation-icon"><FlaskConical size={20} /></span><div><strong>Put the plan to the test.</strong><p>Simulate a 36-hour disruption at Singapore. Watch affected shipments and route summaries update.</p><button class="simulation-button" onClick={() => { void simulate(); }} disabled={simulating() || !dashboard()}><FlaskConical size={14} />{simulating() ? 'Assessing impact…' : 'Simulate port disruption'}<ArrowRight size={14} /></button></div></div></Show><div class="runtime-note">{dashboard() ? `${dashboard()!.runtime} · ${dashboard()!.relay}` : 'Connecting…'}</div></section>
+      <div class="runtime-note">{dashboard() ? `${dashboard()!.runtime} · ${dashboard()!.relay}` : 'Connecting…'}</div></section>
       <Show when={dashboard()}>{current => <>
         <Show when={view().kind === 'voyage' && selected()?.id} keyed>{id => <div class="voyage-detail-column"><Show when={selected()}>{ship => <VoyageFacts shipment={ship()} dashboard={current()} edit={() => edit(ship())} />}</Show><div class="voyage-route-links"><span class="section-kicker">MONITORED ROUTE LEGS</span><For each={current().routes?.filter(r => r.shipmentIds.includes(id))}>{r => <button onClick={() => openRoute(r.id)}>{routeName(r, current())}<ArrowRight size={13} /></button>}</For></div><ShipmentDetails shipmentId={id} dashboard={current()} workspaceId={props.workspaceId} live={feed.mode() === 'live'} incoming={feed.comments()} /></div>}</Show>
         <Show when={route()}>{r => <RouteDetails route={r()} dashboard={current()} onVoyage={openVoyage} />}</Show>

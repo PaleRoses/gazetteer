@@ -113,3 +113,7 @@ A voyage briefing shows identity, previous/departure port, next port, departure,
 **Alerts** stores ETA changes (including cumulative small changes), reported arrivals/departures, prolonged operator-reported stops, and stale telemetry when a timestamp exists. Thresholds, episode deduplication and acknowledgements persist in `.data/operations.sqlite`, scoped to the workspace. Sources remain labelled operator, simulation or live. Desktop notifications require the user's browser permission and an open workspace tab; there is no closed-browser push, email or SMS delivery. A fresh tab does not replay historical alerts as notifications. The inbox retains the most recent 250 alerts in its view.
 
 Run `npm run verify` before pushing directly to `main`; fetch and integrate upstream changes first.
+
+### What-if simulation
+
+The Simulation tab offers berth congestion, severe weather and terminal closure presets, a destination port picker, and a 1–168 hour delay assumption. Each run captures the current fleet and compares future destination ETAs with the assumed delay added once. Results stay in the browser, persist while switching workspace tabs, and never write to durable actors, Relay, the main map, fleet or alerts. This is a labelled rule-based planning estimate; transit calls, route changes and congestion propagation are outside its scope.
