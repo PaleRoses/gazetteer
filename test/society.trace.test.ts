@@ -70,4 +70,3 @@ describe('the society on a fake clock, model off', () => {
     expect(troubled.ships.get('gz-1052')!.shipment.risk).toBe('on-track');
   });
 });
-

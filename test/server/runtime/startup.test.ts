@@ -105,3 +105,18 @@ describe('createStartup', () => {
     expect(startup.status('w').complete).toBe(false);
   });
 });
+
+test('new fleet actors and revised voyages join an already started workspace without restarting ready actors', async () => {
+  const runs: string[] = [];
+  let keys = ['port', 'ship:v1'];
+  const startup = createStartup({ tasksOf: () => keys.map(key => ({ key, ...(key !== 'port' ? { after: 'port' } : {}), run: async () => { runs.push(key); return true; } })), limit: createLimiter(2) });
+  startup.ensure('fleet');
+  await settled(() => startup.status('fleet').complete);
+  keys = ['port', 'ship:v2', 'new-ship'];
+  startup.reconcile('fleet');
+  await settled(() => startup.status('fleet').complete);
+  expect(runs).toEqual(['port', 'ship:v1', 'ship:v2', 'new-ship']);
+  expect(startup.isReady('fleet', 'new-ship')).toBe(true);
+  expect(startup.status('fleet')).toEqual({ ready: 3, total: 3, complete: true });
+  startup.close();
+});

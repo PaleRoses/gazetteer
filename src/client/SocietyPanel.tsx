@@ -5,13 +5,9 @@ import type { BoardMessage, PortRisk, ShipAssessment, ShipObservation } from '..
 import type { Dashboard } from '../core/types';
 import { resolveBoardCitations, type Citation } from './citations';
 import { actorName, boardAnchor } from './ActorLine';
+import { boardKinds } from './board-view';
 import { date, EvidenceCard, portName, RiskBadge, time } from './presentation';
 
-const kindLabel: Readonly<Record<BoardMessage['kind'], string>> = {
-  'port.bulletin': 'Port bulletin', 'ship.observation': 'Ship observation',
-  'ship.assessment': 'Ship assessment', 'ship.eta': 'Arrival update',
-  'city.traffic': 'City traffic report', 'city.hazards': 'City hazards report',
-};
 const methodLabel: Readonly<Record<ShipAssessment['method'], string>> = {
   'ai-assessed': 'AI assessment', 'deterministic-fallback': 'Rule-based fallback', deterministic: 'Deterministic model', 'rule-based': 'Rule-based assessment',
 };
@@ -24,7 +20,7 @@ function BoardCitation(props: Readonly<{ citation: Citation; dashboard: Dashboar
   const content = (): JSX.Element => {
     const citation = props.citation;
     switch (citation.kind) {
-      case 'message': return <div class="message-citation"><Show when={props.dashboard.board?.some(message => message.id === citation.id)} fallback={<strong>{kindLabel[citation.message.kind]} · {actorName(citation.message.author, props.dashboard)}</strong>}><a href={`#${encodeURIComponent(boardAnchor(citation.id))}`} onClick={() => props.onOpenMessage(citation.id)}>{kindLabel[citation.message.kind]} · {actorName(citation.message.author, props.dashboard)}</a></Show><p>{citation.message.summary}</p><small>{date(citation.message.at)}, {time(citation.message.at)} UTC</small></div>;
+      case 'message': return <div class="message-citation"><Show when={props.dashboard.board?.some(message => message.id === citation.id)} fallback={<strong>{boardKinds[citation.message.kind]} · {actorName(citation.message.author, props.dashboard)}</strong>}><a href={`#${encodeURIComponent(boardAnchor(citation.id))}`} onClick={event => { event.preventDefault(); props.onOpenMessage(citation.id); document.getElementById(boardAnchor(citation.id))?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>{boardKinds[citation.message.kind]} · {actorName(citation.message.author, props.dashboard)}</a></Show><p>{citation.message.summary}</p><small>{date(citation.message.at)}, {time(citation.message.at)} UTC</small></div>;
       case 'evidence': return <EvidenceCard evidence={citation.evidence} />;
       case 'unresolved': return <p class="unavailable-citation">Citation unavailable: <code>{citation.id}</code></p>;
     }
@@ -53,10 +49,10 @@ function BoardEntry(props: Readonly<{ message: BoardMessage; dashboard: Dashboar
     return unhandled;
   };
   return <article class="board-entry" id={boardAnchor(props.message.id)} tabIndex={-1}>
-    <header><span class="board-kind">{kindLabel[props.message.kind]}</span><time dateTime={props.message.at}>{date(props.message.at)}, {time(props.message.at)} UTC</time></header>
-    <h3>{actorName(props.message.author, props.dashboard)}</h3><Show when={citedMessages().length > 0}><ul class="board-edges" aria-label="Cited actors"><For each={citedMessages()}>{message => <li>Cites <strong>{actorName(message.author, props.dashboard)}</strong><span>{kindLabel[message.kind]}</span></li>}</For></ul></Show><p class="board-summary">{props.message.summary}</p>{details()}
+    <header><span class="board-kind">{boardKinds[props.message.kind]}</span><time dateTime={props.message.at}>{date(props.message.at)}, {time(props.message.at)} UTC</time></header>
+    <h3>{actorName(props.message.author, props.dashboard)}</h3><Show when={citedMessages().length > 0}><ul class="board-edges" aria-label="Cited actors"><For each={citedMessages()}>{message => <li>Cites <strong>{actorName(message.author, props.dashboard)}</strong><span>{boardKinds[message.kind]}</span></li>}</For></ul></Show><p class="board-summary">{props.message.summary}</p>{details()}
     <Show when={citations().length > 0}><details class="board-citations" open={props.threadId === props.message.id} onToggle={event => { if (event.currentTarget.open) props.onOpenMessage(props.message.id); else if (props.threadId === props.message.id) props.onOpenMessage(null); }}><summary>Cites {citations().length} {citations().length === 1 ? 'item' : 'items'}</summary><p class="citation-note">References supplied by this actor, not proof of receipt by another actor.</p><ul><For each={citations()}>{citation => <BoardCitation citation={citation} dashboard={props.dashboard} onOpenMessage={props.onOpenMessage} />}</For></ul></details></Show>
-    <Show when={shipment()}>{ship => <a class="board-ship-link" href="#shipment-details" onClick={() => props.onSelectShip(ship().id)}><Ship size={14} />Inspect {ship().vessel}<ArrowRight size={14} /></a>}</Show>
+    <Show when={shipment()}>{ship => <a class="board-ship-link" href="#shipment-details" onClick={event => { event.preventDefault(); props.onSelectShip(ship().id); }}><Ship size={14} />Inspect {ship().vessel}<ArrowRight size={14} /></a>}</Show>
   </article>;
 }
 
@@ -67,7 +63,7 @@ function PortStatusList(props: Readonly<{ dashboard: Dashboard }>) {
     || (right.status?.relevance ?? 0) - (left.status?.relevance ?? 0)
     || left.port.name.localeCompare(right.port.name)));
   return <section class="society-section port-section" id="workspace-ports" aria-labelledby="ports-title"><div class="society-heading"><div><span class="section-kicker">PORT WATCH</span><h2 id="ports-title"><Anchor size={19} />Ports & route relevance</h2></div><a href="#workspace-shipments">Back to ships</a></div><p class="society-intro">Relevant ports serve the remaining routes of your workspace’s ships. Risk and relevance are separate signals.</p>
-    <div class="port-status-list"><For each={ports()}>{entry => <article class="port-status-card"><header><div><h3>{entry.port.name}</h3><small>{entry.port.country}</small></div><Show when={entry.status} fallback={<span class="port-risk not-reported">Not reported</span>}>{status => <span class={`port-risk port-risk-${status().risk}`}>{status().risk}</span>}</Show></header><Show when={entry.status} fallback={<p class="muted">Route relevance and port conditions have not been reported.</p>}>{status => <><p class="port-relevance">{status().relevance} {status().relevance === 1 ? 'ship route' : 'ship routes'} in this workspace</p><Show when={status().bulletin} fallback={<p class="muted">No bulletin supplied with this status.</p>}>{bulletin => <><p>{bulletin().summary}</p><small>Port actor · {date(bulletin().at)}, {time(bulletin().at)} UTC</small><a class="port-board-link" href="#actor-board">Inspect actor board<ArrowRight size={13} /></a></>}</Show></>}</Show></article>}</For></div>
+    <div class="port-status-list"><For each={ports()}>{entry => <article class="port-status-card"><header><div><h3>{entry.port.name}</h3><small>{entry.port.country}</small></div><Show when={entry.status} fallback={<span class="port-risk not-reported">Not reported</span>}>{status => <span class={`port-risk port-risk-${status().risk}`}>{status().risk}</span>}</Show></header><Show when={entry.status} fallback={<p class="muted">Route relevance and port conditions have not been reported.</p>}>{status => <><p class="port-relevance">{status().relevance} {status().relevance === 1 ? 'ship route' : 'ship routes'} in this workspace</p><Show when={status().bulletin} fallback={<p class="muted">No bulletin supplied with this status.</p>}>{bulletin => <><p>{bulletin().summary}</p><small>Port actor · {date(bulletin().at)}, {time(bulletin().at)} UTC</small><a class="port-board-link" href="#actor-board" onClick={event => { event.preventDefault(); document.getElementById('actor-board')?.scrollIntoView({ behavior: 'smooth' }); }}>Inspect actor board<ArrowRight size={13} /></a></>}</Show></>}</Show></article>}</For></div>
     <Show when={props.dashboard.ports.length === 0}><p class="society-empty">No ports are available in this workspace snapshot.</p></Show>
   </section>;
 }

@@ -32,7 +32,10 @@ export async function think(thinker: Thinker, start: Thoughts, read: ChannelRead
   if (!read) return { messages: [], state: { ...start, shipment: watched.shipment, baseRisk: watched.shipment.risk, assessmentCache: watched.cache, telemetry: watched.state, seen, mind: watched.session } };
   const own = start.board?.observed ? `obs:${start.board.observed}` : null;
   const reacted = react(watched.shipment, seen, start.reactions ?? {}, own, now);
-  const assessed = await assessNotices({ ...assess, session: watched.session }, watched.cache, reacted.shipment, read.disruptions, evidence);
+  // A manually replaced plan starts a new demo: earlier synthetic exercises must not move its new baseline.
+  // Live notices remain eligible regardless of publication time.
+  const notices = read.disruptions.filter(notice => !start.shipment.voyage || notice.evidence.source !== 'simulation' || Date.parse(notice.evidence.observedAt) >= Date.parse(start.shipment.voyage.updatedAt));
+  const assessed = await assessNotices({ ...assess, session: watched.session }, watched.cache, reacted.shipment, notices, evidence);
   const floor = riskFloor(assessed.shipment.signals ?? [], reacted.summary);
   const modelled = assessed.shipment.change !== start.shipment.change;
   const shipment: Shipment = { ...assessed.shipment, risk: applyFloor(assessed.shipment.risk, floor), ...(floor && !modelled ? { change: floorChange(floor, reacted.summary.hours) } : {}) };

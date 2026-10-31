@@ -127,3 +127,13 @@ describe('geometry helpers', () => {
     expect(lines.some(feature => feature.properties?.id === 'lon-180')).toBe(true);
   });
 });
+
+test('operator status pins planned and arrived voyages and freezes a reported stop', () => {
+  const ship = demoShipments(new Date('2026-10-31T12:00:00Z'))[0]!;
+  const voyage = { source: 'operator' as const, updatedBy: 'Operator', updatedAt: '2026-10-31T12:00:00Z', departure: ship.milestones[0]!.at, eta: ship.eta, statusSince: '2026-10-31T12:00:00Z' };
+  const now = Date.parse('2026-11-01T12:00:00Z');
+  expect(vesselView({ ...ship, voyage: { ...voyage, status: 'planned' } }, now).progress).toBe(0);
+  expect(vesselView({ ...ship, voyage: { ...voyage, status: 'arrived' } }, now).progress).toBe(1);
+  const stopped = { ...ship, voyage: { ...voyage, status: 'stopped' as const } };
+  expect(vesselView(stopped, now).position).toEqual(vesselView(stopped, now + 86400000).position);
+});

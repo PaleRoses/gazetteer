@@ -14,7 +14,8 @@ export const vesselView = (shipment: Shipment, now: number): VesselView => {
   const lane = voyageRoute(shipment);
   const route = lane ?? unwrap(shipment.route);
   const departed = departure(shipment);
-  const progress = departed === undefined ? 0 : progressAt(departed, shipment.eta, now);
+  const at = shipment.voyage?.status === 'stopped' ? Date.parse(shipment.voyage.statusSince) : now;
+  const progress = shipment.voyage?.status === 'planned' ? 0 : shipment.voyage?.status === 'arrived' ? 1 : departed === undefined ? 0 : progressAt(departed, shipment.eta, at);
   return {
     id: shipment.id, vessel: shipment.vessel, risk: shipment.risk, route, progress,
     laneSource: lane ? 'sea-lane' : 'supplied',

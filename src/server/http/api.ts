@@ -1,3 +1,5 @@
+import { operationSchema } from '../../core/operations';
+import { OperationsError } from '../runtime/operations';
 import { zValidator } from '@hono/zod-validator';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -12,7 +14,7 @@ type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask'>>; origin: string; ingest?: IngestFeed; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask' | 'operate'>>; origin: string; ingest?: IngestFeed; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
 type App = Readonly<{ Bindings: Readonly<{ clientKey: string }>; Variables: Readonly<{ user: User; token: string | undefined; membership: Workspace }> }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
@@ -42,7 +44,7 @@ const body = <S extends z.ZodType>(schema: S) => zValidator('json', schema, resu
 const loopbackHosts: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
 const demoOperator = { email: 'demo@gazetteer.local', name: 'Demo operator', workspaceName: 'Demo fleet' } as const;
 const tooMany = (): Response => json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
-const workspaceResources = ['dashboard', 'events', 'disruptions', 'members', 'invitations'] as const;
+const workspaceResources = ['operations', 'dashboard', 'events', 'disruptions', 'members', 'invitations'] as const;
 /** Ids are matched as written in the URL, never percent-decoded: `gz%2D1042` is not `gz-1042`. Segments: '', api, workspaces, <workspace>, shipments, <shipment>, comments. */
 const segment = (c: Context, index: number): string => new URL(c.req.url).pathname.split('/')[index] ?? '';
 const workspaceOf = (c: Context): string => segment(c, 3);
@@ -106,6 +108,7 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
     })
     .post('/api/workspaces', jsonOnly, body(z.object({ name: z.string().trim().min(1).max(100) })), c => respond(access.createWorkspace(c.get('user').id, c.req.valid('json').name)))
     .post('/api/invitations/accept', jsonOnly, body(z.object({ token: z.string().min(1).max(128) })), c => respond(access.acceptInvite(c.get('user').id, c.req.valid('json').token)))
+    .post('/api/workspaces/:workspaceId/operations', member, jsonOnly, body(operationSchema), async c => monitoring.operate ? monitoringResponse(await monitoring.operate(workspaceOf(c), c.req.valid('json'), c.get('user').name)) : json({ error: 'Fleet editing is unavailable.' }, 503))
     .get('/api/workspaces/:workspaceId/dashboard', member, async c => monitoringResponse(await monitoring.dashboard(workspaceOf(c))))
     .get('/api/workspaces/:workspaceId/events', member, c => events ? events(c.req.raw, workspaceOf(c)) : json({ error: 'Not found' }, 404))
     .get('/api/workspaces/:workspaceId/members', member, c => respond(access.members(c.get('user').id, workspaceOf(c)), members => ({ members })))
@@ -147,6 +150,7 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
     .notFound(() => json({ error: 'Not found' }, 404))
     // A body that is not JSON at all is the validator's one throw; it answers like any invalid body. Anything else is not ours to hide.
     .onError(error => {
+      if (error instanceof OperationsError) return json({ error: error.message }, 400);
       if (error instanceof HTTPException && error.status === 400) return json({ error: 'Invalid request fields' }, 400);
       throw error;
     });

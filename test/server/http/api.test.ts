@@ -197,3 +197,23 @@ describe('the ingest view', () => {
     access.close();
   });
 });
+
+test('fleet mutations require workspace membership, same origin and valid fields before reaching monitoring', async () => {
+  const access = createAccess(':memory:');
+  const calls: string[] = [];
+  const api = createApi({ access, origin, monitoring: { ...monitoringFixture, operate: async (id, _operation, author) => { calls.push(`${id}:${author}`); return relaySuccess(dashboard); } } });
+  try {
+    const owner = await signup(api, 'fleetowner');
+    const outsider = await signup(api, 'fleetoutsider');
+    const workspace = owner.workspaces[0]!.id;
+    const path = `/api/workspaces/${workspace}/operations`;
+    const operation = { action: 'preferences', preferences: { etaHours: 6, stopHours: 6, staleHours: 6 } };
+    expect((await api(request(path, undefined, operation))).status).toBe(401);
+    expect((await api(request(path, outsider.cookie, operation))).status).toBe(403);
+    expect((await api(request(path, owner.cookie, operation, 'https://other.example')))).toHaveProperty('status', 403);
+    expect((await api(request(path, owner.cookie, { ...operation, preferences: { etaHours: -1 } }))).status).toBe(400);
+    expect(calls).toHaveLength(0);
+    expect((await api(request(path, owner.cookie, operation))).status).toBe(200);
+    expect(calls).toEqual([`${workspace}:fleetowner`]);
+  } finally { access.close(); }
+});

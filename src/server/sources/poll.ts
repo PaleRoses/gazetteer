@@ -8,7 +8,7 @@ import { fetchNws } from './nws';
 import { fetchUsgs } from './usgs';
 
 export type Feed = Readonly<{ provider: NoticeProvider; fetch: (now: Date, fetcher: Fetcher) => Promise<FetchResult> }>;
-const feeds: readonly Feed[] = [{ provider: 'gdacs', fetch: fetchGdacs }, { provider: 'nws', fetch: fetchNws }, { provider: 'usgs', fetch: fetchUsgs }];
+export const feeds: readonly Feed[] = [{ provider: 'gdacs', fetch: fetchGdacs }, { provider: 'nws', fetch: fetchNws }, { provider: 'usgs', fetch: fetchUsgs }];
 
 export const places: readonly Place[] = ports.map(port => ({ id: port.id, name: port.name, coordinates: port.coordinates }));
 export const lanes = (now: Date): readonly Lane[] => demoShipments(now).map(shipment => ({ id: shipment.id, path: shipment.route }));
@@ -50,7 +50,7 @@ const cachedSweep = (ttlMs: number, fetcher: Fetcher = fetch, selected: readonly
   };
 };
 
-const liveSweep = cachedSweep(5 * 60_000);
+export const liveSweep = cachedSweep(5 * 60_000);
 
 /** What a port agent asks on each alarm: failures are data, so this never rejects. */
 export const pollPort = async (portId: PortId, now: Date = new Date(), enabled: boolean = process.env.GAZETTEER_LIVE_SOURCES !== 'off'): Promise<readonly PortNotice[]> =>

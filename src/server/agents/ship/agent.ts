@@ -21,7 +21,7 @@ import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } f
 import { checkIntervalMs } from '../alarm';
 import { connect } from '../../relay/connect';
 
-type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; baseRisk?: Risk; reactions?: Reactions; mind?: string | null; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
+type ShipmentState = Readonly<{ paused?: boolean; shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; baseRisk?: Risk; reactions?: Reactions; mind?: string | null; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
 const assessment = shipMindFromEnv(process.env, query);
 const asker = shipAskerFromEnv(process.env, query);
 export type ShipAnswer = Readonly<{ status: 'answered'; answer: string; cited: readonly string[]; mind: string; session: string | null }> | Readonly<{ status: 'unavailable'; message: string }>;
@@ -35,11 +35,12 @@ const unionHeard = (read: RelayOutcome<ChannelRead>, heard: Inbox): RelayOutcome
 });
 
 export class ShipmentAgent extends Actor {
+  @Persisted private paused = false;
   @Persisted private state: ShipmentState | null = null;
   @Persisted private nextCheckAt: number | null = null;
 
   async resume(): Promise<void> {
-    if (!this.state) return;
+    if (!this.state || this.state.paused || this.paused) return;
     this.state = { ...this.state, shipment: named(this.state.shipment, demoShipments().map(item => item.id)), synced: false };
     this.nextCheckAt = this.nextCheckAt ?? Date.now();
     this.alarm.set(this.nextCheckAt);
@@ -53,6 +54,11 @@ export class ShipmentAgent extends Actor {
   async initialize(workspaceId: string, shipment: Shipment, workspaceKey: string, mmsi?: string): Promise<RelayOutcome<null>> {
     if (mmsi !== undefined && !mmsiPattern.test(mmsi)) return { status: 'unavailable', message: 'MMSI must be nine digits.' };
     if (mmsi && this.state && this.state.mmsi !== mmsi) this.state = { ...this.state, mmsi };
+    if (this.paused || this.state?.paused) return relaySuccess(null);
+    if (this.state && shipment.voyage && this.state.shipment.voyage?.updatedAt !== shipment.voyage.updatedAt) {
+      this.state = { ...this.state, shipment, assessmentCache: {}, telemetry: undefined, board: undefined, baseRisk: 'on-track', reactions: undefined, mind: null, seen: [], inbox: emptyInbox, boardOutbox: [] };
+      await this.scheduleCheck();
+    }
     if (this.state?.ready) return relaySuccess(null);
     await this.scheduleCheck();
     if (!this.state) {
@@ -65,6 +71,8 @@ export class ShipmentAgent extends Actor {
     this.state = { ...this.state, ready: true };
     return relaySuccess(null);
   }
+
+  async pause(): Promise<void> { this.paused = true; if (this.state) this.state = { ...this.state, paused: true, boardOutbox: [] }; }
 
   async snapshot(): Promise<Shipment | null> { return this.state?.shipment ?? null; }
 
@@ -80,12 +88,14 @@ export class ShipmentAgent extends Actor {
 
   /** The server heard these on the Relay stream (or authored them): take them locally instead of reading Relay. */
   async deliver(batch: Inbox): Promise<void> {
-    if (this.state) this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, batch) };
+    if (this.state && !this.state.paused && !this.paused) this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, batch) };
   }
 
   async check(): Promise<RelayOutcome<Shipment>> {
+    if (this.paused || this.state?.paused) return this.state ? relaySuccess(this.state.shipment) : { status: 'unavailable', message: 'Vessel removed from fleet.' };
     await this.scheduleCheck();
     if (!this.state) return { status: 'unavailable', message: 'Shipment monitoring has not been initialized.' };
+    if (this.state.shipment.voyage?.status === 'planned' || this.state.shipment.voyage?.status === 'arrived') return relaySuccess(this.state.shipment);
     const start = this.state;
     const now = new Date().toISOString();
     const connection = await connect(start, false);
@@ -94,6 +104,7 @@ export class ShipmentAgent extends Actor {
       ? relaySuccess({ board: heard.board, disruptions: heard.disruptions, cursor: start.cursor ?? null })
       : connection.status === 'unavailable' ? connection : unionHeard(await readChannel(start.relay, start.cursor ?? null), heard);
     const thought = await think({ assess: assessment, binding: (shipment, mmsi) => telemetryBinding(shipment, mmsi, demo, telemetrySource) }, start, channel.status === 'ok' ? channel.value : null, now);
+    if (this.paused || this.state?.paused) return this.state ? relaySuccess(this.state.shipment) : { status: 'unavailable', message: 'Vessel removed from fleet.' };
     if (channel.status === 'unavailable') {
       this.state = { ...start, ...thought.state };
       return channel;
@@ -105,7 +116,7 @@ export class ShipmentAgent extends Actor {
 
   /** What this ship has decided to say that Relay has not acknowledged yet; the server echoes it locally and writes it to Relay itself. */
   async unpublished(): Promise<Outgoing<Disruption> | null> {
-    return this.state ? { relay: this.state.relay, board: this.state.boardOutbox ?? [], disruptions: [] } : null;
+    return this.state && !this.state.paused && !this.paused ? { relay: this.state.relay, board: this.state.boardOutbox ?? [], disruptions: [] } : null;
   }
 
   async acknowledge(sent: readonly string[]): Promise<void> {

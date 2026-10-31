@@ -51,4 +51,3 @@ export async function runSociety(scenarios: (cycle: number) => Readonly<Record<s
   }
   return { board, ships };
 }
-

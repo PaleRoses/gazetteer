@@ -1,8 +1,9 @@
-import type { PortId } from '../../core/ports';
+import type { ReportContext, WarningSeverity } from '../../core/types';
+import { type PortId } from '../../core/ports';
 
-export type NoticeKind = 'cyclone' | 'flood' | 'volcano' | 'earthquake' | 'weather';
-export type NoticeSeverity = 'minor' | 'moderate' | 'severe' | 'extreme';
-export type NoticeProvider = 'gdacs' | 'nws' | 'usgs';
+export type NoticeKind = 'cyclone' | 'flood' | 'volcano' | 'earthquake' | 'weather' | 'security';
+export type NoticeSeverity = WarningSeverity;
+export type NoticeProvider = 'gdacs' | 'nws' | 'usgs' | 'ap' | 'marad' | 'reuters';
 export type LonLat = readonly [number, number];
 
 export type NoticeGeometry =
@@ -13,7 +14,7 @@ export type NoticeGeometry =
 export type Notice = Readonly<{
   id: string; provider: NoticeProvider; kind: NoticeKind; severity: NoticeSeverity;
   title: string; detail: string; observedAt: string; expiresAt: string | null;
-  geometry: NoticeGeometry; url: string; fetchedAt: string; provenance: 'live';
+  geometry: NoticeGeometry; url: string; fetchedAt: string; provenance: 'live'; report?: ReportContext;
 }>;
 
 export type FetchResult =

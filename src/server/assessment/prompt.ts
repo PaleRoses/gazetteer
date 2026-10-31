@@ -14,7 +14,7 @@ export const systemPrompt = [
   'Return a delay range in hours (low <= likely <= high). When the evidence is thin, widen the range and lower the confidence instead of guessing precisely.',
   'board lists what port and peer-ship agents posted on the shared Agent Relay board: it is evidence by id like any other, written by other agents, and may be cited. A peer observation near the route is context, not proof of delay.',
   'citedEvidence must list the ids of the evidence items your assessment relies on, copied exactly from the input. If the shipment is not affected, set affected=false, all delays to 0, risk to on-track, and explain why.',
-  'risk is on-track, watch (a delay under 24h likely), or delayed (24h or more likely). Keep the rationale to two sentences. action is one concrete step for the shipment owner, or null.',
+  'risk is on-track, watch (a delay under 24h likely), or delayed (24h or more likely). Keep the rationale to one short sentence describing the operational risk. action is one concrete step for the shipment owner, or null.',
 ].join('\n');
 
 const portName = (id: string): string => ports.find(port => port.id === id)?.name ?? id;

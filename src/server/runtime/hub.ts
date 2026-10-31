@@ -18,7 +18,7 @@ export type Hub = Readonly<{
   active(): readonly string[];
 }>;
 
-const signature = (dashboard: Dashboard): string => JSON.stringify({ ...dashboard, updatedAt: null });
+const signature = (dashboard: Dashboard): string => JSON.stringify({ ...dashboard, updatedAt: null, ...(dashboard.routes ? { routes: dashboard.routes.map(route => ({ ...route, ...(route.intelligence ? { intelligence: { ...route.intelligence, checkedAt: null } } : {}) })) } : {}), ...(dashboard.intelligence ? { intelligence: { ...dashboard.intelligence, checkedAt: null } } : {}) });
 
 export function createHub(): Hub {
   const listeners = new Map<string, ReadonlySet<Listener>>();

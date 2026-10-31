@@ -14,7 +14,7 @@ const nearestInBbox = (box: Extract<NoticeGeometry, { kind: 'bbox' }>, at: LonLa
   [clamp(at[0], box.west, box.east), clamp(at[1], box.south, box.north)];
 
 /** Representative points of a geometry: its point, or a bbox's centre and corners. Zones carry no coordinates. */
-const anchors = (geometry: NoticeGeometry): readonly LonLat[] => {
+export const anchors = (geometry: NoticeGeometry): readonly LonLat[] => {
   switch (geometry.kind) {
     case 'point': return [geometry.coordinates];
     case 'bbox': return [
