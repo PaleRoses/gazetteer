@@ -3,7 +3,7 @@ import type { GeoJSONSource, Map as MapLibreMap, Marker, StyleSpecification } fr
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type { Dashboard, Shipment } from '../core/types';
-import { boundsOf, graticule, routeLayers, vesselViews, type VesselView } from './map-model';
+import { boundsOf, graticule, portFeatures, routeLayers, vesselViews, type VesselView } from './map-model';
 
 type MapLibre = typeof import('maplibre-gl');
 type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void }>;
@@ -35,6 +35,24 @@ const addRouteLayers = (map: MapLibreMap): void => {
   map.addLayer({ id: 'sailed', type: 'line', source: 'sailed', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 3.2 } });
 };
 
+const addPortLayers = (map: MapLibreMap): void => {
+  map.addSource('ports', { type: 'geojson', data: portFeatures([]) });
+  map.addLayer({
+    id: 'ports', type: 'circle', source: 'ports', paint: {
+      'circle-radius': ['match', ['get', 'risk'], 'severe', 7, 'elevated', 6, 4],
+      'circle-color': ['match', ['get', 'risk'], 'normal', '#16815c', 'elevated', '#c58217', 'severe', '#c3483c', 'transparent'],
+      'circle-stroke-color': ['match', ['get', 'risk'], 'unreported', '#68798a', '#ffffff'],
+      'circle-stroke-width': 2,
+    },
+  });
+  map.addLayer({
+    id: 'port-labels', type: 'symbol', source: 'ports', layout: {
+      'text-field': ['get', 'label'], 'text-font': ['Arial', 'sans-serif'], 'text-size': 11,
+      'text-anchor': 'left', 'text-offset': [0.9, 0], 'text-max-width': 16, 'text-line-height': 1.3,
+    }, paint: { 'text-color': '#1b3b59', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
+  });
+};
+
 const SHIP_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1 .6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-9-4-9 4c0 2.9.94 5.34 2.81 7.76"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M12 10v4"/><path d="M12 2v3"/></svg>';
 
 const element = (tag: string, className: string, text?: string): HTMLElement => {
@@ -63,7 +81,7 @@ const decorate = (button: HTMLElement, view: VesselView, selected: boolean): voi
   button.style.zIndex = selected ? '3' : view.risk === 'on-track' ? '1' : '2';
 };
 
-const setLines = (map: MapLibreMap, id: string, data: GeoJSON.FeatureCollection): void => { (map.getSource(id) as GeoJSONSource | undefined)?.setData(data); };
+const setFeatures = (map: MapLibreMap, id: string, data: GeoJSON.FeatureCollection): void => { (map.getSource(id) as GeoJSONSource | undefined)?.setData(data); };
 
 export function ShipmentMap(props: Selection) {
   let container: HTMLDivElement | undefined;
@@ -95,12 +113,13 @@ export function ShipmentMap(props: Selection) {
       map.addControl(new lib.AttributionControl({ compact: true, customAttribution: 'Natural Earth · Eurostat SeaRoute lanes · positions simulated' }), 'bottom-right');
       map.addControl(new lib.NavigationControl({ showCompass: false }), 'top-right');
       OCEANS.forEach(([name, lon, lat]) => new lib.Marker({ element: element('span', 'ocean-label', name), anchor: 'center' }).setLngLat([lon, lat]).addTo(map));
-      map.on('load', () => { addRouteLayers(map); if (!disposed) setReady({ lib, map }); });
+      map.on('load', () => { addRouteLayers(map); addPortLayers(map); if (!disposed) setReady({ lib, map }); });
       map.on('error', event => { if (!disposed && (event as { sourceId?: string }).sourceId === 'land') setFailed(true); });
     }).catch(() => { if (!disposed) setFailed(true); });
   });
 
   const views = createMemo(() => vesselViews(props.dashboard?.shipments ?? [], now()));
+  const portData = createMemo(() => portFeatures(props.dashboard?.ports ?? [], props.dashboard?.portStatus));
   const selectedId = () => props.selected?.id;
 
   createEffect(() => {
@@ -110,9 +129,9 @@ export function ShipmentMap(props: Selection) {
     const list = views();
     const chosen = selectedId();
     const layers = routeLayers(list, chosen);
-    setLines(map, 'lanes', layers.lanes); setLines(map, 'sailed', layers.sailed); setLines(map, 'ahead', layers.ahead);
+    setFeatures(map, 'lanes', layers.lanes); setFeatures(map, 'sailed', layers.sailed); setFeatures(map, 'ahead', layers.ahead);
     const live = new Set(list.map(view => view.id));
-    markers.forEach((marker, id) => { if (!live.has(id) && !id.startsWith('port:')) { marker.remove(); markers.delete(id); } });
+    markers.forEach((marker, id) => { if (!live.has(id)) { marker.remove(); markers.delete(id); } });
     list.forEach(view => {
       const existing = markers.get(view.id);
       const marker = existing ?? new lib.Marker({ element: vesselElement(id => props.onSelect(id), view), anchor: 'center' }).setLngLat([...view.position]).addTo(map);
@@ -124,16 +143,7 @@ export function ShipmentMap(props: Selection) {
 
   createEffect(() => {
     const current = ready();
-    const dashboard = props.dashboard;
-    if (!current || !dashboard) return;
-    const { lib, map } = current;
-    dashboard.ports.forEach(port => {
-      const key = `port:${port.id}`;
-      if (markers.has(key)) return;
-      const node = element('div', 'port-marker');
-      node.append(element('span', 'port-dot'), element('span', 'port-label', port.name));
-      markers.set(key, new lib.Marker({ element: node, anchor: 'left', offset: [-4, 0] }).setLngLat([...port.coordinates] as [number, number]).addTo(map));
-    });
+    if (current) setFeatures(current.map, 'ports', portData());
   });
 
   createEffect(() => {
@@ -148,7 +158,7 @@ export function ShipmentMap(props: Selection) {
   });
 
   return <div class="map-canvas">
-    <div ref={container} class="map-gl" role="group" aria-label="Shipment map. Select a vessel with the markers or the shipment list." />
+    <div ref={container} class="map-gl" role="group" aria-label="Shipment and port risk map. Select a vessel with the markers or the shipment list." aria-description={portData().features.map(feature => feature.properties.label.replace('\n', ': ')).join('; ')} />
     <Show when={failed()}><p class="map-fallback" role="status">The map could not be drawn. The shipment list still shows every route and ETA.</p></Show>
     <div class="map-legend" aria-hidden="true"><span><i class="legend-dot on-track" />On schedule</span><span><i class="legend-dot watch" />Watch</span><span><i class="legend-dot delayed" />Delayed</span></div>
   </div>;

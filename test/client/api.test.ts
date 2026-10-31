@@ -1,5 +1,36 @@
 import { expect, test } from 'bun:test';
-import { invitationSchema } from '../../src/client/api';
+import { dashboardSchema, invitationSchema } from '../../src/client/api';
+import { parseDashboardEvent } from '../../src/client/feed';
+import { portIds } from '../../src/core/ports';
+import { fixtureAssessment, societyDashboard } from './society-fixture';
+
+test('GET and SSE snapshots retain the canonical actor board and port status', () => {
+  const decoded = dashboardSchema.parse(societyDashboard);
+  expect(decoded.board).toEqual(societyDashboard.board);
+  expect(decoded.portStatus).toEqual(societyDashboard.portStatus);
+  expect(decoded.shipments).toEqual(societyDashboard.shipments);
+  expect(decoded.ports.map(port => port.id)).toEqual([...portIds]);
+  const streamed = parseDashboardEvent(JSON.stringify(societyDashboard));
+  expect(streamed?.board).toEqual(societyDashboard.board);
+  expect(streamed?.portStatus).toEqual(societyDashboard.portStatus);
+});
+
+test('missing actor reports remain distinct from explicitly empty reports', () => {
+  const { board, portStatus, ...unreported } = societyDashboard;
+  expect(dashboardSchema.parse(unreported).board).toBeUndefined();
+  expect(dashboardSchema.parse(unreported).portStatus).toBeUndefined();
+  expect(dashboardSchema.parse({ ...unreported, board: [], portStatus: [] }).board).toEqual([]);
+  expect(dashboardSchema.parse({ ...unreported, board: [], portStatus: [] }).portStatus).toEqual([]);
+});
+
+test('the canonical assessment method governs null confidence in GET and SSE', () => {
+  const ruleWithInventedConfidence = { ...societyDashboard, board: [{ ...fixtureAssessment, confidence: 0 }] };
+  const aiWithoutConfidence = { ...societyDashboard, board: [{ ...fixtureAssessment, method: 'ai-assessed', confidence: null }] };
+  expect(dashboardSchema.safeParse(ruleWithInventedConfidence).success).toBe(false);
+  expect(parseDashboardEvent(JSON.stringify(ruleWithInventedConfidence))).toBeUndefined();
+  expect(dashboardSchema.safeParse(aiWithoutConfidence).success).toBe(false);
+  expect(parseDashboardEvent(JSON.stringify(aiWithoutConfidence))).toBeUndefined();
+});
 
 test('invitation receipts cannot fabricate email delivery', () => {
   const link = { email: 'teammate@example.com', url: 'http://localhost:4310/?invite=test' };

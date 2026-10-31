@@ -1,12 +1,56 @@
 import { describe, expect, test } from 'bun:test';
 import { demoShipments } from '../../src/core/demo';
+import { ports } from '../../src/core/ports';
+import type { PortStatus } from '../../src/core/board';
 import { distanceKm, routeLengthKm, voyageRoute } from '../../src/core/routes';
-import { boundsOf, graticule, routeLayers, vesselView, vesselViews } from '../../src/client/map-model';
+import { boundsOf, graticule, portFeatures, routeLayers, vesselView, vesselViews } from '../../src/client/map-model';
 
 const now = new Date('2026-10-31T12:00:00Z');
 const shipments = demoShipments(now);
 const need = <A>(value: A | undefined): A => { if (value === undefined) throw new Error('expected a value'); return value; };
 const shanghaiLosAngeles = need(shipments.find(shipment => shipment.id === 'gz-1043'));
+
+describe('port map features', () => {
+  test('projects the supplied catalog in order at its canonical coordinates, without inventing risk or relevance', () => {
+    const features = portFeatures(ports).features;
+    expect(features.map(feature => feature.id)).toEqual(ports.map(port => port.id));
+    expect(features.map(feature => feature.geometry.coordinates)).toEqual(ports.map(port => [...port.coordinates]));
+    expect(features.every(feature => feature.properties.risk === 'unreported' && feature.properties.relevance === null)).toBe(true);
+    expect(features.every(feature => feature.properties.label.includes('Risk unreported'))).toBe(true);
+  });
+
+  test('an explicit quiet status is normal even without a bulletin, and zero relevance stays visible', () => {
+    const features = portFeatures(ports, [{ portId: 'singapore', risk: 'normal', relevance: 0, bulletin: null }]).features;
+    expect(need(features.find(feature => feature.id === 'singapore')).properties).toEqual({
+      id: 'singapore', name: 'Singapore', risk: 'normal', relevance: 0, label: 'Singapore\nNormal · 0 upcoming ships',
+    });
+    expect(need(features.find(feature => feature.id === 'busan')).properties.risk).toBe('unreported');
+  });
+
+  test.each(['normal', 'elevated', 'severe'] as const)('projects reported %s risk and relevance by canonical ID, not array position', risk => {
+    const statuses: readonly PortStatus[] = [
+      { portId: 'busan', risk, relevance: 1, bulletin: null },
+      { portId: 'singapore', risk: 'normal', relevance: 3, bulletin: null },
+    ];
+    const properties = need(portFeatures(ports, statuses).features.find(feature => feature.id === 'busan')).properties;
+    expect(properties.risk).toBe(risk);
+    expect(properties.relevance).toBe(1);
+    expect(properties.label).toContain('1 upcoming ship');
+    expect(properties.label).not.toContain('1 upcoming ships');
+  });
+
+  test('replacement data removes old ports/status and incorporates changed names, positions and risk', () => {
+    const busan = need(ports.find(port => port.id === 'busan'));
+    const before = portFeatures(ports, [{ portId: 'busan', risk: 'normal', relevance: 0, bulletin: null }]);
+    const after = portFeatures([{ ...busan, name: 'Busan updated', coordinates: [130, 36] }], [{ portId: 'busan', risk: 'severe', relevance: 4, bulletin: null }]);
+    expect(need(before.features.find(feature => feature.id === 'busan')).properties.risk).toBe('normal');
+    expect(after.features.map(feature => feature.id)).toEqual(['busan']);
+    expect(need(after.features[0]).geometry.coordinates).toEqual([130, 36]);
+    expect(need(after.features[0]).properties.label).toBe('Busan updated\nSevere · 4 upcoming ships');
+    expect(need(portFeatures([busan], []).features[0]).properties).toMatchObject({ risk: 'unreported', relevance: null });
+    expect(portFeatures([]).features).toEqual([]);
+  });
+});
 
 describe('vessel views', () => {
   test('a vessel sits on its own sea lane, between departure and arrival', () => {

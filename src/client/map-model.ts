@@ -1,5 +1,7 @@
-import type { Feature, FeatureCollection, LineString } from 'geojson';
-import type { Shipment } from '../core/types';
+import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
+import type { PortRisk } from '../core/board';
+import type { PortId } from '../core/ports';
+import type { Dashboard, Shipment } from '../core/types';
 import { positionAlong, progressAt, splitAt, unwrap, voyageRoute, type LngLat, type Route } from '../core/routes';
 
 export type VesselView = Readonly<{
@@ -21,6 +23,26 @@ export const vesselView = (shipment: Shipment, now: number): VesselView => {
 };
 
 export const vesselViews = (shipments: readonly Shipment[], now: number): readonly VesselView[] => shipments.map(shipment => vesselView(shipment, now));
+
+type PortProperties = Readonly<{ id: PortId; name: string; label: string }> & (
+  Readonly<{ risk: PortRisk; relevance: number }> | Readonly<{ risk: 'unreported'; relevance: null }>
+);
+const portRiskText: Readonly<Record<PortRisk, string>> = { normal: 'Normal', elevated: 'Elevated', severe: 'Severe' };
+
+/** The catalog owns positions; reported status owns risk/relevance. Absence is never a normal assessment. */
+export const portFeatures = (ports: Dashboard['ports'], statuses?: Dashboard['portStatus']): FeatureCollection<Point, PortProperties> => ({
+  type: 'FeatureCollection',
+  features: ports.map((port): Feature<Point, PortProperties> => {
+    const status = statuses?.find(value => value.portId === port.id);
+    const properties: PortProperties = status === undefined
+      ? { id: port.id, name: port.name, risk: 'unreported', relevance: null, label: `${port.name}\nRisk unreported` }
+      : {
+        id: port.id, name: port.name, risk: status.risk, relevance: status.relevance,
+        label: `${port.name}\n${portRiskText[status.risk]} · ${status.relevance} upcoming ${status.relevance === 1 ? 'ship' : 'ships'}`,
+      };
+    return { type: 'Feature', id: port.id, properties, geometry: { type: 'Point', coordinates: [...port.coordinates] } };
+  }),
+});
 
 const line = (id: string, coordinates: Route): Feature<LineString> => ({ type: 'Feature', properties: { id }, geometry: { type: 'LineString', coordinates: coordinates.map(point => [...point]) } });
 const collection = (features: readonly Feature<LineString>[]): FeatureCollection<LineString> => ({ type: 'FeatureCollection', features: [...features] });

@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { portIds } from '../core/ports';
+import { boardMessage, portStatus } from '../core/board';
 import type { Comment, Dashboard, Shipment, User, Workspace } from '../core/types';
 
 const coordinate = z.tuple([z.number(), z.number()]);
 const portId = z.enum(portIds);
 const shipment: z.ZodType<Shipment> = z.object({
-  id: z.string(), vessel: z.string(), reference: z.string(), cargo: z.string(), containers: z.number(),
+  id: z.string(), vessel: z.string(), agent: z.string(), reference: z.string(), cargo: z.string(), containers: z.number(),
   origin: portId, destination: portId, via: z.array(portId), coordinates: coordinate, route: z.array(coordinate),
   baselineEta: z.string(), eta: z.string(), risk: z.enum(['on-track', 'watch', 'delayed']), delayHours: z.number(),
   change: z.string(), action: z.string().nullable(),
@@ -16,7 +17,13 @@ const shipment: z.ZodType<Shipment> = z.object({
   ])),
   appliedDisruptions: z.array(z.string()),
 });
-export const dashboardSchema: z.ZodType<Dashboard> = z.object({ shipments: z.array(shipment), ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })), updatedAt: z.string(), mode: z.enum(['simulation', 'mixed']), runtime: z.string(), relay: z.string(), startup: z.object({ ready: z.number(), total: z.number(), queued: z.number().optional() }).optional() });
+export const dashboardSchema: z.ZodType<Dashboard> = z.object({
+  shipments: z.array(shipment),
+  ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })),
+  updatedAt: z.string(), mode: z.enum(['simulation', 'mixed']), runtime: z.string(), relay: z.string(),
+  portStatus: z.array(portStatus).optional(), board: z.array(boardMessage).optional(),
+  startup: z.object({ ready: z.number(), total: z.number(), queued: z.number().optional() }).optional(),
+});
 const userSchema: z.ZodType<User> = z.object({ id: z.string(), name: z.string(), email: z.string() });
 export const workspaceSchema: z.ZodType<Workspace> = z.object({ id: z.string(), name: z.string(), role: z.enum(['owner', 'member']) });
 export const sessionSchema = z.object({ user: userSchema, workspaces: z.array(workspaceSchema) });
