@@ -7,7 +7,7 @@ export type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment'>>; origin: string; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment'>>; origin: string; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
   status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers },
@@ -32,13 +32,19 @@ const bodyWith = async <T>(request: Request, schema: z.ZodType<T>, action: (body
   return body.success ? action(body.data) : json({ error: 'Invalid request fields' }, 400);
 };
 
-export function createApi({ access, monitoring, origin, mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
+const loopbackHosts: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+const demoOperator = { email: 'demo@gazetteer.local', name: 'Demo operator', workspaceName: 'Demo fleet' } as const;
+
+export function createApi({ access, monitoring, origin, demo = process.env.GAZETTEER_DEMO !== 'off', mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
   const cookie = (token: string, maxAge = 604800): string => `gazetteer_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${origin.startsWith('https:') ? '; Secure' : ''}`;
   const authenticated = (result: Result<Session>): Response => {
     if (!result.ok) return respond(result);
     const workspaces = access.workspaces(result.value.user.id);
     return workspaces.ok ? json({ user: result.value.user, workspaces: workspaces.value }, 200, { 'Set-Cookie': cookie(result.value.token) }) : respond(workspaces);
   };
+
+  /** Waive-through sign-in exists only for a loopback origin and never when GAZETTEER_DEMO=off. */
+  const demoAvailable = demo && loopbackHosts.has(new URL(origin).hostname);
 
   const events = monitoring.subscribe && createEventsHandler({
     subscribe: monitoring.subscribe,
@@ -51,6 +57,12 @@ export function createApi({ access, monitoring, origin, mail, mailTransport = fe
     if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
     if (request.method === 'POST' && request.headers.get('Origin') !== origin) return json({ error: 'Origin not allowed' }, 403);
     if (request.method === 'POST' && (path === '/api/signup' || path === '/api/login') && !access.allowAuth(clientKey)) return json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
+    if (path === '/api/demo-session' && request.method === 'GET') return json({ available: demoAvailable });
+    if (path === '/api/demo-session' && request.method === 'POST') {
+      if (!demoAvailable) return json({ error: 'Demo access is not enabled here.' }, 403);
+      if (!access.allowAuth(clientKey)) return json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
+      return authenticated(await access.demoSession(demoOperator));
+    }
     if (path === '/api/signup' && request.method === 'POST') return bodyWith(request, signupSchema, async input => authenticated(await access.signup(input)));
     if (path === '/api/login' && request.method === 'POST') return bodyWith(request, z.object({ email, password: z.string().max(1024) }), async input => authenticated(await access.login(input)));
 

@@ -111,6 +111,14 @@ export const createAccess = (databasePath: string) => {
     return success(issueSession(account));
   };
 
+  /** Sign-in without a password for the localhost demo operator: created once with a random, never-shown password, then reused. */
+  const demoSession = async (input: Readonly<{ email: string; name: string; workspaceName: string }>): Promise<Result<Session>> => {
+    const created = await signup({ ...input, password: secret() });
+    if (created.ok || created.error !== "email_in_use") return created;
+    const account = db.query<User, [string]>("SELECT id, email, name FROM accounts WHERE email = ?").get(normalizeEmail(input.email));
+    return account ? success(issueSession(account)) : failure("invalid_input");
+  };
+
   const session = (token: string | undefined): Result<User> => {
     if (!token || token.length > 128) return failure("unauthenticated");
     const user = db.query<User, [string, string]>(`
@@ -178,7 +186,7 @@ export const createAccess = (databasePath: string) => {
   };
 
   return {
-    allowAuth, signup, login, session, workspaces, createWorkspace, membership, members, invite, acceptInvite, comments, comment,
+    allowAuth, signup, login, demoSession, session, workspaces, createWorkspace, membership, members, invite, acceptInvite, comments, comment,
     workspaceIds: (): readonly string[] => db.query<Readonly<{ id: string }>, []>('SELECT id FROM workspaces ORDER BY id').all().map(workspace => workspace.id),
     logout: (token: string): Result<null> => { db.query("DELETE FROM sessions WHERE token_hash = ?").run(digest(token)); return success(null); },
     close: (): void => db.close(),

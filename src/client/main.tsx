@@ -16,12 +16,21 @@ const minute = (eta: string | undefined): string => (eta ?? '').slice(0, 16);
 const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'CONNECTING', live: 'LIVE', polling: 'POLLING · 5 S' };
 const riskLabel = { 'on-track': 'On schedule', watch: 'Watch', delayed: 'Delayed' };
 const textField = (data: FormData, key: string): string => { const value = data.get(key); return typeof value === 'string' ? value : ''; };
+const DECLINED_DEMO = 'gazetteer.demo.declined';
+/** Resolves to an error message, or undefined once the session is set. */
+async function enterDemo(onSession: (session: Session) => void): Promise<string | undefined> {
+  const result = await request('/api/demo-session', sessionSchema, {});
+  if (!result.ok) return result.error;
+  window.sessionStorage.removeItem(DECLINED_DEMO);
+  onSession(result.value);
+  return undefined;
+}
 const ErrorNote = (props: Readonly<{ message: string }>) => <p class="error-note" role="alert"><TriangleAlert size={15} />{props.message}</p>;
 
 function Brand() { return <a class="brand" href="/" aria-label="Gazetteer home"><span class="brand-mark"><Compass size={25} stroke-width={1.5} /></span>Gazetteer<span class="brand-dot">.</span></a>; }
 function RiskBadge(props: Readonly<{ risk: Shipment['risk'] }>) { return <span class={`risk-badge ${props.risk}`}><Show when={props.risk !== 'on-track'} fallback={<span class="status-dot" />}><TriangleAlert size={11} /></Show>{riskLabel[props.risk]}</span>; }
 
-function Authentication(props: Readonly<{ onSession: (session: Session) => void }>) {
+function Authentication(props: Readonly<{ onSession: (session: Session) => void; demo: boolean }>) {
   const [mode, setMode] = createSignal<'signup' | 'login'>('signup');
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -39,6 +48,7 @@ function Authentication(props: Readonly<{ onSession: (session: Session) => void 
     <section class="auth-panel"><div class="auth-form-wrap"><span class="demo-tag"><FlaskConical size={13} /> SYNTHETIC DEMO</span><h2>{invited ? 'Join your team.' : signup() ? 'Your next clear view.' : 'Welcome back.'}</h2><p>{invited ? 'Sign in with your invited email, then accept your workspace invitation.' : signup() ? 'Create an account to explore your shared shipment workspace.' : 'Sign in to pick up where your team left off.'}</p>
       <Tabs.Root value={mode()} onValueChange={details => { setMode(details.value === 'login' ? 'login' : 'signup'); setError(null); }}><Tabs.List class="auth-tabs"><Tabs.Trigger value="signup">Create account</Tabs.Trigger><Tabs.Trigger value="login">Sign in</Tabs.Trigger></Tabs.List></Tabs.Root>
       <form onSubmit={submit}><Show when={signup()}><label>Your name<input name="name" autocomplete="name" maxLength={80} required placeholder="Alex Morgan" /></label></Show><label>Email<input name="email" type="email" autocomplete="email" required placeholder="you@company.com" /></label><label>Password<input name="password" type="password" autocomplete={signup() ? 'new-password' : 'current-password'} minLength={12} required placeholder="At least 12 characters" /></label><Show when={signup()}><label>Workspace name <span class="optional">optional</span><input name="workspaceName" maxLength={100} placeholder="Your logistics team" /></label></Show><Show when={error()}>{message => <ErrorNote message={message()} />}</Show><button class="primary full" disabled={busy()}>{busy() ? 'Connecting…' : signup() ? 'Create workspace' : 'Sign in'}<ArrowRight size={16} /></button></form>
+      <Show when={props.demo}><button type="button" class="demo-enter" disabled={busy()} onClick={() => { void enterDemo(props.onSession).then(failed => { if (failed) setError(failed); }); }}><FlaskConical size={16} />Continue to demo workspace<ArrowRight size={16} /></button></Show>
       <p class="auth-disclaimer">Demo shipments and disruptions are simulated. No live vessel positions or carrier feeds are connected.</p></div></section></main>;
 }
 
@@ -176,12 +186,20 @@ function App() {
   const [session, setSession] = createSignal<Session | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [initialError, setInitialError] = createSignal<string | null>(null);
+  const [demo, setDemo] = createSignal(false);
   const controller = new AbortController();
   onCleanup(() => controller.abort());
-  void request('/api/session', sessionSchema, undefined, controller.signal).then(result => { if (!controller.signal.aborted) { if (result.ok) setSession(result.value); else if (result.status !== 401) setInitialError(result.error); setLoading(false); } });
-  async function logout() { const result = await request('/api/logout', z.unknown(), {}); if (result.ok) setSession(null); else window.alert(result.error); }
+  void request('/api/session', sessionSchema, undefined, controller.signal).then(result => { if (!controller.signal.aborted) { if (result.ok) setSession(result.value); else if (result.status !== 401) setInitialError(result.error); } }).then(async () => {
+    if (controller.signal.aborted || session() !== null || initialError() !== null) { setLoading(false); return; }
+    const offer = await request('/api/demo-session', z.object({ available: z.boolean() }), undefined, controller.signal);
+    const available = offer.ok && offer.value.available;
+    setDemo(available);
+    if (available && !window.sessionStorage.getItem(DECLINED_DEMO)) { const failed = await enterDemo(setSession); if (failed) setInitialError(failed); }
+    if (!controller.signal.aborted) setLoading(false);
+  });
+  async function logout() { const result = await request('/api/logout', z.unknown(), {}); if (result.ok) { window.sessionStorage.setItem(DECLINED_DEMO, '1'); setSession(null); } else window.alert(result.error); }
   return <Show when={!loading()} fallback={<div class="loading-screen"><Brand /><span>Opening your workspace…</span></div>}>
-    <Show when={session()} fallback={<><Show when={initialError()}>{message => <div class="initial-error"><ErrorNote message={message()} /></div>}</Show><Authentication onSession={setSession} /></>}>{current => <WorkspaceScreen session={current()} onSession={setSession} onLogout={() => { void logout(); }} />}</Show>
+    <Show when={session()} fallback={<><Show when={initialError()}>{message => <div class="initial-error"><ErrorNote message={message()} /></div>}</Show><Authentication onSession={setSession} demo={demo()} /></>}>{current => <WorkspaceScreen session={current()} onSession={setSession} onLogout={() => { void logout(); }} />}</Show>
   </Show>;
 }
 
