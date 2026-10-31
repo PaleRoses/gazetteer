@@ -17,7 +17,33 @@ type ShipTool = typeof shipTools[number];
 const allowedShipTools: readonly string[] = shipTools.map(name => `mcp__${server}__${name}`);
 const builtinTools: readonly string[] = ['Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task', 'Agent', 'TodoWrite', 'Skill'];
 const maxTurns = 4;
-const mindTimeoutMs = 60_000;
+/** The ship alarm's window: a mind call queued or running past it is abandoned and the rule-based layer stands until the next situation. */
+const mindWindowMs = 60_000;
+/** Basis: one CLI child peaked at 212-250 MiB RSS (measured 2026-10-31, inside a Terse actor and in plain Bun); two bound a process's minds near 0.5 GiB. */
+const mindConcurrency = 2;
+
+/** Runs `task` when a slot is free, in arrival order; null if `deadline` aborts first, and then the task never starts. */
+export type Pool = <A>(deadline: AbortSignal, task: () => Promise<A>) => Promise<A | null>;
+
+/** The process's one bounded mind pool: a freed slot is handed straight to the oldest waiter, so arrivals cannot overtake the queue. */
+export function boundedPool(size: number): Pool {
+  const waiting: (() => void)[] = [];
+  let active = 0;
+  const release = (): void => { const next = waiting.shift(); if (next) next(); else active -= 1; };
+  const turn = (deadline: AbortSignal): Promise<boolean> => new Promise(resolve => {
+    const go = (): void => { deadline.removeEventListener('abort', expire); resolve(true); };
+    const expire = (): void => { waiting.splice(waiting.indexOf(go), 1); resolve(false); };
+    deadline.addEventListener('abort', expire, { once: true });
+    waiting.push(go);
+  });
+  return async (deadline, task) => {
+    if (deadline.aborted) return null;
+    if (active < size) active += 1;
+    else if (!(await turn(deadline))) return null;
+    try { return await task(); } finally { release(); }
+  };
+}
+const mindPool = boundedPool(mindConcurrency);
 
 const mindInstructions = [
   'You are the mind of this one ship. Your tools are your senses: read_board (what port and peer-ship agents posted that bears on your route),',
@@ -124,14 +150,15 @@ export function settleMind(context: MindContext, { messages, error, timedOut }: 
   return { status: 'failed', message: reason, session };
 }
 
-/** The effect edge: one SDK query per situation, resumed from the ship's own session, bounded in time. */
-export const shipMind = (run: MindQuery, config: MindConfig): AssessModel => async request => {
+/** The effect edge: one SDK query per situation through the bounded pool, resumed from the ship's own session; the deadline runs from arrival, queued or not. */
+export const shipMind = (run: MindQuery, config: MindConfig, pool: Pool = mindPool): AssessModel => async request => {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), config.timeoutMs);
-  const drained = await mkdir(config.mindsDir, { recursive: true, mode: 0o700 })
+  const drained = await pool(abort.signal, () => mkdir(config.mindsDir, { recursive: true, mode: 0o700 })
     .then(() => drain(run({ prompt: request.prompt, options: mindOptions(config, request, abort) })[Symbol.asyncIterator](), []))
-    .catch((error: unknown) => ({ messages: [], error: messageOf(error) }));
+    .catch((error: unknown) => ({ messages: [], error: messageOf(error) })));
   clearTimeout(timer);
+  if (!drained) return { status: 'failed', message: 'ship mind queue deadline passed; the rules stand until the next situation', session: request.session };
   return settleMind(request.context, { ...drained, timedOut: abort.signal.aborted });
 };
 
@@ -151,5 +178,5 @@ export const shipMindFromEnv = (env: Readonly<Record<string, string | undefined>
   if (!apiKey) return { model: null, modelId };
   const workspace = workspaceIdSchema.safeParse(env.ANTHROPIC_WORKSPACE_ID);
   if (!workspace.success) return { model: refuse(env.ANTHROPIC_WORKSPACE_ID ? workspace.error.issues[0]?.message ?? 'invalid workspace id' : 'ANTHROPIC_WORKSPACE_ID is not set; the ship mind needs it'), modelId };
-  return { model: shipMind(run, { apiKey, workspaceId: workspace.data, model: modelId, mindsDir: mindsDirOf(env), executable: claudeExecutableOf(env), path: env.PATH ?? '', timeoutMs: mindTimeoutMs }), modelId };
+  return { model: shipMind(run, { apiKey, workspaceId: workspace.data, model: modelId, mindsDir: mindsDirOf(env), executable: claudeExecutableOf(env), path: env.PATH ?? '', timeoutMs: mindWindowMs }), modelId };
 };

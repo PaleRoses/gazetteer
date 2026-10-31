@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { demoShipments } from '../../../src/core/demo';
 import { assessNotice, type AssessModel, type MindContext, type ModelRequest } from '../../../src/server/assessment/assess';
 import type { AssessableNotice } from '../../../src/server/assessment/exposure';
-import { answerTool, settleMind, shipMind, shipMindFromEnv, type MindConfig, type MindQuery } from '../../../src/server/assessment/mind';
+import { answerTool, boundedPool, settleMind, shipMind, shipMindFromEnv, type MindConfig, type MindQuery } from '../../../src/server/assessment/mind';
 import type { BoardEvidence } from '../../../src/server/assessment/prompt';
 import type { Assessment } from '../../../src/server/assessment/schema';
 
@@ -127,5 +127,49 @@ describe('the ship mind from the environment', () => {
     const deps = shipMindFromEnv({ ANTHROPIC_API_KEY: 'k', ANTHROPIC_WORKSPACE_ID: 'wrkspc_abc123', GAZETTEER_MINDS_DIR: minds, PATH: '/usr/bin' }, run);
     await deps.model?.(request(null));
     expect(seen[0]?.env).toMatchObject({ ANTHROPIC_CUSTOM_HEADERS: 'anthropic-workspace-id: wrkspc_abc123', CLAUDE_CONFIG_DIR: minds });
+  });
+});
+
+describe('the bounded mind pool', () => {
+  const open = () => new AbortController().signal;
+  test('never runs more than its size at once and starts calls in arrival order', async () => {
+    const pool = boundedPool(2);
+    const started: number[] = [];
+    let running = 0;
+    let peak = 0;
+    const task = (id: number) => async () => {
+      started.push(id);
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise(done => setTimeout(done, 5));
+      running -= 1;
+      return id;
+    };
+    const results = await Promise.all([1, 2, 3, 4, 5].map(id => pool(open(), task(id))));
+    expect(results).toEqual([1, 2, 3, 4, 5]);
+    expect(peak).toBe(2);
+    expect(started).toEqual([1, 2, 3, 4, 5]);
+  });
+  test('a call whose deadline passes in the queue never starts, and the queue moves on', async () => {
+    const pool = boundedPool(1);
+    let release: () => void = () => {};
+    const holder = pool(open(), () => new Promise<string>(done => { release = () => done('held'); }));
+    const late = new AbortController();
+    let lateStarted = false;
+    const queued = pool(late.signal, async () => { lateStarted = true; return 'late'; });
+    const next = pool(open(), async () => 'next');
+    late.abort();
+    release();
+    expect(await Promise.all([holder, queued, next])).toEqual(['held', null, 'next']);
+    expect(lateStarted).toBe(false);
+  });
+  test('a mind call that expires in the queue fails as data and keeps its session', async () => {
+    const config = await configIn(20);
+    const busy = boundedPool(1);
+    const blocker = busy(open(), () => new Promise(done => setTimeout(done, 100)));
+    const { run, seen } = scripted([init('voyage-4'), decided('voyage-4', good)]);
+    expect(await shipMind(run, config, busy)(request('voyage-4'))).toEqual({ status: 'failed', message: expect.stringContaining('deadline'), session: 'voyage-4' });
+    expect(seen).toEqual([]);
+    await blocker;
   });
 });
