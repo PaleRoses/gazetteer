@@ -2,6 +2,7 @@ import { AgentRelay } from '@agent-relay/sdk';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { chmod, mkdir } from 'node:fs/promises';
+import { scenarioEpoch } from './epoch';
 import { startLocalActors } from 'durable-actors/dev';
 import { createActorStub, createActorTransport, type ActorRpcMethod } from 'durable-actors/backend';
 import { activePorts, demoShipments } from '../../core/demo';
@@ -62,6 +63,8 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const dataDir = resolve(project, options.dataDir ?? resolve(process.env.DATA_DIR ?? '.data', 'actors'));
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
+  /** The scenario is dated once per data directory: a restart re-derives the seeds the persisted actors already hold. */
+  const scenarioNow = await scenarioEpoch(resolve(dataDir, '..', 'scenario-epoch'));
   // The ship minds' SDK transcripts live beside the actor data, never in ~/.claude; the actor host inherits this environment.
   process.env.GAZETTEER_MINDS_DIR = resolve(dataDir, 'minds');
   const runtime = await startLocalActors({
@@ -77,14 +80,14 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const watch = (workspaceId: string, id: PortId, element: CityElement): WatchClient => element === 'traffic' ? traffic(workspaceId, id) : hazards(workspaceId, id);
   const shipment = (workspaceId: string, id: string): ShipmentClient => createActorStub<ShipmentClient>('ShipmentAgent', `${workspaceId}-shipment-${id}`, shipmentMethods, transport);
   /** Only the ports the fleet still calls at run an actor; the rest are shown, normal and irrelevant, without one. */
-  const actorPorts = activePorts(demoShipments());
+  const actorPorts = activePorts(demoShipments(scenarioNow));
   /** Each city a shipment calls at has one agent per element; the cities themselves are not actors. */
   const watches = actorPorts.flatMap(city => cityElements.map(element => ({ city: city.id, element })));
 
   // Restore native alarms once at process startup, never from dashboard polling.
   await options.workspaceIds.flatMap(workspaceId => [
     ...watches.map(value => () => watch(workspaceId, value.city, value.element).resume()),
-    ...demoShipments().map(value => () => shipment(workspaceId, value.id).resume()),
+    ...demoShipments(scenarioNow).map(value => () => shipment(workspaceId, value.id).resume()),
   ]).reduce<Promise<void>>((previous, resume) => previous.then(resume), Promise.resolve()).catch(async error => {
     await runtime.stop();
     throw error;
@@ -103,7 +106,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const seedsOf = (workspaceId: string): readonly Shipment[] => {
     const known = seedsByWorkspace.get(workspaceId);
     if (known) return known;
-    const seeds = demoShipments();
+    const seeds = demoShipments(scenarioNow);
     seedsByWorkspace.set(workspaceId, seeds);
     return seeds;
   };
