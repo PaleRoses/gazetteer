@@ -4,3 +4,5 @@
 .mind-cite{display:grid;gap:2px;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:5px;font-size:13px;line-height:1.5;color:var(--bone)}.mind-cite>span{font-size:11px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted)}button.mind-cite:hover{background:var(--raised)}button.mind-cite:hover>span{color:var(--bone)}.unresolved-cite{color:var(--amber)}
 .mind-away{display:flex;gap:9px;align-items:start;margin-top:12px;padding:12px 14px;border:1px solid #725636;background:#282219;color:var(--bone);font-size:13px;line-height:1.55}.mind-away svg{flex-shrink:0;margin-top:3px;color:var(--amber)}.mind-away strong{color:var(--amber);font-weight:600}
 .mind-name{font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--selection,#5fe3c0)}a.mind-cite{text-decoration:none}a.mind-cite:hover{background:var(--raised)}a.mind-cite:hover>span{color:var(--bone)}
+.mind-away{flex-wrap:wrap}.mind-away .text-button{margin-left:auto;padding:0;font-size:13px;color:var(--bone)}
+.mind-away>span{flex:1 1 0;min-width:180px}
