@@ -2,6 +2,7 @@ import { AgentRelay, type RelayAgentClient, type RelayMessage } from '@agent-rel
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../shared';
+import { pollSince, type Cursor } from './realtime/cursor';
 
 export type RelayIdentity = Readonly<{ token: string; channel: string }>;
 /** Expected provider failures cross actor and HTTP boundaries as data, never fabricated success. */
@@ -9,7 +10,9 @@ export async function attemptRelay<A>(operation: () => Promise<A>, message: stri
   try { return relaySuccess(await operation()); }
   catch { return { status: 'unavailable', message }; }
 }
-export const relayChannel = (workspaceId: string): string => `gazetteer-${workspaceId}`;
+const channelPrefix = 'gazetteer-';
+export const relayChannel = (workspaceId: string): string => `${channelPrefix}${workspaceId}`;
+export const workspaceOfChannel = (channel: string): string | undefined => channel.startsWith(channelPrefix) ? channel.slice(channelPrefix.length) : undefined;
 
 const disruptionSchema = z.object({
   id: z.string(), portId: z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']),
@@ -49,20 +52,17 @@ export async function publishDisruption(identity: RelayIdentity, disruption: Dis
   return message.messageId;
 }
 
-/** Relay pages are newest-first. Traverse all pages; never silently lose older disruptions. */
-async function channelHistory(client: RelayAgentClient, channel: string, before?: string): Promise<readonly RelayMessage[]> {
-  const page = await client.messages.list(channel, { limit: 100, ...(before ? { before } : {}) });
-  const oldest = page.at(-1);
-  return page.length < 100 || !oldest ? page : [...page, ...await channelHistory(client, channel, oldest.messageId)];
-}
+export const disruptionFrom = (message: Pick<RelayMessage, 'metadata'>): Disruption | undefined => {
+  const { metadata } = message;
+  if (metadata === undefined || !disruptionKinds.includes(metadata.kind)) return undefined;
+  const parsed = disruptionSchema.safeParse(metadata.disruption);
+  return parsed.success ? parsed.data : undefined;
+};
 
-export async function readDisruptions(identity: RelayIdentity): Promise<readonly Disruption[]> {
+export type DisruptionPoll = Readonly<{ disruptions: readonly Disruption[]; cursor: Cursor | null; complete: boolean }>;
+/** Bounded read: only messages past the persisted cursor, never the whole channel history. */
+export async function readDisruptionsSince(identity: RelayIdentity, cursor: Cursor | null): Promise<DisruptionPoll> {
   const client = await participant(identity);
-  const messages = await channelHistory(client, identity.channel);
-  return messages.flatMap(message => {
-    const { metadata } = message;
-    if (metadata === undefined || !disruptionKinds.includes(metadata.kind)) return [];
-    const parsed = disruptionSchema.safeParse(metadata.disruption);
-    return parsed.success ? [parsed.data] : [];
-  }).toSorted((left, right) => left.evidence.observedAt.localeCompare(right.evidence.observedAt));
+  const poll = await pollSince(request => client.messages.list(identity.channel, request), cursor, disruptionFrom);
+  return { disruptions: poll.items, cursor: poll.cursor, complete: poll.complete };
 }

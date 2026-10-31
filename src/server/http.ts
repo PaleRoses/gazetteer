@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createEventsHandler } from './realtime/sse';
 import type { Access, AccessError, Result, Session } from './access';
 import type { Monitoring } from './monitoring';
 import type { Dashboard, RelayOutcome } from '../shared';
@@ -6,7 +7,7 @@ export type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'>; origin: string; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment'>>; origin: string; mail?: Mail; mailTransport?: MailTransport }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
   status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers },
@@ -39,6 +40,11 @@ export function createApi({ access, monitoring, origin, mail, mailTransport = fe
     return workspaces.ok ? json({ user: result.value.user, workspaces: workspaces.value }, 200, { 'Set-Cookie': cookie(result.value.token) }) : respond(workspaces);
   };
 
+  const events = monitoring.subscribe && createEventsHandler({
+    subscribe: monitoring.subscribe,
+    snapshot: async workspaceId => { const outcome = await monitoring.dashboard(workspaceId); return outcome.status === 'ok' ? outcome.value : null; },
+  });
+
   return async (request, clientKey = 'unknown') => {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -58,13 +64,14 @@ export function createApi({ access, monitoring, origin, mail, mailTransport = fe
     }
     if (path === '/api/workspaces' && request.method === 'POST') return bodyWith(request, z.object({ name: z.string().trim().min(1).max(100) }), input => respond(access.createWorkspace(user.id, input.name)));
     if (path === '/api/invitations/accept' && request.method === 'POST') return bodyWith(request, z.object({ token: z.string().min(1).max(128) }), input => respond(access.acceptInvite(user.id, input.token)));
-    const match = /^\/api\/workspaces\/([^/]+)\/(dashboard|disruptions|members|invitations|shipments\/([^/]+)\/comments)$/.exec(path);
+    const match = /^\/api\/workspaces\/([^/]+)\/(dashboard|events|disruptions|members|invitations|shipments\/([^/]+)\/comments)$/.exec(path);
     if (!match) return json({ error: 'Not found' }, 404);
     const workspaceId = match[1];
     const resource = match[2];
     const membership = access.membership(user.id, workspaceId);
     if (!membership.ok) return respond(membership);
     if (resource === 'dashboard' && request.method === 'GET') return monitoringResponse(await monitoring.dashboard(workspaceId));
+    if (resource === 'events' && request.method === 'GET') return events ? events(request, workspaceId) : json({ error: 'Not found' }, 404);
     if (resource === 'members' && request.method === 'GET') return respond(access.members(user.id, workspaceId), members => ({ members }));
     if (resource === 'disruptions' && request.method === 'POST') return bodyWith(request, disruptionSchema, async input => monitoringResponse(await monitoring.simulate(workspaceId, input.portId, input.delayHours)));
     if (resource === 'invitations' && request.method === 'POST') return bodyWith(request, z.object({ email }), async input => {
@@ -91,6 +98,7 @@ export function createApi({ access, monitoring, origin, mail, mailTransport = fe
       if (request.method === 'GET') return respond(access.comments(user.id, workspaceId, shipmentId), comments => ({ comments }));
       return bodyWith(request, z.object({ body: z.string().trim().min(1).max(4000) }), input => {
         const added = access.comment(user.id, workspaceId, shipmentId, input.body);
+        if (added.ok) monitoring.publishComment?.(workspaceId, shipmentId, added.value);
         return added.ok ? respond(access.comments(user.id, workspaceId, shipmentId), comments => ({ comments })) : respond(added);
       });
     }

@@ -19,7 +19,7 @@ if (!await Bun.file(resolve(assets, 'index.html')).exists()) {
 }
 await mkdir(dataDir, { recursive: true, mode: 0o700 });
 const access = createAccess(resolve(dataDir, 'access.sqlite'));
-const monitoring = await createMonitoring({ dataDir: resolve(dataDir, 'actors'), workspaceIds: access.workspaceIds() });
+const monitoring = await createMonitoring({ dataDir: resolve(dataDir, 'actors'), workspaceIds: access.workspaceIds(), hasWorkspace: workspaceId => access.workspaceIds().includes(workspaceId) });
 const api = createApi({ access, monitoring, origin, mail: mail.kind === 'resend' ? mail : undefined });
 
 const server = Bun.serve({

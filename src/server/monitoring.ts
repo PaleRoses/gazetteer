@@ -4,8 +4,12 @@ import { chmod, mkdir } from 'node:fs/promises';
 import { startLocalActors } from 'durable-actors/dev';
 import { createActorStub, createActorTransport, type ActorRpcMethod } from 'durable-actors/backend';
 import { demoShipments, ports } from '../domain';
-import { relaySuccess, type Dashboard, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
+import { relaySuccess, type Comment, type Dashboard, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import type { PortAgent, ShipmentAgent } from './actors';
+import { createCoalescer } from './realtime/coalesce';
+import { fileSeqStore, startRelayLive } from './realtime/live';
+import { createHub, type Subscribe } from './realtime/sse';
+import { disruptionFrom, workspaceOfChannel } from './relay';
 
 type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume'>;
 type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume'>;
@@ -21,6 +25,9 @@ const shipmentMethods = [
 export type Monitoring = Readonly<{
   dashboard(workspaceId: string): Promise<RelayOutcome<Dashboard>>;
   simulate(workspaceId: string, portId: PortId, delayHours: number): Promise<RelayOutcome<Dashboard>>;
+  /** Push channel behind GET /api/workspaces/:id/events. */
+  subscribe: Subscribe;
+  publishComment(workspaceId: string, shipmentId: string, comment: Comment): void;
   close(): Promise<void>;
 }>;
 const sequenceRelay = <A>(operations: readonly (() => Promise<RelayOutcome<A>>)[]): Promise<RelayOutcome<readonly A[]>> =>
@@ -30,7 +37,7 @@ const sequenceRelay = <A>(operations: readonly (() => Promise<RelayOutcome<A>>)[
     return next.status === 'unavailable' ? next : relaySuccess([...outcome.value, next.value]);
   }), Promise.resolve(relaySuccess([])));
 
-export async function createMonitoring(options: Readonly<{ dataDir?: string; workspaceIds: readonly string[] }>): Promise<Monitoring> {
+export async function createMonitoring(options: Readonly<{ dataDir?: string; workspaceIds: readonly string[]; hasWorkspace?: (workspaceId: string) => boolean }>): Promise<Monitoring> {
   const workspaceKey = process.env.RELAY_WORKSPACE_KEY;
   if (!workspaceKey) throw new Error('Agent Relay is not configured. Run npm run setup:relay first.');
   const project = resolve(import.meta.dir, '../..');
@@ -66,18 +73,40 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     ]);
     return initialized.status === 'unavailable' ? initialized : relaySuccess(seeds);
   };
+  const hub = createHub();
   const dashboard = async (workspaceId: string): Promise<RelayOutcome<Dashboard>> => {
     const initialized = await initialize(workspaceId);
     if (initialized.status === 'unavailable') return initialized;
     const snapshots = await Promise.all(initialized.value.map(value => shipment(workspaceId, value.id).snapshot()));
     const retained = snapshots.filter((value): value is Shipment => value !== null);
     if (retained.length !== initialized.value.length) return { status: 'unavailable', message: 'A durable shipment is missing after initialization.' };
-    return relaySuccess({
+    const built: Dashboard = {
       shipments: retained, ports,
       updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
       runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
-    });
+    };
+    hub.publishDashboard(workspaceId, built);
+    return relaySuccess(built);
   };
+
+  // A Relay notice is a doorbell: each shipment actor re-reads only past its persisted cursor, then the browser is pushed the result.
+  const refresh = createCoalescer(async workspaceId => {
+    const initialized = await initialize(workspaceId);
+    if (initialized.status === 'unavailable') return;
+    await sequenceRelay(initialized.value.map(value => () => shipment(workspaceId, value.id).check()));
+    await dashboard(workspaceId);
+  }, error => console.error('Realtime refresh failed:', error instanceof Error ? error.message : 'unknown error'));
+  const hasWorkspace = options.hasWorkspace ?? (workspaceId => options.workspaceIds.includes(workspaceId));
+  const seq = fileSeqStore(resolve(dataDir, '..', 'relay-seq'));
+  const live = await startRelayLive({
+    workspaceKey, sinceSeq: await seq.load(), onCursor: value => { void seq.save(value); },
+    onError: error => console.error('Relay live stream:', error instanceof Error ? error.message : 'unknown error'),
+    onMessage: ({ channel, message }) => {
+      const workspaceId = workspaceOfChannel(channel);
+      if (workspaceId && hasWorkspace(workspaceId) && disruptionFrom(message)) void refresh(workspaceId);
+    },
+  });
+  if (live.status === 'unavailable') console.warn(live.message);
   return {
     dashboard,
     simulate: async (workspaceId, portId, delayHours) => {
@@ -94,6 +123,11 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       const checked = await sequenceRelay(initialized.value.map(value => () => shipment(workspaceId, value.id).check()));
       return checked.status === 'unavailable' ? checked : dashboard(workspaceId);
     },
-    close: () => runtime.stop(),
+    subscribe: hub.subscribe,
+    publishComment: (workspaceId, shipmentId, comment) => hub.publish(workspaceId, { event: 'comment', data: { shipmentId, comment } }),
+    close: async () => {
+      if (live.status === 'ok') await live.value.close();
+      await runtime.stop();
+    },
   };
 }

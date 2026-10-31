@@ -3,14 +3,15 @@ import { relaySuccess, type Disruption, type PortId, type RelayOutcome, type Shi
 import { assessmentFromEnv, assessNotices, type AssessmentCache } from './assessment';
 import { pollPort } from './sources';
 import { toDisruption } from './sources/disruption';
-import { attemptRelay, joinChannel, publishDisruption, readDisruptions, registerParticipant, relayChannel, type RelayIdentity } from './relay';
+import type { Cursor } from './realtime/cursor';
+import { attemptRelay, joinChannel, publishDisruption, readDisruptionsSince, registerParticipant, relayChannel, type RelayIdentity } from './relay';
 
 const checkIntervalMs = 60_000;
 type PortState = Readonly<{
   portId: PortId; relay: RelayIdentity; ready: boolean;
   outbox: readonly Disruption[]; published: readonly string[]; checkedAt: string | null;
 }>;
-type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache }>;
+type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null }>;
 const assessment = assessmentFromEnv(process.env);
 /** Provider failures are data inside the sources layer, so a dead feed leaves the outbox untouched. */
 const pollLive = async (portId: PortId): Promise<readonly Disruption[]> => (await pollPort(portId)).map(toDisruption);
@@ -114,10 +115,10 @@ export class ShipmentAgent extends Actor {
     const current = this.state;
     const connection = await connect(current, false);
     if (connection.status === 'unavailable') return connection;
-    const replay = await attemptRelay(() => readDisruptions(current.relay), 'Agent Relay history is unavailable. Monitoring will retry without changing the shipment.');
+    const replay = await attemptRelay(() => readDisruptionsSince(current.relay, current.cursor ?? null), 'Agent Relay history is unavailable. Monitoring will retry without changing the shipment.');
     if (replay.status === 'unavailable') return replay;
-    const assessed = await assessNotices(assessment, current.assessmentCache ?? {}, current.shipment, replay.value);
-    this.state = { ...current, ready: true, shipment: assessed.shipment, assessmentCache: assessed.cache, checkedAt: new Date().toISOString() };
+    const assessed = await assessNotices(assessment, current.assessmentCache ?? {}, current.shipment, replay.value.disruptions);
+    this.state = { ...current, ready: true, shipment: assessed.shipment, assessmentCache: assessed.cache, cursor: replay.value.cursor, checkedAt: new Date().toISOString() };
     return relaySuccess(this.state.shipment);
   }
 
