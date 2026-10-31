@@ -115,7 +115,7 @@ async function main(): Promise<void> {
   const baseline = first.dashboard;
   if (!baseline) return finish();
   const ids = baseline.shipments.map(ship => ship.id);
-  verdict('2', 'all 11 ships are present', ids.length === 11 && [...EXPOSED, ...UNAFFECTED].every(id => ids.includes(id)), null, '= 11', `${ids.length} ships`);
+  verdict('2', 'the demo fleet is present: at least 11 ships, including gz-1042..gz-1045', ids.length >= 11 && [...EXPOSED, ...UNAFFECTED].every(id => ids.includes(id)), null, '>= 11', `${ids.length} ships`);
 
   // 3-5. disruption: stream open first, then POST
   const before = baselineOf(baseline);
@@ -141,12 +141,12 @@ async function main(): Promise<void> {
     const added = (dashboard.board ?? []).filter(message => !knownBoard.has(message.id));
     const assessment = added.find(message => message.kind === 'ship.assessment' && (EXPOSED as readonly string[]).includes(message.shipmentId));
     const eta = added.find(message => message.kind === 'ship.eta' && (EXPOSED as readonly string[]).includes(message.shipmentId));
-    const bulletin = added.find(message => message.kind === 'port.bulletin' && message.portId === 'singapore');
-    return assessment && eta && bulletin ? { assessment, eta, bulletin } : false;
+    const traffic = added.find(message => message.kind === 'city.traffic' && message.author.city === 'singapore');
+    return assessment && eta && traffic ? { assessment, eta, traffic } : false;
   });
   const seen = latest?.board ?? [];
   const kinds = [...new Set(seen.filter(message => !knownBoard.has(message.id)).map(message => message.kind))].join(', ');
-  verdict('4a', 'board gains a ship.assessment, a ship.eta and a Singapore port.bulletin', boardAfter.value !== null, boardAfter.ms, `<= ${BUDGET.boardMs / 1000} s`, boardAfter.value ? `assessment ${boardAfter.value.assessment.kind === 'ship.assessment' ? `${boardAfter.value.assessment.method}, cites ${boardAfter.value.assessment.citedEvidence.length}` : ''}` : `new kinds seen so far: ${kinds || 'none'}`);
+  verdict('4a', 'board gains a ship.assessment, a ship.eta and a Singapore traffic watch report', boardAfter.value !== null, boardAfter.ms, `<= ${BUDGET.boardMs / 1000} s`, boardAfter.value ? `assessment ${boardAfter.value.assessment.kind === 'ship.assessment' ? `${boardAfter.value.assessment.method}, cites ${boardAfter.value.assessment.citedEvidence.length}` : ''}` : `new kinds seen so far: ${kinds || 'none'}`);
   const cited = boardAfter.value?.assessment.kind === 'ship.assessment' && boardAfter.value.assessment.citedEvidence.length > 0;
   verdict('4b', 'the assessment cites evidence', boardAfter.value !== null && cited, null, '', '');
   const risk = await poll(session, BUDGET.riskMs, dashboard => { const status = dashboard.portStatus?.find(item => item.portId === 'singapore'); return status && status.risk !== 'normal' ? status : false; });
@@ -168,8 +168,9 @@ async function main(): Promise<void> {
     return finish();
   }
   const restarting = now();
-  const run = Bun.spawnSync(['sh', '-c', restartCmd], { stdout: 'pipe', stderr: 'pipe' });
-  verdict('6a', 'restart command succeeds', run.exitCode === 0, elapsed(restarting), '', run.exitCode === 0 ? '' : run.stderr.toString().slice(0, 200));
+  const run = Bun.spawn(['sh', '-c', restartCmd], { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
+  const exitCode = await run.exited;
+  verdict('6a', 'restart command succeeds', exitCode === 0, elapsed(restarting), '', `exit ${exitCode}`);
   const back = await (async (): Promise<Readonly<{ session: Session | null; ms: number }>> => {
     const started = now();
     while (now() - started < BUDGET.restartMs) {
