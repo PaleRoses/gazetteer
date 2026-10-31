@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../shared';
 import { pollSince, type Cursor } from './realtime/cursor';
 
-export type RelayIdentity = Readonly<{ token: string; channel: string }>;
+/** `agentId` and `agentName` are stored at registration so a client can be built without asking the origin who the token belongs to; identities persisted before that lack them. */
+export type RelayIdentity = Readonly<{ token: string; channel: string; agentId?: string; agentName?: string }>;
 /** Expected provider failures cross actor and HTTP boundaries as data, never fabricated success. */
 export async function attemptRelay<A>(operation: () => Promise<A>, message: string): Promise<RelayOutcome<A>> {
   try { return relaySuccess(await operation()); }
@@ -30,10 +31,37 @@ const retryPolicy = { maxRetries: 4, backoffMs: 500, backoffMultiplier: 2, jitte
 export async function registerParticipant(workspaceKey: string, name: string, channel: string): Promise<RelayIdentity> {
   const relay = new AgentRelay({ workspaceKey, retryPolicy });
   const registration = await relay.agents.register({ name: `${name}-${randomUUID().slice(0, 8)}`, type: 'agent' });
-  return { token: registration.token, channel };
+  return { token: registration.token, channel, agentId: registration.id, agentName: registration.name };
 }
 
-export const participant = (identity: RelayIdentity): Promise<RelayAgentClient> => new AgentRelay({ agentToken: identity.token, retryPolicy }).workspace.reconnect({ apiToken: identity.token });
+type Assembler = Readonly<{ buildAgentClient?: (registration: Readonly<{ id: string; name: string; token: string }>) => RelayAgentClient }>;
+
+/**
+ * A client for an agent token. `reconnect` costs a round trip to learn the agent's id and name; when the identity already carries
+ * them, the SDK's own assembler builds the client with no network at all (it is the exact code `reconnect` ends in).
+ * An SDK without that assembler falls back to `reconnect`.
+ */
+export const connectParticipant = (identity: RelayIdentity): Promise<RelayAgentClient> => {
+  const relay = new AgentRelay({ agentToken: identity.token, retryPolicy });
+  const assemble = (relay as unknown as Assembler).buildAgentClient;
+  return identity.agentId !== undefined && identity.agentName !== undefined && typeof assemble === 'function'
+    ? Promise.resolve(assemble.call(relay, { id: identity.agentId, name: identity.agentName, token: identity.token }))
+    : relay.workspace.reconnect({ apiToken: identity.token });
+};
+
+/** One connected client per token for the life of the process; a failed connection is forgotten so the next call retries it. Concurrent callers share one attempt. */
+export const memoizeByToken = <C>(connect: (identity: RelayIdentity) => Promise<C>): ((identity: RelayIdentity) => Promise<C>) => {
+  const held = new Map<string, Promise<C>>();
+  return identity => {
+    const hit = held.get(identity.token);
+    if (hit !== undefined) return hit;
+    const pending = connect(identity).catch((error: unknown) => { held.delete(identity.token); throw error; });
+    held.set(identity.token, pending);
+    return pending;
+  };
+};
+
+export const participant: (identity: RelayIdentity) => Promise<RelayAgentClient> = memoizeByToken(connectParticipant);
 
 export async function joinChannel(identity: RelayIdentity, createChannel: boolean): Promise<void> {
   const client = await participant(identity);
