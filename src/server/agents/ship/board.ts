@@ -8,7 +8,7 @@ import type { AssessedShipment } from '../../assessment/apply';
 import type { BoardEvidence } from '../../assessment/prompt';
 import { describeError, type LonLat } from '../../telemetry/telemetry';
 import type { Situation } from '../../telemetry/watcher';
-import type { RiskFloor } from './risk-floor';
+import type { RuleVerdict } from './risk-floor';
 import { assessedSummary, etaSummary, observationSummary, ruleAssessmentSummary } from './voice';
 
 /** A ship counts a port as "near" when it is inside the approach zone where a queue forms. Declared, not tuned. */
@@ -45,7 +45,7 @@ export function remainingCalls(shipment: AssessedShipment): readonly Readonly<{ 
 }
 
 /** What the ship concluded from the board this cycle: the rule-based floor, the queue estimates it moved, and every board message it relied on. */
-export type Society = Readonly<{ floor: RiskFloor | null; queues: readonly Readonly<QueueDrainBasis & { bulletinId: string; hours: Readonly<{ low: number; likely: number; high: number }> }>[]}>;
+export type Society = Readonly<{ floor: RuleVerdict | null; queues: readonly Readonly<QueueDrainBasis & { bulletinId: string; hours: Readonly<{ low: number; likely: number; high: number }> }>[]}>;
 export const noSociety: Society = { floor: null, queues: [] };
 /** What a port's watchers say, whichever message carried it: the queue (traffic) or the weather (hazards). */
 export type PortReport = Readonly<{ id: string; kind: BoardMessage['kind']; summary: string; at: string; portId: PortId; element: 'traffic' | 'hazards'; risk: PortRisk; anchored: number; arrivals48h: number; evidenceIds: readonly string[] }>;

@@ -48,3 +48,12 @@ export const floorChange = (floor: RiskFloor, queueHours: number): string =>
   queueHours > 0
     ? `Rule-based ${floor.risk}: ${floor.reasons.join('; ')}. The arrival estimate carries the queue delay; no model assessment.`
     : `Rule-based ${floor.risk}: ${floor.reasons.join('; ')}. No model assessment; arrival estimate unchanged.`;
+
+/** What a rule-based assessment stands on: a floor the rules hold, or the rules letting go. */
+export type RuleVerdict = Readonly<{ risk: Risk; method: 'rule-based'; reasons: readonly string[]; citedEvidence: readonly string[] }>;
+
+/** The rules let go: what held the ship's risk up has cleared, so it returns to the risk it was assessed at. It cites what it hears now and what it was watching before, so the board shows which watch ended. */
+export const clearance = (assessed: Risk, heard: readonly string[], formerly: readonly string[]): RuleVerdict =>
+  ({ risk: assessed, method: 'rule-based', reasons: ['no active signal and no elevated port ahead'], citedEvidence: [...new Set([...heard, ...formerly])] });
+
+export const clearedChange = (verdict: RuleVerdict): string => `Rule-based all clear: ${verdict.reasons.join('; ')}; risk back to ${verdict.risk}. No model assessment.`;

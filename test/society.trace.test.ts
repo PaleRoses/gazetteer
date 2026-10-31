@@ -40,6 +40,22 @@ describe('the society on a fake clock, model off', () => {
     });
   });
 
+  test('what a ship posts, its risk, its method and its words, comes from one decision, and the last post is the ship\'s risk now', async () => {
+    const { board, ships } = await runSociety();
+    const posted = assessments(board);
+    expect(posted.length).toBeGreaterThan(0);
+    expect(posted.filter(item => item.method === 'deterministic')).toEqual([]);
+    posted.filter(item => item.method === 'rule-based').forEach(item => {
+      expect(item.confidence).toBeNull();
+      expect(item.summary).toContain('by rule');
+      expect(citations(item).length).toBeGreaterThan(0);
+    });
+    for (const [id, state] of ships) {
+      const last = posted.filter(item => item.shipmentId === id).at(-1);
+      if (last) expect(last.risk).toBe(state.shipment.risk);
+    }
+  });
+
   test('the head of the queue is delayed by its own measured stop with its ETA untouched; the ship behind it is held by the queue ahead', async () => {
     const { board, ships } = await runSociety();
     const stops = board.filter((message): message is ShipObservation => message.kind === 'ship.observation' && message.signals.includes('stationary-outside-port'));
