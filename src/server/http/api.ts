@@ -14,7 +14,7 @@ type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'operate'>>; origin: string; ingest?: IngestFeed; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask' | 'operate'>>; origin: string; ingest?: IngestFeed; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
 type App = Readonly<{ Bindings: Readonly<{ clientKey: string }>; Variables: Readonly<{ user: User; token: string | undefined; membership: Workspace }> }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
@@ -81,6 +81,12 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
     c.set('membership', membership.value);
     return next();
   };
+  /** A shipment route answers only for the workspace's own fleet; an unknown id is not found before any actor is asked. */
+  const inFleet = (missing: string): MiddlewareHandler<App> => async (c, next) => {
+    const dashboard = await monitoring.dashboard(workspaceOf(c));
+    if (dashboard.status === 'unavailable') return monitoringResponse(dashboard);
+    return dashboard.value.shipments.some(shipment => shipment.id === shipmentOf(c)) ? next() : json({ error: missing }, 404);
+  };
 
   const app = new Hono<App>()
     // Order is the contract: origin, then the public routes, then a session, then membership per route.
@@ -106,6 +112,11 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
     .get('/api/workspaces/:workspaceId/dashboard', member, async c => monitoringResponse(await monitoring.dashboard(workspaceOf(c))))
     .get('/api/workspaces/:workspaceId/events', member, c => events ? events(c.req.raw, workspaceOf(c)) : json({ error: 'Not found' }, 404))
     .get('/api/workspaces/:workspaceId/members', member, c => respond(access.members(c.get('user').id, workspaceOf(c)), members => ({ members })))
+    .post('/api/workspaces/:workspaceId/shipments/:shipmentId/ask', member, inFleet('Ship not found'), jsonOnly, body(z.object({ question: z.string().trim().min(1).max(500) })), async c => {
+      if (!monitoring.ask) return json({ error: 'The ship mind is unavailable.' }, 503);
+      const answer = await monitoring.ask(workspaceOf(c), shipmentOf(c), c.req.valid('json').question);
+      return answer.status === 'answered' ? json({ answer: answer.answer, cited: answer.cited, mind: answer.mind, session: answer.session }) : json({ error: answer.message }, 503);
+    })
     .post('/api/workspaces/:workspaceId/disruptions', member, jsonOnly, body(disruptionSchema), async c => {
       const input = c.req.valid('json');
       return monitoringResponse(await monitoring.simulate(workspaceOf(c), input.portId, input.delayHours));
@@ -128,12 +139,7 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
       return json({ email: invitation.value.email, url: inviteUrl, ...delivery });
     })
     // A known workspace resource asked the wrong way is refused after membership, as an unknown one is not found before it.
-    .on(['GET', 'POST'], '/api/workspaces/:workspaceId/shipments/:shipmentId/comments', member, async (c, next) => {
-      const workspaceId = workspaceOf(c);
-      const dashboard = await monitoring.dashboard(workspaceId);
-      if (dashboard.status === 'unavailable') return monitoringResponse(dashboard);
-      return dashboard.value.shipments.some(shipment => shipment.id === shipmentOf(c)) ? next() : json({ error: 'Shipment not found' }, 404);
-    })
+    .on(['GET', 'POST'], '/api/workspaces/:workspaceId/shipments/:shipmentId/comments', member, inFleet('Shipment not found'))
     .get('/api/workspaces/:workspaceId/shipments/:shipmentId/comments', c => respond(access.comments(c.get('user').id, workspaceOf(c), shipmentOf(c)), comments => ({ comments })))
     .post('/api/workspaces/:workspaceId/shipments/:shipmentId/comments', jsonOnly, body(z.object({ body: z.string().trim().min(1).max(4000) })), c => {
       const [workspaceId, shipmentId] = [workspaceOf(c), shipmentOf(c)];

@@ -1,8 +1,8 @@
-import type { BoardMessage, PortBulletin } from '../../../core/board';
+import type { BoardMessage, ShipObservation } from '../../../core/board';
 import { portById, type PortId } from '../../../core/ports';
 import { shiftEta } from '../../../core/eta';
 import type { AssessedShipment } from '../../assessment/apply';
-import { inHorizon } from './board';
+import { inHorizon, portReportOf, type PortReport } from './board';
 import { remainingCalls } from '../../../core/port-calls';
 import type { ReactionSummary } from './risk-floor';
 
@@ -31,28 +31,36 @@ export type Reacted<S extends AssessedShipment> = Readonly<{
 
 const hoursUntil = (at: string, now: string): number => (Date.parse(at) - Date.parse(now)) / 3_600_000;
 
-/** The newest bulletin for each port still ahead, inside the horizon. */
-const newestBulletins = (board: readonly BoardMessage[], ahead: ReadonlySet<PortId>, now: string): readonly PortBulletin[] => {
-  const bulletins = board.flatMap(message => message.kind === 'port.bulletin' && ahead.has(message.portId) && inHorizon(message.at, now) ? [message] : []);
-  const newest = new Map<PortId, PortBulletin>();
-  bulletins.forEach(message => {
-    const known = newest.get(message.portId);
-    if (!known || Date.parse(message.at) > Date.parse(known.at) || (message.at === known.at && message.id > known.id)) newest.set(message.portId, message);
+/** The newest report of each watcher of each port still ahead, inside the horizon. */
+const newestBulletins = (board: readonly BoardMessage[], ahead: ReadonlySet<PortId>, now: string): readonly PortReport[] => {
+  const newest = new Map<string, PortReport>();
+  board.flatMap(message => portReportOf(message) ?? []).filter(report => ahead.has(report.portId) && inHorizon(report.at, now)).forEach(report => {
+    const key = `${report.portId}:${report.element}`;
+    const known = newest.get(key);
+    if (!known || Date.parse(report.at) > Date.parse(known.at) || (report.at === known.at && report.id > known.id)) newest.set(key, report);
   });
   return [...newest.values()];
 };
 
 const round = (value: number): number => Math.round(value);
 
-/** Ships queued before this one: the bulletin's count, less this ship, less every ship whose stop the board shows was reported after this ship's own. A stop the ship cannot find on its board counts as ahead of it. */
-const anchoredAhead = (bulletin: PortBulletin, board: readonly BoardMessage[], ownObservation: string | null): number => {
-  const mine = ownObservation && bulletin.evidenceIds.includes(ownObservation) ? board.find(message => message.id === ownObservation) : undefined;
-  if (!ownObservation || !bulletin.evidenceIds.includes(ownObservation)) return bulletin.anchored;
-  const behind = mine ? bulletin.evidenceIds.filter(id => id !== ownObservation).filter(id => {
-    const other = board.find(message => message.id === id);
-    return other?.kind === 'ship.observation' && (other.at > mine.at || (other.at === mine.at && other.id > mine.id));
-  }).length : 0;
-  return Math.max(0, bulletin.anchored - 1 - behind);
+const loitered = (observation: ShipObservation): number => {
+  const hours = observation.measured?.loiteringHours;
+  return typeof hours === 'number' ? hours : 0;
+};
+/** Is `other` further back in the queue than `mine`? The longer a ship has loitered the nearer the head; ties go to the earlier report. */
+const behindOf = (mine: ShipObservation, other: ShipObservation): boolean =>
+  loitered(other) !== loitered(mine) ? loitered(other) < loitered(mine) : other.at !== mine.at ? other.at > mine.at : other.id > mine.id;
+
+/** Ships queued before this one: the report's count, less this ship if the report counted it, less every counted ship the board shows further back in the queue. A stop the ship cannot find on its board counts as ahead of it. */
+const anchoredAhead = (bulletin: PortReport, board: readonly BoardMessage[], ownObservation: string | null): number => {
+  const mine = ownObservation ? board.find((message): message is ShipObservation => message.id === ownObservation && message.kind === 'ship.observation') : undefined;
+  if (!mine) return Math.max(0, bulletin.anchored - (ownObservation && bulletin.evidenceIds.includes(ownObservation) ? 1 : 0));
+  const behind = bulletin.evidenceIds.filter(id => id !== mine.id).filter(id => {
+    const other = board.find((message): message is ShipObservation => message.id === id && message.kind === 'ship.observation');
+    return other !== undefined && behindOf(mine, other);
+  }).length;
+  return Math.max(0, bulletin.anchored - (bulletin.evidenceIds.includes(mine.id) ? 1 : 0) - behind);
 };
 
 /** Pure: what a ship concludes from the newest bulletin of every port it has yet to call at. An elevated or severe port is a watch. The ETA moves only when the bulletin carries a delay basis, ships anchored ahead of this one, and this ship reaches the port inside the window; the delay is set per port, not added, so a repeat bulletin changes nothing and a shorter queue relaxes the estimate. */
@@ -62,7 +70,7 @@ export function react<S extends AssessedShipment>(shipment: S, board: readonly B
   const settled = bulletins.reduce<Readonly<{ shipment: S; reactions: Reactions; changed: readonly ReactionBasis[] }>>((state, bulletin) => {
     const known = state.reactions[bulletin.portId];
     const call = calls.find(item => item.portId === bulletin.portId);
-    if (known?.bulletinId === bulletin.id || !call) return state;
+    if (bulletin.element === 'hazards' || known?.bulletinId === bulletin.id || !call) return state;
     const port = portById.get(bulletin.portId);
     const ahead = anchoredAhead(bulletin, board, ownObservation);
     const rate = port?.serviceRate;

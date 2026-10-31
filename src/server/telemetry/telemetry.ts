@@ -7,7 +7,8 @@ export type Telemetry = Readonly<{
   observedAt: string; provenance: 'live' | 'simulation'; provider: TelemetryProvider; fetchedAt: string;
 }>;
 export type TelemetryOutcome =
-  | Readonly<{ status: 'ok'; value: Telemetry }>
+  /** `history`, oldest first, is earlier fixes a source already knows (the simulation's last day); a live feed sends none. */
+  | Readonly<{ status: 'ok'; value: Telemetry; history?: readonly Telemetry[] }>
   | Readonly<{ status: 'unavailable'; message: string }>;
 export type TelemetrySource = (mmsi: string) => Promise<TelemetryOutcome>;
 

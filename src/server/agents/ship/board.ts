@@ -1,7 +1,7 @@
 import { remainingCalls } from '../../../core/port-calls';
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import { lineString, point } from '@turf/helpers';
-import type { BoardMessage, QueueDrainBasis, ShipAssessment, ShipObservation } from '../../../core/board';
+import type { BoardMessage, PortRisk, QueueDrainBasis, ShipAssessment, ShipObservation } from '../../../core/board';
 import { ports, type PortId } from '../../../core/ports';
 import { distanceKm, voyageRoute } from '../../../core/routes';
 import type { RelayOutcome, Risk } from '../../../core/types';
@@ -37,21 +37,33 @@ const nearestPortId = (position: LonLat): PortId | null =>
 /** What the ship concluded from the board this cycle: the rule-based floor, the queue estimates it moved, and every board message it relied on. */
 export type Society = Readonly<{ floor: RiskFloor | null; queues: readonly Readonly<QueueDrainBasis & { bulletinId: string; hours: Readonly<{ low: number; likely: number; high: number }> }>[]}>;
 export const noSociety: Society = { floor: null, queues: [] };
+/** What a port's watchers say, whichever message carried it: the queue (traffic) or the weather (hazards). */
+export type PortReport = Readonly<{ id: string; kind: BoardMessage['kind']; summary: string; at: string; portId: PortId; element: 'traffic' | 'hazards'; risk: PortRisk; anchored: number; arrivals48h: number; evidenceIds: readonly string[] }>;
+export const portReportOf = (message: BoardMessage): PortReport | null => {
+  switch (message.kind) {
+    case 'port.bulletin': return { id: message.id, kind: message.kind, summary: message.summary, at: message.at, portId: message.portId, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
+    case 'city.traffic': return { id: message.id, kind: message.kind, summary: message.summary, at: message.at, portId: message.author.city, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
+    case 'city.hazards': return { id: message.id, kind: message.kind, summary: message.summary, at: message.at, portId: message.author.city, element: 'hazards', risk: message.risk, anchored: 0, arrivals48h: 0, evidenceIds: message.evidenceIds };
+    default: return null;
+  }
+};
+
 export type DecisionInput = Readonly<{ shipment: AssessedShipment; situation: Situation | null; now: string; society?: Society }>;
 
+/** A ship says when its signals begin, once, and says when they clear, once: a port that counted it stops counting it. */
 const observationOf = ({ shipment, situation, now }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] => {
   const telemetry = shipment.telemetry;
-  if (!situation || !telemetry || situation.id === memory.observed) return [];
+  if (!telemetry || situation?.id === memory.observed || (!situation && !memory.observed)) return [];
   const active = shipment.signals?.map(signal => signal.kind) ?? [];
-  const signals = [...new Set(active.length ? active : situation.kinds)];
+  const signals = situation ? [...new Set(active.length ? active : situation.kinds)] : [];
   const measured = Object.assign({}, ...(shipment.signals ?? []).map(signal => signal.measured)) as NonNullable<ShipObservation['measured']>;
   const nearPort = nearestPortId(telemetry.position);
   const message: ShipObservation = {
-    id: `obs:${situation.id}`, kind: 'ship.observation', author: { role: 'ship', id: shipment.id, vessel: shipment.vessel, agent: shipment.agent }, at: now,
-    summary: observationSummary(shipment.agent, shipment.vessel, shipment.signals?.map(signal => signal.title) ?? signals, measured, nearPort),
+    id: situation ? `obs:${situation.id}` : `obs:cleared:${memory.observed}`, kind: 'ship.observation', author: { role: 'ship', id: shipment.id, vessel: shipment.vessel, agent: shipment.agent }, at: now,
+    summary: observationSummary(shipment.agent, shipment.vessel, situation ? shipment.signals?.map(signal => signal.title) ?? signals : ['signals cleared'], measured, nearPort),
     shipmentId: shipment.id, signals, measured, position: [telemetry.position[0], telemetry.position[1]], nearPort, provider: telemetry.provider, observedAt: telemetry.observedAt,
   };
-  return [{ message, remember: current => ({ ...current, observed: situation.id }) }];
+  return [{ message, remember: current => ({ ...current, observed: situation?.id ?? null }) }];
 };
 
 const assessmentOf = ({ shipment, situation, now, society = noSociety }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] => {
@@ -103,20 +115,25 @@ export function selectBoardEvidence(shipment: AssessedShipment, board: readonly 
   const route = voyageRoute(shipment) ?? shipment.route;
   const nearRoute = (position: LonLat): boolean =>
     route.length > 1 && nearestPointOnLine(lineString(route.map(item => [...item])), point([...position]), { units: 'kilometers' }).properties.pointDistance <= peerRouteKm;
-  const latestFirst = <A extends BoardMessage>(items: readonly A[]): readonly A[] => [...items].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  const bulletins = latestFirst(board.flatMap(message => message.kind === 'port.bulletin' && ahead.has(message.portId) && inHorizon(message.at, now) ? [message] : []));
-  const newestPerPort = bulletins.filter((message, index) => bulletins.findIndex(other => other.portId === message.portId) === index).slice(0, maxBulletins);
+  const latestFirst = <A extends Readonly<{ at: string }>>(items: readonly A[]): readonly A[] => [...items].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const reports = board.flatMap(message => portReportOf(message) ?? []).filter(report => ahead.has(report.portId) && inHorizon(report.at, now));
+  const newestPerWatch = latestFirst(reports).filter((report, index, sorted) => sorted.findIndex(other => other.portId === report.portId && other.element === report.element) === index).slice(0, maxBulletins);
   const peers = latestFirst(board.flatMap(message => message.kind === 'ship.observation' && message.shipmentId !== shipment.id && inHorizon(message.at, now) && nearRoute(message.position) ? [message] : [])).slice(0, maxPeers);
   return [
-    ...newestPerPort.map((message): BoardEvidence => ({ id: message.id, kind: message.kind, at: message.at, summary: message.summary, facts: { portId: message.portId, risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h } })),
+    ...newestPerWatch.map((report): BoardEvidence => ({ id: report.id, kind: report.kind, at: report.at, summary: report.summary, facts: { portId: report.portId, element: report.element, risk: report.risk, anchored: report.anchored, arrivals48h: report.arrivals48h } })),
     ...peers.map((message): BoardEvidence => ({ id: message.id, kind: message.kind, at: message.at, summary: message.summary, facts: { vessel: message.author.role === 'ship' ? message.author.vessel : null, signals: message.signals, nearPort: message.nearPort, position: message.position, observedAt: message.observedAt } })),
   ];
 }
 
 const maxRemembered = 50;
-/** Pure: the ship's recent view of the board, since each read only sees what is past the cursor. Deduplicated by id, bounded by age and count. */
-export const rememberBoard = (previous: readonly BoardMessage[], incoming: readonly BoardMessage[], now: string): readonly BoardMessage[] =>
-  [...new Map([...previous, ...incoming].map(message => [message.id, message] as const)).values()]
+/** Pure: the ship's recent view of the board, since each read only sees what is past the cursor. Deduplicated by id and bounded by age; the newest 50 messages are kept, and every ship's latest observation besides, since the queue is ordered by them and a flood of ETAs must not push a stop off the board. */
+export const rememberBoard = (previous: readonly BoardMessage[], incoming: readonly BoardMessage[], now: string): readonly BoardMessage[] => {
+  const fresh = [...new Map([...previous, ...incoming].map(message => [message.id, message] as const)).values()]
     .filter(message => Date.parse(now) - Date.parse(message.at) <= peerHorizonHours * 3_600_000)
-    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
-    .slice(-maxRemembered);
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const newest = new Set(fresh.slice(-maxRemembered).map(message => message.id));
+  const latestStops = new Map<string, string>();
+  fresh.forEach(message => { if (message.kind === 'ship.observation') latestStops.set(message.shipmentId, message.id); });
+  const stops = new Set(latestStops.values());
+  return fresh.filter(message => newest.has(message.id) || stops.has(message.id));
+};

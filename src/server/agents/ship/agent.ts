@@ -1,11 +1,11 @@
 import { Actor, Persisted } from 'durable-actors';
 import { relaySuccess, type Disruption, type RelayOutcome, type Risk, type Shipment } from '../../../core/types';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { shipMindFromEnv } from '../../assessment/mind';
+import { shipAskerFromEnv, shipMindFromEnv } from '../../assessment/mind';
 import type { AssessmentCache } from '../../assessment/assess';
 import { postBoard, readChannel, type ChannelRead } from '../../relay/board';
 import type { BoardMessage } from '../../../core/board';
-import type { ShipBoardMemory } from './board';
+import { selectBoardEvidence, type ShipBoardMemory } from './board';
 import type { Reactions } from './react';
 import { think } from './think';
 import { demoShipments } from '../../../core/demo';
@@ -23,6 +23,8 @@ import { connect } from '../../relay/connect';
 
 type ShipmentState = Readonly<{ paused?: boolean; shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; baseRisk?: Risk; reactions?: Reactions; mind?: string | null; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
 const assessment = shipMindFromEnv(process.env, query);
+const asker = shipAskerFromEnv(process.env, query);
+export type ShipAnswer = Readonly<{ status: 'answered'; answer: string; cited: readonly string[]; mind: string; session: string | null }> | Readonly<{ status: 'unavailable'; message: string }>;
 const telemetrySource = telemetrySourceFromEnv(process.env);
 const demo = demoEnabled(process.env);
 /** A read plus whatever the server already handed over: local echoes may not have reached Relay yet. */
@@ -73,6 +75,16 @@ export class ShipmentAgent extends Actor {
   async pause(): Promise<void> { this.paused = true; if (this.state) this.state = { ...this.state, paused: true, boardOutbox: [] }; }
 
   async snapshot(): Promise<Shipment | null> { return this.state?.shipment ?? null; }
+
+  /** Read-only: the mind answers as itself from its own session and decides nothing; only the session it ran in is kept. */
+  async ask(question: string): Promise<ShipAnswer> {
+    if (!this.state) return { status: 'unavailable', message: 'This ship is not being monitored yet.' };
+    const start = this.state;
+    const now = new Date().toISOString();
+    const result = await asker(question, start.mind ?? null, { shipment: start.shipment, board: selectBoardEvidence(start.shipment, start.seen ?? [], now), observation: null });
+    if (this.state) this.state = { ...this.state, mind: result.session };
+    return result.status === 'answered' ? { status: 'answered', answer: result.answer, cited: result.cited, mind: start.shipment.agent, session: result.session } : { status: 'unavailable', message: result.message };
+  }
 
   /** The server heard these on the Relay stream (or authored them): take them locally instead of reading Relay. */
   async deliver(batch: Inbox): Promise<void> {

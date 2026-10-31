@@ -53,6 +53,8 @@ const mindInstructions = [
 
 type Answer = Readonly<{ body: unknown; ids: readonly string[] }>;
 const portQuery = z.object({ port: z.string() });
+/** A city's status is whatever its watches posted, by PortId; which agent wrote it does not matter. port.bulletin stays readable until the city watches replace it. */
+const cityKinds: readonly string[] = ['city.traffic', 'city.hazards', 'port.bulletin'];
 const isShipTool = (name: string): name is ShipTool => (shipTools as readonly string[]).includes(name);
 const unqualified = (name: string): string => name.startsWith(`mcp__${server}__`) ? name.slice(`mcp__${server}__`.length) : name;
 
@@ -60,10 +62,15 @@ const portStatus = (context: MindContext, input: unknown): Answer => {
   const asked = portQuery.safeParse(input);
   const port = asked.success ? ports.find(value => value.id === asked.data.port || value.name.toLowerCase() === asked.data.port.toLowerCase()) : undefined;
   if (!port) return { body: { found: false }, ids: [] };
-  const bulletin = context.board.find(item => item.kind === 'port.bulletin' && item.facts.portId === port.id) ?? null;
+  const reports = context.board.filter(item => cityKinds.includes(item.kind) && item.facts.portId === port.id);
   const ahead: readonly string[] = [...context.shipment.via, context.shipment.destination];
-  return { body: { found: true, id: port.id, name: port.name, onMyRoute: ahead.includes(port.id), bulletin }, ids: bulletin ? [bulletin.id] : [] };
+  return { body: { found: true, id: port.id, name: port.name, onMyRoute: ahead.includes(port.id), reports }, ids: reports.map(item => item.id) };
 };
+
+const askInstructions = [
+  'Someone on your team asks about your voyage. Answer in at most four sentences from what your tools show, naming the ids of the board messages and evidence you rely on exactly as given.',
+  'You decide nothing here and change nothing; if your tools do not show it, say so.',
+].join(' ');
 
 /** Pure: what each ship tool shows for this context, and the ids it showed. The stream's tool calls are replayed through it to know what the mind saw. */
 export function answerTool(context: MindContext, name: string, input: unknown): Answer {
@@ -88,7 +95,7 @@ const shipServer = (context: MindContext) => createSdkMcpServer({
   tools: [
     tool('read_board', 'Board messages from port and peer-ship agents that bear on my remaining route, by message id.', {}, async () => reply(answerTool(context, 'read_board', {}))),
     tool('read_track', 'My own live telemetry window: the latest position report, the watcher reading and the signals it raised.', {}, async () => reply(answerTool(context, 'read_track', {}))),
-    tool('port_status', 'One port by id or name: whether it is on my remaining route and its newest bulletin on the board.', { port: z.string() }, async args => reply(answerTool(context, 'port_status', args))),
+    tool('port_status', 'One port city by id or name: whether it is on my remaining route and what its traffic and hazard watches posted on the board.', { port: z.string() }, async args => reply(answerTool(context, 'port_status', args))),
   ],
 });
 
@@ -138,19 +145,36 @@ const drain = async (stream: AsyncIterator<unknown>, read: readonly unknown[]): 
   }
 };
 
-/** Pure: the mind's stream becomes the model contract plus the session to resume and the ids its tools showed. */
-export function settleMind(context: MindContext, { messages, error, timedOut }: Drained): ModelResult {
+const readStream = (context: MindContext, { messages, error, timedOut }: Drained) => {
   const parsed = messages.flatMap((message): StreamMessage[] => { const value = streamMessage.safeParse(message); return value.success ? [value.data] : []; });
   const session = parsed.find(message => message.type === 'system')?.session_id ?? parsed.at(-1)?.session_id ?? null;
   const shown = [...new Set(parsed.flatMap(message => message.type === 'assistant'
     ? message.message.content.flatMap(item => item.type === 'tool_use' && item.name ? answerTool(context, item.name, item.input).ids : [])
     : []))];
-  const result = parsed.find(message => message.type === 'result');
-  if (result?.type === 'result' && !result.is_error && result.structured_output !== undefined) return { status: 'ok', output: result.structured_output, session, shown };
+  const found = parsed.find(message => message.type === 'result');
+  const result = found?.type === 'result' ? found : null;
   const reason = timedOut ? 'ship mind timed out'
-    : result?.type === 'result' ? `ship mind ${result.is_error ? 'error' : result.subtype}: ${result.result || result.errors?.join('; ') || 'no decision'}`
-    : error ?? 'ship mind ended without a decision';
-  return { status: 'failed', message: reason, session };
+    : result ? `ship mind ${result.is_error ? 'error' : result.subtype}: ${result.result || result.errors?.join('; ') || 'no answer'}`
+    : error ?? 'ship mind ended without an answer';
+  return { session, shown, result: result && !result.is_error ? result : null, reason };
+};
+
+/** Pure: the mind's stream becomes the model contract plus the session to resume and the ids its tools showed. */
+export function settleMind(context: MindContext, drained: Drained): ModelResult {
+  const { session, shown, result, reason } = readStream(context, drained);
+  return result?.structured_output !== undefined ? { status: 'ok', output: result.structured_output, session, shown } : { status: 'failed', message: reason, session };
+}
+
+export type AskResult =
+  | Readonly<{ status: 'answered'; answer: string; cited: readonly string[]; session: string | null }>
+  | Readonly<{ status: 'unavailable'; message: string; session: string | null }>;
+export type Asker = (question: string, session: string | null, context: MindContext) => Promise<AskResult>;
+
+/** Pure: an answer cites only ids its tools showed it and that its text names. */
+export function settleAnswer(context: MindContext, drained: Drained, asked: string | null): AskResult {
+  const { session, shown, result, reason } = readStream(context, drained);
+  const answer = result?.result?.trim() ?? '';
+  return answer ? { status: 'answered', answer, cited: shown.filter(id => answer.includes(id)), session } : { status: 'unavailable', message: reason, session: session ?? asked };
 }
 
 /** The effect edge: one SDK query per situation through the bounded pool, resumed from the ship's own session; the deadline runs from arrival, queued or not. */
@@ -163,6 +187,22 @@ export const shipMind = (run: MindQuery, config: MindConfig, pool: Pool = mindPo
   clearTimeout(timer);
   if (!drained) return { status: 'failed', message: 'ship mind queue deadline passed; the rules stand until the next situation', session: request.session };
   return settleMind(request.context, { ...drained, timedOut: abort.signal.aborted });
+};
+
+const askOptions = (config: MindConfig, session: string | null, context: MindContext, abort: AbortController): Options => {
+  const { outputFormat: _decision, ...readOnly } = mindOptions(config, { system: '', prompt: '', session, context }, abort);
+  return { ...readOnly, systemPrompt: `${identity(context)}\n${askInstructions}` };
+};
+
+/** The same mind, read-only: its own session resumed, its tools without the decision, through the same pool, under the ask deadline. */
+export const askMind = (run: MindQuery, config: MindConfig, pool: Pool = mindPool): Asker => async (question, session, context) => {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), config.timeoutMs);
+  const drained = await pool(abort.signal, () => mkdir(config.mindsDir, { recursive: true, mode: 0o700 })
+    .then(() => drain(run({ prompt: question, options: askOptions(config, session, context, abort) })[Symbol.asyncIterator](), []))
+    .catch((error: unknown) => ({ messages: [], error: messageOf(error) })));
+  clearTimeout(timer);
+  return drained ? settleAnswer(context, { ...drained, timedOut: abort.signal.aborted }, session) : { status: 'unavailable', message: 'The ship mind is busy; ask again shortly.', session };
 };
 
 const mindsDirOf = (env: Readonly<Record<string, string | undefined>>): string =>
@@ -182,4 +222,17 @@ export const shipMindFromEnv = (env: Readonly<Record<string, string | undefined>
   const workspace = workspaceIdSchema.safeParse(env.ANTHROPIC_WORKSPACE_ID);
   if (!workspace.success) return { model: refuse(env.ANTHROPIC_WORKSPACE_ID ? workspace.error.issues[0]?.message ?? 'invalid workspace id' : 'ANTHROPIC_WORKSPACE_ID is not set; the ship mind needs it'), modelId };
   return { model: shipMind(run, { apiKey, workspaceId: workspace.data, model: modelId, mindsDir: mindsDirOf(env), executable: claudeExecutableOf(env), path: env.PATH ?? '', timeoutMs: mindWindowMs }), modelId };
+};
+
+const askWindowMs = 30_000;
+
+/** Thin env edge for ask(): without the key and its workspace id the mind is unavailable, said plainly, and nothing spawns. */
+export const shipAskerFromEnv = (env: Readonly<Record<string, string | undefined>>, run: MindQuery): Asker => {
+  const apiKey = env.ANTHROPIC_API_KEY;
+  const workspace = workspaceIdSchema.safeParse(env.ANTHROPIC_WORKSPACE_ID);
+  if (!apiKey || !workspace.success) {
+    const message = !apiKey ? 'The ship mind is unavailable: no ANTHROPIC_API_KEY is configured.' : 'The ship mind is unavailable until ANTHROPIC_WORKSPACE_ID is set.';
+    return async (_question, session) => ({ status: 'unavailable', message, session });
+  }
+  return askMind(run, { apiKey, workspaceId: workspace.data, model: env.GAZETTEER_ASSESSMENT_MODEL || assessmentModel, mindsDir: mindsDirOf(env), executable: claudeExecutableOf(env), path: env.PATH ?? '', timeoutMs: askWindowMs });
 };

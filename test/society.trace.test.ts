@@ -15,7 +15,7 @@ describe('the society on a fake clock, model off', () => {
     const bulletin = bulletins(board).find(item => item.portId === 'singapore' && item.risk !== 'normal' && item.evidenceIds.includes(observation!.id));
     expect(bulletin).toBeDefined();
     expect(board.indexOf(observation!)).toBeLessThan(board.indexOf(bulletin!));
-    const listeners = assessments(board).filter(item => item.method === 'rule-based' && item.citedEvidence.includes(bulletin!.id) && item.shipmentId !== observation!.author.id);
+    const listeners = assessments(board).filter(item => item.method === 'rule-based' && item.citedEvidence.includes(bulletin!.id) && item.shipmentId !== (observation as ShipObservation).shipmentId);
     expect(new Set(listeners.map(item => item.shipmentId)).size).toBeGreaterThanOrEqual(2);
     expect(listeners.every(item => item.confidence === null)).toBe(true);
     expect(bulletins(board).filter(item => item.portId === 'singapore').some(item => item.risk === 'severe')).toBe(true);
@@ -49,6 +49,18 @@ describe('the society on a fake clock, model off', () => {
     expect(ships.get(head!)!.shipment.eta).toBe(original.get(head!)!);
     expect(behind.length).toBeGreaterThan(0);
     behind.forEach(id => expect(Date.parse(ships.get(id!)!.shipment.eta)).toBeGreaterThan(Date.parse(original.get(id!)!)));
+  });
+
+  test('a ship that leaves the queue says so, and the port stops counting it', async () => {
+    const queue = Object.keys(demoScenarios).filter(id => demoScenarios[id]!.kind === 'queue');
+    const leaves = (cycle: number) => cycle < cycles * 3 / 4 ? demoScenarios : { ...demoScenarios, ...Object.fromEntries(queue.map(id => [id, underway])) };
+    const { board, ships } = await runSociety(leaves);
+    const singapore = bulletins(board).filter(item => item.portId === 'singapore');
+    expect(Math.max(...singapore.map(item => item.anchored))).toBeGreaterThanOrEqual(2);
+    expect(singapore[singapore.length - 1]!.anchored).toBe(0);
+    expect(board.some(message => message.kind === 'ship.observation' && message.signals.length === 0)).toBe(true);
+    const original = new Map(demoShipments(new Date(start)).map(shipment => [shipment.id, shipment.eta]));
+    expect(ships.get('gz-1047')!.shipment.eta).toBe(original.get('gz-1047')!);
   });
 
   test('when the signals clear, a ship returns to the risk it was assessed at', async () => {

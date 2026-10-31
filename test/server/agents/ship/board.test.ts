@@ -23,6 +23,17 @@ const notice: AssessableNotice = { id: 'sg-1', portId: 'singapore', delayHours: 
 const verdict = (cited: readonly string[]): Assessment => ({ affected: true, delayHours: { low: 20, likely: 30, high: 50 }, risk: 'delayed', rationale: 'Queue at the next call.', citedEvidence: [...cited], confidence: 0.6, action: null });
 const delayed = applyAssessment(meridian, notice, { assessment: verdict(['sg-1']), model: 'test-model', assessedAt: now });
 
+describe('ship evidence from the city watches', () => {
+  test('the newest traffic and hazard report of a port still ahead are evidence, with their element; a port behind is not', () => {
+    const traffic = (id: string, at: string, city: 'singapore' | 'shanghai'): BoardMessage => ({ id, kind: 'city.traffic', author: { role: 'city', city, element: 'traffic' }, at, summary: 's', risk: 'severe', anchored: 4, arrivals48h: 1, evidenceIds: [], basis: { perHour: 0.8, provenance: 'assumed', basis: 'b' } });
+    const hazard: BoardMessage = { id: 'h1', kind: 'city.hazards', author: { role: 'city', city: 'singapore', element: 'hazards' }, at: now, summary: 's', risk: 'elevated', notices: [], evidenceIds: [] };
+    const board = [traffic('t-old', '2026-10-31T10:00:00.000Z', 'singapore'), traffic('t-new', '2026-10-31T11:00:00.000Z', 'singapore'), traffic('t-behind', now, 'shanghai'), hazard];
+    const evidence = selectBoardEvidence(meridian, board, now);
+    expect(evidence.map(item => item.id).sort()).toEqual(['h1', 't-new']);
+    expect(evidence.find(item => item.id === 't-new')).toMatchObject({ kind: 'city.traffic', facts: { portId: 'singapore', element: 'traffic', anchored: 4 } });
+  });
+});
+
 describe('ship board decisions', () => {
   test('a fresh ship announces its ETA to each port ahead, once; every message is valid board traffic', () => {
     const first = decideBoard(emptyBoardMemory, { shipment: meridian, situation: null, now });
@@ -43,7 +54,10 @@ describe('ship board decisions', () => {
     expect(decideBoard(remembered, { shipment: watched, situation, now })).toEqual([]);
     const widened: Situation = { ...situation, id: 'telemetry:gz-1042:ais-dark+stationary-outside-port:t2', kinds: ['ais-dark', 'stationary-outside-port'] };
     expect(kinds(decideBoard(remembered, { shipment: watched, situation: widened, now }))).toEqual(['ship.observation']);
-    expect(decideBoard(remembered, { shipment: watched, situation: null, now })).toEqual([]);
+    const cleared = decideBoard(remembered, { shipment: watched, situation: null, now });
+    expect(cleared.map(item => item.message)).toEqual([expect.objectContaining({ kind: 'ship.observation', id: `obs:cleared:${situation.id}`, signals: [] })]);
+    expect(parseBoardMessage(cleared[0]!.message)).toBeDefined();
+    expect(decideBoard(apply(remembered, cleared), { shipment: watched, situation: null, now })).toEqual([]);
   });
 
   test('a changed risk or ETA posts one assessment and an ETA notice per port ahead, with the right previous ETA', () => {
@@ -119,5 +133,12 @@ describe('remembering the board', () => {
     const bounded = rememberBoard([], many, now);
     expect(bounded).toHaveLength(50);
     expect(bounded[49]!.id).toBe('m79');
+  });
+  test('a ship\'s latest stop outlives a flood of newer messages, but only its latest', () => {
+    const stop = (id: string, at: string): BoardMessage => ({ id, kind: 'ship.observation', author: { role: 'ship', id: 'gz-9', vessel: 'v' }, at, summary: id, shipmentId: 'gz-9', signals: ['stationary-outside-port'], position: [0, 0], nearPort: null, provider: 'p', observedAt: at });
+    const flood = Array.from({ length: 80 }, (_, i) => message(`m${i}`, new Date(Date.parse(now) - (80 - i) * 60_000).toISOString()));
+    const kept = rememberBoard([], [stop('older', '2026-10-31T01:00:00.000Z'), stop('latest', '2026-10-31T02:00:00.000Z'), ...flood], now).map(item => item.id);
+    expect(kept).toContain('latest');
+    expect(kept).not.toContain('older');
   });
 });

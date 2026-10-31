@@ -15,11 +15,13 @@ const readings: Readonly<Record<string, string>> = {
 /** Every number in a ship's own summary is read from the message it summarises; constants appear only as words. */
 const opening = (agent: string, vessel: string): string => `${agent}, aboard ${vessel}`;
 
-export const observationSummary = (agent: string, vessel: string, titles: readonly string[], measured: NonNullable<ShipObservation['measured']>, nearPort: PortId | null): string =>
-  clip(`${opening(agent, vessel)}: ${titles.join('; ')}${nearPort ? ` near ${portName(nearPort)}` : ''}. ${Object.entries(readings).flatMap(([key, label]) => {
+export const observationSummary = (agent: string, vessel: string, titles: readonly string[], measured: NonNullable<ShipObservation['measured']>, nearPort: PortId | null): string => {
+  const read = Object.entries(readings).flatMap(([key, label]) => {
     const value = measured[key];
     return typeof value === 'number' ? [`${value} ${label}`] : [];
-  }).join(', ')}.`.replace(/ \.$/, '.'));
+  }).join(', ');
+  return clip(`${opening(agent, vessel)}: ${titles.join('; ')}${nearPort ? ` near ${portName(nearPort)}` : ''}.${read ? ` ${read}.` : ''}`);
+};
 
 export const ruleAssessmentSummary = (agent: string, vessel: string, message: Pick<ShipAssessment, 'risk' | 'eta' | 'delayHours' | 'basis'>, reasons: readonly string[]): string =>
   clip(`${opening(agent, vessel)}, by rule: ${message.risk}. ${reasons.join('; ')}.${message.basis ? ` ${message.basis.anchored} anchored at ${portName(message.basis.portId)}, ${message.delayHours?.likely ?? 0} h likely queue delay.` : ''} ETA ${utc(message.eta)}.`);

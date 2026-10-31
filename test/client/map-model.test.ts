@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { demoShipments } from '../../src/core/demo';
 import { ports } from '../../src/core/ports';
-import type { PortStatus } from '../../src/core/board';
+import type { PortBulletin, PortStatus, TrafficReport } from '../../src/core/board';
 import { distanceKm, routeLengthKm, voyageRoute } from '../../src/core/routes';
 import { boundsOf, graticule, portFeatures, routeLayers, vesselView, vesselViews } from '../../src/client/map-model';
 
@@ -22,7 +22,7 @@ describe('port map features', () => {
   test('an explicit quiet status is normal even without a bulletin, and zero relevance stays visible', () => {
     const features = portFeatures(ports, [{ portId: 'singapore', risk: 'normal', relevance: 0, bulletin: null }]).features;
     expect(need(features.find(feature => feature.id === 'singapore')).properties).toEqual({
-      id: 'singapore', name: 'Singapore', risk: 'normal', relevance: 0, label: 'Singapore\nNormal · 0 upcoming ships',
+      id: 'singapore', name: 'Singapore', risk: 'normal', relevance: 0, anchored: null, label: 'Singapore\nNormal · 0 upcoming ships',
     });
     expect(need(features.find(feature => feature.id === 'busan')).properties.risk).toBe('unreported');
   });
@@ -49,6 +49,18 @@ describe('port map features', () => {
     expect(need(after.features[0]).properties.label).toBe('Busan updated\nSevere · 4 upcoming ships');
     expect(need(portFeatures([busan], []).features[0]).properties).toMatchObject({ risk: 'unreported', relevance: null });
     expect(portFeatures([]).features).toEqual([]);
+  });
+  test('city badge is the latest anchored count, never relevance/arrivals; zero traffic overrides bulletin fallback', () => {
+    const bulletin: PortBulletin = { id: 'p1', kind: 'port.bulletin', author: { role: 'port', id: 'singapore' }, at: '2026-10-31T12:00:00Z', summary: 'Port assessment', portId: 'singapore', risk: 'elevated', anchored: 7, arrivals48h: 99, evidenceIds: [] };
+    const traffic: TrafficReport = { id: 't1', kind: 'city.traffic', author: { role: 'city', city: 'singapore', element: 'traffic' }, at: '2026-10-31T13:00:00Z', summary: 'Traffic assessment', risk: 'normal', anchored: 0, arrivals48h: 88, evidenceIds: [], basis: { perHour: 1, provenance: 'assumed', basis: 'Test assumption' } };
+    const status: PortStatus = { portId: 'singapore', risk: 'elevated', relevance: 55, bulletin };
+    const fallback = need(portFeatures(ports, [status]).features.find(feature => feature.id === 'singapore')).properties;
+    expect(fallback.anchored).toBe(7);
+    const current = need(portFeatures(ports, [status], [traffic, { ...traffic, id: 'older', at: '2026-10-31T11:00:00Z', anchored: 3 }, bulletin]).features.find(feature => feature.id === 'singapore')).properties;
+    expect(current.anchored).toBe(0);
+    expect(current.relevance).toBe(55);
+    expect(current.label).toContain('0 anchored');
+    expect(need(portFeatures(ports).features.find(feature => feature.id === 'singapore')).properties.anchored).toBeNull();
   });
 });
 
@@ -86,10 +98,10 @@ describe('vessel views', () => {
 
 describe('route layers', () => {
   const views = vesselViews(shipments, now.getTime());
-  test('the selected voyage is split at the vessel and left out of the faint lanes', () => {
+  test('every voyage retains its risk-coloured faint lane while the selected voyage gets a split overlay', () => {
     const layers = routeLayers(views, 'gz-1043');
-    expect(layers.lanes.features.map(feature => feature.properties?.id)).not.toContain('gz-1043');
-    expect(layers.lanes.features.length).toBe(views.length - 1);
+    expect(layers.lanes.features.map(feature => feature.properties?.id)).toEqual(views.map(view => view.id));
+    expect(layers.lanes.features.map(feature => feature.properties?.risk)).toEqual(views.map(view => view.risk));
     const sailed = need(layers.sailed.features[0]).geometry.coordinates;
     const ahead = need(layers.ahead.features[0]).geometry.coordinates;
     expect(sailed[sailed.length - 1]).toEqual(ahead[0]);

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { demoShipments } from '../../../src/core/demo';
 import { assessNotice, type AssessModel, type MindContext, type ModelRequest } from '../../../src/server/assessment/assess';
 import type { AssessableNotice } from '../../../src/server/assessment/exposure';
-import { answerTool, boundedPool, settleMind, shipMind, shipMindFromEnv, type MindConfig, type MindQuery } from '../../../src/server/assessment/mind';
+import { answerTool, askMind, boundedPool, settleMind, shipAskerFromEnv, shipMind, shipMindFromEnv, type MindConfig, type MindQuery } from '../../../src/server/assessment/mind';
 import type { BoardEvidence } from '../../../src/server/assessment/prompt';
 import type { Assessment } from '../../../src/server/assessment/schema';
 
@@ -14,7 +14,9 @@ const at = '2026-10-31T12:00:00.000Z';
 const [meridian] = demoShipments(new Date(at)) as [ReturnType<typeof demoShipments>[number]];
 const notice: AssessableNotice = { id: 'sg-1', portId: 'singapore', delayHours: 36,
   evidence: { id: 'sg-1', source: 'simulation', title: 'Berth congestion', detail: 'Simulated congestion at Singapore.', observedAt: at } };
-const bulletin: BoardEvidence = { id: 'board-sg-7', kind: 'port.bulletin', at, summary: 'Singapore elevated: 4 anchored', facts: { portId: 'singapore', risk: 'elevated', anchored: 4, arrivals48h: 9 } };
+const bulletin: BoardEvidence = { id: 'board-sg-7', kind: 'city.traffic', at, summary: 'Singapore elevated: 4 anchored', facts: { portId: 'singapore', element: 'traffic', risk: 'elevated', anchored: 4, arrivals48h: 9 } };
+const hazards: BoardEvidence = { id: 'hazards:singapore#2', kind: 'city.hazards', at, summary: 'Singapore hazards normal', facts: { portId: 'singapore', element: 'hazards', risk: 'normal' } };
+const elsewhere: BoardEvidence = { id: 'traffic:busan#1', kind: 'city.traffic', at, summary: 'Busan normal', facts: { portId: 'busan', element: 'traffic', risk: 'normal', anchored: 0, arrivals48h: 2 } };
 const context: MindContext = { shipment: meridian, board: [bulletin], observation: null };
 const good: Assessment = { affected: true, delayHours: { low: 12, likely: 20, high: 40 }, risk: 'watch', rationale: 'Berth queue at the next call.', citedEvidence: ['sg-1', 'board-sg-7'], confidence: 0.6, action: null };
 const request = (session: string | null): ModelRequest => ({ system: 'assess', prompt: '{}', session, context });
@@ -88,8 +90,9 @@ describe('the ship mind keeps its own voyage conversation', () => {
 });
 
 describe('what the mind saw', () => {
-  test('port_status answers from the board and shows the bulletin id', () => {
-    expect(answerTool(context, 'mcp__ship__port_status', { port: 'Singapore' })).toMatchObject({ body: { id: 'singapore', onMyRoute: true, bulletin }, ids: ['board-sg-7'] });
+  test("port_status answers with the city's own watch reports by PortId and shows their ids", () => {
+    const city: MindContext = { ...context, board: [bulletin, hazards, elsewhere] };
+    expect(answerTool(city, 'mcp__ship__port_status', { port: 'Singapore' })).toMatchObject({ body: { id: 'singapore', onMyRoute: true, reports: [bulletin, hazards] }, ids: ['board-sg-7', 'hazards:singapore#2'] });
     expect(answerTool(context, 'mcp__ship__port_status', { port: 'atlantis' }).ids).toEqual([]);
     expect(answerTool(context, 'Bash', { command: 'ls' })).toEqual({ body: null, ids: [] });
   });
@@ -173,5 +176,24 @@ describe('the bounded mind pool', () => {
     expect(await shipMind(run, config, busy)(request('voyage-4'))).toEqual({ status: 'failed', message: expect.stringContaining('deadline'), session: 'voyage-4' });
     expect(seen).toEqual([]);
     await blocker;
+  });
+});
+
+describe('asking the mind', () => {
+  const answered = (session: string, text: string) => ({ type: 'result', subtype: 'success', is_error: false, session_id: session, result: text });
+  test('resumes its session read-only, as itself, and cites only ids its tools showed and its answer names', async () => {
+    const config = await configIn();
+    const { run, seen } = scripted([init('voyage-5'), used('voyage-5', 'mcp__ship__read_board'), answered('voyage-5', 'Singapore is elevated (board-sg-7); sg-1 and reuters-9 say berths queue.')]);
+    expect(await askMind(run, config)('Why the delay?', 'voyage-5', context)).toEqual({ status: 'answered', answer: expect.stringContaining('Singapore'), cited: ['board-sg-7'], session: 'voyage-5' });
+    const options = seen[0]!;
+    expect(options.resume).toBe('voyage-5');
+    expect(options.outputFormat).toBeUndefined();
+    expect(options.tools).toEqual([]);
+    expect(options.allowedTools?.every(name => name.startsWith('mcp__ship__'))).toBe(true);
+    expect(String(options.systemPrompt)).toStartWith(`You are ${meridian.agent}, the mind aboard ${meridian.vessel}.`);
+  });
+  test('without the workspace id the mind is unavailable, said plainly, and nothing spawns', async () => {
+    const never: MindQuery = () => { throw new Error('the mind must not start'); };
+    expect(await shipAskerFromEnv({ ANTHROPIC_API_KEY: 'k' }, never)('Why?', 'voyage-6', context)).toEqual({ status: 'unavailable', message: expect.stringContaining('ANTHROPIC_WORKSPACE_ID'), session: 'voyage-6' });
   });
 });

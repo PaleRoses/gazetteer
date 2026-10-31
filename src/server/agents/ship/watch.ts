@@ -27,7 +27,12 @@ export async function watchShipment(deps: WatchDeps, shipment: AssessedShipment,
   const latest = fetched.status === 'ok' ? newer(state.latest, fetched.value) : state.latest;
   if (!latest) return { shipment, state, cache, session, report: { status: 'no-position', message: fetched.status === 'unavailable' ? fetched.message : 'no position' } };
   const plan = { route: voyageRoute(shipment) ?? shipment.route, eta: shipment.eta, ports: ports.map(({ name, coordinates }) => ({ name, coordinates })) };
-  const observation = observe(plan, latest, now, deps.thresholds ?? defaultThresholds, state.track ?? emptyTrack);
+  const thresholds = deps.thresholds ?? defaultThresholds;
+  const known = state.track ?? emptyTrack;
+  const lastFix = known.fixes[known.fixes.length - 1]?.at;
+  const unseen = (fetched.status === 'ok' ? fetched.history ?? [] : []).filter(fix => lastFix === undefined || Date.parse(fix.observedAt) > Date.parse(lastFix));
+  const track = unseen.reduce((sofar, fix) => observe(plan, fix, fix.observedAt, thresholds, sofar).track, known);
+  const observation = observe(plan, latest, now, thresholds, track);
   const situation = nextSituation(state.situation, observation.signals, shipment.id, now);
   const watched: AssessedShipment = { ...shipment, telemetry: latest, signals: observation.signals };
   const nextState: TelemetryState = { latest, situation, track: observation.track };
