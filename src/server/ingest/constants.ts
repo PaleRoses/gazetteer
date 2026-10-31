@@ -50,6 +50,14 @@ export const memory = {
   shipTypeCapacity: 200_000,
 } as const;
 
+/** The traffic layer on the globe: a bounded, recent picture, not an archive. */
+export const view = {
+  /** A few thousand markers is what a globe layer draws legibly; Digitraffic carries about 300 vessels at a time, a global feed would be cut to the newest 2,000. */
+  maxVessels: 2_000,
+  /** Ten minutes is three class A underway reports a minute apart at the slowest, and a vessel at anchor (3 min interval) shows 3 times before it drops off. */
+  withinSeconds: 600,
+} as const;
+
 export const feed = {
   /** Actors wake every 60 s (agents checkIntervalMs); a 5 s flush keeps delivery latency an order of magnitude below that. */
   flushMillis: 5_000,

@@ -131,3 +131,34 @@ describe('the active-vessel window', () => {
     expect(ingest.stats().active).toBe(1);
   });
 });
+
+describe('the recent-vessels view', () => {
+  const fix = (mmsi: number, seconds: number, where: readonly [number, number] = [10, 50]) => position(mmsi, seconds, where, 8);
+
+  test('lists only fixes within the window, newest first, each with the zone it is in', () => {
+    const ingest = fresh();
+    ingest.push(fix(367000040, 1_000)); ingest.push(fix(367000041, 1_300)); ingest.push(fix(367000042, 1_590, at.berth));
+    const seen = ingest.recent(1_600, 10, 600).map(entry => entry.frame.mmsi);
+    expect(seen).toEqual([367000042, 367000041, 367000040]);
+    expect(ingest.recent(1_601, 10, 600).map(entry => entry.frame.mmsi)).toEqual([367000042, 367000041]);
+    expect(ingest.recent(1_600, 10, 600)[0]!.zone).toEqual({ portId: 'los-angeles', kind: 'berth' });
+    expect(ingest.recent(1_600, 10, 600)[1]!.zone).toBeUndefined();
+  });
+
+  test('is bounded: with more vessels than the cap the newest arrivals survive', () => {
+    const ingest = fresh();
+    Array.from({ length: 50 }, (_, index) => ingest.push(fix(370_000_000 + index, 1_000 + index)));
+    const seen = ingest.recent(1_100, 20, 600).map(entry => entry.frame.mmsi);
+    expect(seen).toHaveLength(20);
+    expect(seen[0]).toBe(370_000_049);
+    expect(seen.at(-1)).toBe(370_000_030);
+  });
+
+  test('a vessel that reports again moves to the front with its newest fix only', () => {
+    const ingest = fresh();
+    ingest.push(fix(367000050, 1_000)); ingest.push(fix(367000051, 1_010)); ingest.push(fix(367000050, 1_020, [11, 50]));
+    const view = ingest.recent(1_030, 10, 600);
+    expect(view.map(entry => entry.frame.mmsi)).toEqual([367000050, 367000051]);
+    expect(view[0]!.frame.lon).toBe(11);
+  });
+});

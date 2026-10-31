@@ -1,6 +1,7 @@
 import { Effect, Fiber } from 'effect';
 import { digitrafficFeed } from '../ingest/digitraffic';
 import type { Counts } from '../ingest/anchorage';
+import { view } from '../ingest/constants';
 import { createIngest, type Ingest } from '../ingest/hub';
 import { runIngest, type Feed } from '../ingest/pipeline';
 import type { PortArea } from '../ingest/zones';
@@ -11,13 +12,15 @@ const balticAreas: readonly PortArea[] = [
   { id: 'naantali', coordinates: [21.98, 60.46] }, { id: 'rauma', coordinates: [21.45, 61.13] }, { id: 'tallinn', coordinates: [24.77, 59.45] },
 ];
 
-export type IngestStatus = Readonly<{
+type IngestStatus = Readonly<{
   running: boolean; provenance: 'live'; source: string; startedAt: string; lastMessageAt: string | null;
   messagesPerSecond: number; received: number; invalid: number; activeVessels: number; trackedMmsi: number;
   countedVessels: number; unclassified: number; areas: Readonly<Record<string, Readonly<Counts>>>;
 }>;
 
-export type IngestRuntime = Readonly<{ ingest: Ingest; status: () => IngestStatus; close: () => Promise<void> }>;
+type IngestVessel = Readonly<{ mmsi: number; lon: number; lat: number; sog: number | null; cog: number | null; at: string; zone: Readonly<{ portId: string; kind: string }> | null }>;
+type IngestVessels = Readonly<{ provider: string; source: string; fetchedAt: string; vessels: readonly IngestVessel[] }>;
+export type IngestRuntime = Readonly<{ ingest: Ingest; status: () => IngestStatus; vessels: () => IngestVessels; close: () => Promise<void> }>;
 
 /** Pure: messages per second over the window between two flush readings (times in milliseconds); 0 when no time has passed. */
 export const rate = (previous: Readonly<{ at: number; received: number }>, now: Readonly<{ at: number; received: number }>): number =>
@@ -48,6 +51,12 @@ export const startIngest = (options: Readonly<{ areas?: readonly PortArea[]; fee
         countedVessels: stats.vessels, unclassified: stats.unclassified, areas: Object.fromEntries(areas.map(area => [area.id, { ...ingest.counts(area.id) }])),
       };
     },
+    vessels: () => ({
+      provider: 'digitraffic', source, fetchedAt: new Date(now()).toISOString(),
+      vessels: ingest.recent(now() / 1000, view.maxVessels, view.withinSeconds).map(({ frame, zone }) => ({
+        mmsi: frame.mmsi, lon: frame.lon, lat: frame.lat, sog: frame.sogKnots, cog: frame.cogDeg, at: new Date(frame.at * 1000).toISOString(), zone: zone ?? null,
+      })),
+    }),
     close: () => Effect.runPromise(Fiber.interrupt(fiber)),
   };
 };

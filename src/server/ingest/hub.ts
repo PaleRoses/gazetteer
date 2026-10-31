@@ -4,7 +4,7 @@ import { gate, memory, ring as ringLimits } from './constants';
 import { bump, emptyCounts, step, type Counts, type VesselState } from './anchorage';
 import { isCargoOrTanker, validFrame, type FeedEvent, type Frame } from './frame';
 import { createRing, type Ring } from './ring';
-import { buildRouter, type PortArea } from './zones';
+import { buildRouter, type PortArea, type ZoneRef } from './zones';
 
 export type Subscriber = Readonly<{ workspaceId: string; shipmentId: string }>;
 type Delivery = Readonly<{ subscribers: readonly Subscriber[]; frame: Frame }>;
@@ -21,6 +21,8 @@ export type Ingest = Readonly<{
   counts: (portId: string) => Readonly<Counts>;
   flush: (now: number) => Flush;
   stats: () => Stats;
+  /** The newest `max` vessels whose latest fix is within `withinSeconds` of `now`, newest first, each with the zone it is in. */
+  recent: (now: number, max: number, withinSeconds: number) => readonly Readonly<{ frame: Frame; zone: ZoneRef | undefined }>[];
 }>;
 
 const moving = (frame: Frame): boolean => (frame.sogKnots ?? 0) >= gfwDefaults.startingKnots;
@@ -39,8 +41,8 @@ export const createIngest = (config: Readonly<{ ports: readonly PortArea[] }>): 
   const rings = new Map<number, Ring>();
   const dirty = new Set<number>();
   const vessels = new Map<number, VesselState>();
-  /** Every valid MMSI the feed carried in the last hour (most recent report), recency-ordered so eviction pops the front. */
-  const active = new Map<number, number>();
+  /** Every valid MMSI the feed carried in the last hour, with its latest fix; recency-ordered (delete + set) so eviction pops the front and the newest are at the back. */
+  const active = new Map<number, Frame>();
   const shipTypes = new Map<number, number>();
   const counts = new Map<string, Counts>(config.ports.map(port => [port.id, emptyCounts()]));
   const reported = new Map<string, Traffic>();
@@ -80,8 +82,8 @@ export const createIngest = (config: Readonly<{ ports: readonly PortArea[] }>): 
 
   const evict = (now: number): void => {
     const activeHorizon = now - memory.activeWindowSeconds;
-    for (const [mmsi, at] of active) {
-      if (at >= activeHorizon) break;
+    for (const [mmsi, fix] of active) {
+      if (fix.at >= activeHorizon) break;
       active.delete(mmsi);
     }
     const horizon = now - memory.vesselTtlSeconds;
@@ -105,7 +107,7 @@ export const createIngest = (config: Readonly<{ ports: readonly PortArea[] }>): 
       tally.received += 1;
       if (!validFrame(event.frame)) { tally.invalid += 1; return; }
       active.delete(event.frame.mmsi);
-      active.set(event.frame.mmsi, event.frame.at);
+      active.set(event.frame.mmsi, event.frame);
       if (subscribers.has(event.frame.mmsi)) follow(event.frame);
       classify(event.frame);
     },
@@ -138,6 +140,7 @@ export const createIngest = (config: Readonly<{ ports: readonly PortArea[] }>): 
       });
       return { deliveries, traffic };
     },
+    recent: (now, max, withinSeconds) => [...active.values()].filter(fix => fix.at >= now - withinSeconds).slice(-max).reverse().map(frame => ({ frame, zone: router.route(frame.lat, frame.lon) })),
     stats: () => ({ ...tally, tracked: subscribers.size, vessels: vessels.size, rings: rings.size, active: active.size }),
   };
 };

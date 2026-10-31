@@ -29,3 +29,32 @@ describe('the ingest runtime', () => {
     expect(rate({ at: 5_000, received: 10 }, { at: 5_000, received: 10 })).toBe(0);
   });
 });
+
+describe('the vessels view', () => {
+  test('carries the live fixes of the last ten minutes with the source, and never more than the cap', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const feed = Stream.fromIterable<FeedEvent>([
+      { kind: 'position', frame: { mmsi: 230000001, at: now, lat: 60.16, lon: 24.95, sogKnots: 0.1, cogDeg: 12, navStatus: 5 } },
+      { kind: 'position', frame: { mmsi: 230000002, at: now - 700, lat: 60.5, lon: 25, sogKnots: 9, cogDeg: 90, navStatus: 0 } },
+    ]);
+    const runtime = startIngest({ areas: [helsinki], feed, source: 'test feed' });
+    await Effect.runPromise(Effect.sleep(50));
+    const view = runtime.vessels();
+    expect(view).toMatchObject({ provider: 'digitraffic', source: 'test feed' });
+    expect(view.vessels).toEqual([{ mmsi: 230000001, lon: 24.95, lat: 60.16, sog: 0.1, cog: 12, at: new Date(now * 1000).toISOString(), zone: { portId: 'helsinki', kind: 'berth' } }]);
+    await runtime.close();
+  });
+});
+
+describe('the vessels cap', () => {
+  test('never lists more than 2,000 vessels, the newest arrivals first', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const feed = Stream.fromIterable<FeedEvent>(Array.from({ length: 2_100 }, (_, index) => ({ kind: 'position', frame: { mmsi: 240_000_000 + index, at: now, lat: 60.16, lon: 24.95, sogKnots: 5, cogDeg: null, navStatus: null } })));
+    const runtime = startIngest({ areas: [helsinki], feed, source: 'test feed' });
+    await Effect.runPromise(Effect.sleep(100));
+    const { vessels } = runtime.vessels();
+    expect(vessels).toHaveLength(2_000);
+    expect(vessels[0]!.mmsi).toBe(240_002_099);
+    await runtime.close();
+  });
+});
