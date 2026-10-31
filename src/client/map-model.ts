@@ -51,12 +51,12 @@ const collection = (features: readonly Feature<LineString>[]): FeatureCollection
 
 export type RouteLayers = Readonly<{ voyages: FeatureCollection<LineString>; lanes: FeatureCollection<LineString>; sailed: FeatureCollection<LineString>; ahead: FeatureCollection<LineString> }>;
 
-/** Every other ship shows the voyage still ahead of it, tagged with its risk; the selected voyage is split at the ship into its sailed and remaining legs. */
+/** Every other ship shows its whole voyage, port to port, and the part still ahead of it, both tagged with its risk; the selected voyage is split at the ship into its sailed and remaining legs. */
 export const routeLayers = (views: readonly VesselView[], selectedId: string | undefined): RouteLayers => {
   const selected = views.find(view => view.id === selectedId);
   const split = selected && splitAt(selected.route, selected.progress);
   return {
-    voyages: collection(views.filter(view => view.id !== selectedId && view.route.length > 1).map(view => line(view.id, view.route, view.risk))),
+    voyages: collection(views.flatMap(view => view.id === selectedId || view.route.length < 2 ? [] : [line(view.id, view.route, view.risk)])),
     lanes: collection(views.flatMap(view => {
       const ahead = view.id === selectedId ? [] : splitAt(view.route, view.progress).ahead;
       return ahead.length > 1 ? [line(view.id, ahead, view.risk)] : [];
