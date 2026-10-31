@@ -74,13 +74,17 @@ const assessmentOf = ({ shipment, situation, now, society = noSociety }: Decisio
   const queue = rule ? society.queues[0] : undefined;
   const base = {
     id: `asm:${shipment.id}:${shipment.eta}:${shipment.risk}:${situation?.id ?? 'none'}`, kind: 'ship.assessment' as const, author: { role: 'ship' as const, id: shipment.id, vessel: shipment.vessel, agent: shipment.agent }, at: now,
-    summary: assessedSummary(shipment.agent, shipment.vessel, { risk: shipment.risk, eta: shipment.eta }, shipment.change),
     shipmentId: shipment.id, risk: shipment.risk, eta: shipment.eta, ports: remainingCalls(shipment).map(call => call.portId),
   };
-  const message: ShipAssessment = rule
-    ? { ...base, summary: '', delayHours: queue?.hours ?? null, confidence: null, method: 'rule-based', citedEvidence: [...rule.citedEvidence], ...(queue ? { basis: { rule: queue.rule, portId: queue.portId, anchored: queue.anchored, serviceRate: queue.serviceRate } } : {}) }
-    : { ...base, delayHours: record?.delayHours ?? null, confidence: record ? record.confidence : null, method: record?.method ?? 'deterministic', citedEvidence: [...(record?.citedEvidence ?? [])] };
-  const spoken = rule ? { ...message, summary: ruleAssessmentSummary(shipment.agent, shipment.vessel, message, rule.reasons) } : message;
+  /** Whatever no model assessed is rule-based: the floor's rules, the arithmetic fallback, or both. One vocabulary, and a rule has no confidence to state. */
+  const message: ShipAssessment = modelled && record
+    ? { ...base, summary: assessedSummary(shipment.agent, shipment.vessel, { risk: shipment.risk, eta: shipment.eta }, shipment.change), delayHours: record.delayHours, confidence: record.confidence, method: record.method, citedEvidence: [...record.citedEvidence] }
+    : {
+      ...base, summary: '', delayHours: queue?.hours ?? record?.delayHours ?? null, confidence: null, method: 'rule-based',
+      citedEvidence: [...new Set([...(rule?.citedEvidence ?? []), ...(record?.citedEvidence ?? [])])],
+      ...(queue ? { basis: { rule: queue.rule, portId: queue.portId, anchored: queue.anchored, serviceRate: queue.serviceRate } } : {}),
+    };
+  const spoken = modelled ? message : { ...message, summary: ruleAssessmentSummary(shipment.agent, shipment.vessel, message, rule?.reasons ?? [shipment.change]) };
   return [{ message: spoken, remember: current => ({ ...current, assessed: { risk: shipment.risk, eta: shipment.eta } }) }];
 };
 
