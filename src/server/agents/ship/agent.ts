@@ -1,6 +1,7 @@
 import { Actor, Persisted } from 'durable-actors';
 import { relaySuccess, type Disruption, type RelayOutcome, type Shipment } from '../../../core/types';
-import { assessmentFromEnv } from '../../assessment/anthropic';
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import { shipMindFromEnv } from '../../assessment/mind';
 import { assessNotices, type AssessmentCache } from '../../assessment/assess';
 import { postBoard, readChannel, type ChannelRead } from '../../relay/board';
 import type { BoardMessage } from '../../../core/board';
@@ -16,8 +17,8 @@ import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } f
 import { checkIntervalMs } from '../alarm';
 import { connect } from '../../relay/connect';
 
-type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
-const assessment = assessmentFromEnv(process.env);
+type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; mind?: string | null; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
+const assessment = shipMindFromEnv(process.env, query);
 const telemetrySource = telemetrySourceFromEnv(process.env);
 const demo = demoEnabled(process.env);
 /** A read plus whatever the server already handed over: local echoes may not have reached Relay yet. */
@@ -79,17 +80,18 @@ export class ShipmentAgent extends Actor {
     const seen = channel.status === 'ok' ? rememberBoard(start.seen ?? [], channel.value.board, now) : start.seen ?? [];
     const evidence = selectBoardEvidence(start.shipment, seen, now);
     const binding = telemetryBinding(start.shipment, start.mmsi, demo, telemetrySource);
+    const mind = { ...assessment, session: start.mind ?? null };
     const watched = binding
-      ? await watchShipment({ source: binding.source, assess: assessment, board: evidence }, start.shipment, binding.key, start.telemetry ?? emptyTelemetryState, start.assessmentCache ?? {})
-      : { shipment: start.shipment, state: start.telemetry, cache: start.assessmentCache ?? {} };
+      ? await watchShipment({ source: binding.source, assess: mind, board: evidence }, start.shipment, binding.key, start.telemetry ?? emptyTelemetryState, start.assessmentCache ?? {})
+      : { shipment: start.shipment, state: start.telemetry, cache: start.assessmentCache ?? {}, session: mind.session };
     if (channel.status === 'unavailable') {
-      this.state = { ...start, shipment: watched.shipment, assessmentCache: watched.cache, telemetry: watched.state, seen };
+      this.state = { ...start, shipment: watched.shipment, assessmentCache: watched.cache, telemetry: watched.state, seen, mind: watched.session };
       return channel;
     }
-    const assessed = await assessNotices(assessment, watched.cache, watched.shipment, channel.value.disruptions, evidence);
+    const assessed = await assessNotices({ ...mind, session: watched.session }, watched.cache, watched.shipment, channel.value.disruptions, evidence);
     const decided = commitDecisions(start.board ?? emptyBoardMemory, decideBoard(start.board ?? emptyBoardMemory, { shipment: assessed.shipment, situation: watched.state?.situation ?? null, now }));
     const latest = this.state ?? start;
-    this.state = { ...start, ready: true, shipment: assessed.shipment, assessmentCache: assessed.cache, cursor: channel.value.cursor, telemetry: watched.state, board: decided.memory, seen, checkedAt: now, synced: true, inbox: drainInbox(latest.inbox, heard), boardOutbox: enqueue(latest.boardOutbox ?? [], decided.messages) };
+    this.state = { ...start, ready: true, shipment: assessed.shipment, assessmentCache: assessed.cache, mind: assessed.session, cursor: channel.value.cursor, telemetry: watched.state, board: decided.memory, seen, checkedAt: now, synced: true, inbox: drainInbox(latest.inbox, heard), boardOutbox: enqueue(latest.boardOutbox ?? [], decided.messages) };
     return relaySuccess(this.state.shipment);
   }
 

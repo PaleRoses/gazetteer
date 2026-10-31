@@ -152,7 +152,7 @@ describe('environment edge', () => {
     const { assessmentFromEnv } = await import('../../../src/server/assessment/anthropic');
     expect(assessmentFromEnv({}).model).toBeNull();
     const bad = assessmentFromEnv({ ANTHROPIC_API_KEY: 'k', ANTHROPIC_WORKSPACE_ID: 'default' });
-    expect(await bad.model!({ system: '', prompt: '' })).toEqual({ status: 'failed', message: expect.stringContaining('wrkspc_') });
+    expect(await bad.model!({ system: '', prompt: '', session: null, context: { shipment: meridian, board: [], observation: null } })).toEqual({ status: 'failed', message: expect.stringContaining('wrkspc_') });
     expect(assessmentFromEnv({ ANTHROPIC_API_KEY: 'k', ANTHROPIC_WORKSPACE_ID: 'wrkspc_abc123' }).model).not.toBeNull();
   });
 });
