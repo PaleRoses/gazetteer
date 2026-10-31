@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { relaySuccess } from '../../../src/core/types';
-import { haulierCities, haulierKey, haulierName, initializeHaulier, withdrawLastTruck, type HaulierClient } from '../../../src/server/runtime/recovery-haulier';
+import { haulierCities, haulierKey, haulierName, haulierStub, initializeHaulier, withdrawLastTruck, type HaulierClient } from '../../../src/server/runtime/recovery-haulier';
 
 const anchor = '2026-10-31T10:00:00.000Z';
 
@@ -30,5 +30,18 @@ describe('the haulier wiring', () => {
     const client: Pick<HaulierClient, 'withdraw'> = { withdraw: async (...args) => { asked.push(args); return relaySuccess('rotterdam:truck:truck-1930'); } };
     expect(await withdrawLastTruck(client)).toEqual(relaySuccess('rotterdam:truck:truck-1930'));
     expect(asked).toEqual([['Simulated: the truck was withdrawn by the demo control.', null]]);
+  });
+
+  test('the stub reaches the HaulierAgent actor by its name, with each method it needs', async () => {
+    const invoked: unknown[][] = [];
+    const stub = haulierStub('w1', 'rotterdam', { invoke: async (...args) => { invoked.push(args); return relaySuccess(null); } });
+    await stub.withdraw('r', 'offer');
+    await stub.acknowledge({ board: ['m1'], disruptions: [] });
+    await stub.unpublished();
+    expect(invoked).toEqual([
+      ['HaulierAgent', 'w1-city-rotterdam-haulier', 'withdraw', ['r', 'offer']],
+      ['HaulierAgent', 'w1-city-rotterdam-haulier', 'acknowledge', [{ board: ['m1'], disruptions: [] }]],
+      ['HaulierAgent', 'w1-city-rotterdam-haulier', 'unpublished', []],
+    ]);
   });
 });
