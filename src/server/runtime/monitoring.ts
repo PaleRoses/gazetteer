@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { chmod, mkdir } from 'node:fs/promises';
 import { startLocalActors } from 'durable-actors/dev';
 import { createActorStub, createActorTransport, type ActorRpcMethod } from 'durable-actors/backend';
-import { demoShipments } from '../../core/demo';
+import { activePorts, demoShipments } from '../../core/demo';
 import { ports, type PortId } from '../../core/ports';
 import { relaySuccess, type Comment, type Dashboard, type Disruption, type RelayOutcome, type Shipment } from '../../core/types';
 import type { PortAgent } from '../agents/port/agent';
@@ -59,10 +59,12 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   });
   const port = (workspaceId: string, id: PortId): PortClient => createActorStub<PortClient>('PortAgent', `${workspaceId}-port-${id}`, portMethods, transport);
   const shipment = (workspaceId: string, id: string): ShipmentClient => createActorStub<ShipmentClient>('ShipmentAgent', `${workspaceId}-shipment-${id}`, shipmentMethods, transport);
+  /** Only the ports the fleet still calls at run an actor; the rest are shown, normal and irrelevant, without one. */
+  const actorPorts = activePorts(demoShipments());
 
   // Restore native alarms once at process startup, never from dashboard polling.
   await options.workspaceIds.flatMap(workspaceId => [
-    ...ports.map(value => () => port(workspaceId, value.id).resume()),
+    ...actorPorts.map(value => () => port(workspaceId, value.id).resume()),
     ...demoShipments().map(value => () => shipment(workspaceId, value.id).resume()),
   ]).reduce<Promise<void>>((previous, resume) => previous.then(resume), Promise.resolve()).catch(async error => {
     await runtime.stop();
@@ -89,11 +91,15 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   /** Ready means initialised AND synced: the actor's one Relay read (its history) is paid here, in the background, so no later check waits on Relay. */
   const bringUp = (initialize: () => Promise<RelayOutcome<null>>, sync: () => Promise<RelayOutcome<unknown>>) => async (): Promise<boolean> =>
     (await initialize()).status === 'ok' && (await sync()).status === 'ok';
-  const tasksOf = (workspaceId: string): readonly StartupTask[] => [
-    { key: portKey('singapore'), run: bringUp(() => port(workspaceId, 'singapore').initialize(workspaceId, 'singapore', workspaceKey, true), () => port(workspaceId, 'singapore').check()) },
-    ...ports.filter(value => value.id !== 'singapore').map((value): StartupTask => ({ key: portKey(value.id), after: portKey('singapore'), run: bringUp(() => port(workspaceId, value.id).initialize(workspaceId, value.id, workspaceKey, false), () => port(workspaceId, value.id).check()) })),
-    ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: shipKey(seed.id), after: portKey('singapore'), run: bringUp(() => shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey), () => shipment(workspaceId, seed.id).check()) })),
-  ];
+  /** The first actor port in registry order creates the workspace channel; every other actor starts after it. */
+  const tasksOf = (workspaceId: string): readonly StartupTask[] => {
+    const creator = actorPorts[0] ? portKey(actorPorts[0].id) : undefined;
+    const afterCreator = creator ? { after: creator } : {};
+    return [
+      ...actorPorts.map((value, index): StartupTask => ({ key: portKey(value.id), ...(index > 0 ? afterCreator : {}), run: bringUp(() => port(workspaceId, value.id).initialize(workspaceId, value.id, workspaceKey, index === 0), () => port(workspaceId, value.id).check()) })),
+      ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: shipKey(seed.id), ...afterCreator, run: bringUp(() => shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey), () => shipment(workspaceId, seed.id).check()) })),
+    ];
+  };
   /**
    * The read model. The dashboard is served from here and never calls an actor: Terse serialises calls per actor, so a read would wait
    * behind that actor's in-flight alarm. Actors feed it in the background (`capture`, `captureQueued`), and the SSE stream carries each
@@ -112,7 +118,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const waiting = new Map<string, Map<PortId, number>>();
   const waitingIn = (workspaceId: string): number => [...(waiting.get(workspaceId)?.values() ?? [])].reduce((total, count) => total + count, 0);
   const captureQueued = createCoalescer(async workspaceId => {
-    const counts = await Promise.all(ports.map(async value => [value.id, await port(workspaceId, value.id).queued().catch(() => 0)] as const));
+    const counts = await Promise.all(actorPorts.map(async value => [value.id, await port(workspaceId, value.id).queued().catch(() => 0)] as const));
     waiting.set(workspaceId, new Map(counts));
     if (hub.subscribers(workspaceId) > 0) void announce(workspaceId);
   }, error => console.error('Queue count failed:', error instanceof Error ? error.message : 'unknown error'));

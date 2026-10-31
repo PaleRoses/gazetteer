@@ -125,10 +125,11 @@ describe('exposure', () => {
     expect(east.find(hit => hit.laneId === 'gz-1045')?.distanceKm).toBeCloseTo(111, -1);
     expect(exposure(synthetic('cyclone', pointAt(0, 31)), places, lanes).lanes.find(hit => hit.laneId === 'gz-1045')).toBeUndefined();
   });
-  test('recorded Typhoon IN-FA-26 reaches the Los Angeles to Shanghai lane but no port', () => {
+  test('recorded Typhoon IN-FA-26 reaches the Los Angeles to Shanghai and Singapore to Los Angeles lanes but no port', () => {
     const found = exposure(byId(gdacs, 'gdacs:TC:1001343'), places, lanes);
     expect(found.ports).toEqual([]);
-    expect(found.lanes).toMatchObject([{ laneId: 'gz-1045', segment: 4 }]);
+    expect(found.lanes.map(hit => hit.laneId)).toEqual(['gz-1045', 'gz-1061']);
+    expect(found.lanes[0]).toMatchObject({ laneId: 'gz-1045', segment: 4 });
     expect(found.lanes[0]?.distanceKm).toBeGreaterThan(400);
     expect(found.lanes[0]?.distanceKm).toBeLessThan(radiusKm.cyclone);
   });
@@ -213,12 +214,12 @@ describe('lane-only notices', () => {
   const portIds = places.map(place => place.id);
   const reporters = (notice: Notice) => portIds.filter(id => noticesForPort([notice], id, now).length > 0);
 
-  test('recorded IN-FA-26 touches the Los Angeles to Shanghai lane and is reported by Busan alone, the nearest port', () => {
+  test('recorded IN-FA-26 touches the Los Angeles to Shanghai and Singapore to Los Angeles lanes and is reported by Busan alone, the nearest port', () => {
     const typhoon = byId(gdacs, 'gdacs:TC:1001343');
     expect(reporters(typhoon)).toEqual(['busan']);
     const [entry] = noticesForPort([typhoon], 'busan', now);
     expect(entry?.hit.basis).toBe('nearest-to-lane');
-    expect(entry?.lanes.map(lane => lane.laneId)).toEqual(['gz-1045']);
+    expect(entry?.lanes.map(lane => lane.laneId)).toEqual(['gz-1045', 'gz-1061']);
   });
 
   test('the nearest port decides: a storm mid-Pacific near the American side belongs to Los Angeles, near the Asian side to Busan', () => {

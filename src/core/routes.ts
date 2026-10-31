@@ -26,25 +26,35 @@ export const unwrap = (line: Route): Route =>
     return [...done, [lon + 360 * turns, lat]];
   }, []);
 
-const lane = (from: PortId, to: PortId): Route | undefined => {
-  const forward = seaLanes[`${from}>${to}`];
+/** 'shortest' is the network's shortest path; 'cape' is the same pair with Suez and Bab-el-Mandeb closed (generated only where that differs). */
+type Lane = 'shortest' | 'cape';
+const laneKey = (from: PortId, to: PortId, lane: Lane): string => `${from}>${to}${lane === 'cape' ? '#cape' : ''}`;
+
+const leg = (from: PortId, to: PortId, lane: Lane): Route | undefined => {
+  const forward = seaLanes[laneKey(from, to, lane)];
   if (forward) return forward;
-  const backward = seaLanes[`${to}>${from}`];
+  const backward = seaLanes[laneKey(to, from, lane)];
   return backward ? [...backward].reverse() : undefined;
 };
 
 /** Ocean route through the ports in order; undefined when any consecutive pair has no lane. */
-export const routeThrough = (stops: readonly PortId[]): Route | undefined => {
-  const legs = stops.slice(1).map((stop, index) => lane(stops[index] as PortId, stop));
-  if (legs.length === 0 || legs.some(leg => leg === undefined)) return undefined;
-  return unwrap(legs.flatMap((leg, index) => index === 0 ? leg ?? [] : (leg ?? []).slice(1)));
+export const routeThrough = (stops: readonly PortId[], lane: Lane = 'shortest'): Route | undefined => {
+  const legs = stops.slice(1).map((stop, index) => leg(stops[index] as PortId, stop, lane));
+  if (legs.length === 0 || legs.some(part => part === undefined)) return undefined;
+  return unwrap(legs.flatMap((part, index) => index === 0 ? part ?? [] : (part ?? []).slice(1)));
 };
 
-export const voyageRoute = (voyage: Readonly<{ origin: PortId; via: readonly PortId[]; destination: PortId }>): Route | undefined =>
-  routeThrough([voyage.origin, ...voyage.via, voyage.destination]);
+export const voyageRoute = (voyage: Readonly<{ origin: PortId; via: readonly PortId[]; destination: PortId }>, lane: Lane = 'shortest'): Route | undefined =>
+  routeThrough([voyage.origin, ...voyage.via, voyage.destination], lane);
 
 const segmentLengths = (route: Route): readonly number[] => route.slice(1).map((point, index) => distanceKm(route[index] as LngLat, point));
 export const routeLengthKm = (route: Route): number => segmentLengths(route).reduce((sum, length) => sum + length, 0);
+
+/** How far two routes from the same origin run together: the length of their common leading points. */
+export const sharedLengthKm = (a: Route, b: Route): number => {
+  const parted = a.findIndex((point, index) => b[index]?.[0] !== point[0] || b[index]?.[1] !== point[1]);
+  return routeLengthKm(a.slice(0, parted === -1 ? a.length : parted));
+};
 
 const clamp01 = (value: number): number => Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
 
