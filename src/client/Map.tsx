@@ -15,7 +15,7 @@ import { PortDetails } from './PortDetails';
 
 type MapLibre = typeof import('maplibre-gl');
 type Runtime = Readonly<{ lib: MapLibre; map: MapLibreMap }>;
-type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; showPopup: boolean; inspected: Diversion | null; corridor?: MonitoredRoute; routeMode?: boolean; onRoute: (id: string) => void }>;
+type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; onClear: () => void; showPopup: boolean; inspected: Diversion | null; corridor?: MonitoredRoute; routeMode?: boolean; onRoute: (id: string) => void }>;
 type Projection = 'mercator' | 'globe';
 const COLOURS = { ocean: '#111315', land: '#1f211d', coast: '#3b3e37', grid: '#3b3e37', route: '#8cc3a1', corridor: '#e8e4d6', alternative: '#b9a7d6' } as const;
 const RISK_COLOURS = { 'on-track': '#e8e4d6', watch: '#e0a03a', delayed: '#e5603f' } as const;
@@ -110,6 +110,12 @@ export function ShipmentMap(props: Selection) {
       map.addControl(new lib.AttributionControl({ compact: true, customAttribution: 'Natural Earth · SeaRoute lanes · positions simulated' }), 'bottom-right');
       map.addControl(new lib.NavigationControl({ showCompass: false }), 'bottom-right');
       map.on('load', () => {
+        map.on('click', event => {
+          // HTML markers, popovers and controls keep their own click behavior.
+          if (event.originalEvent.target !== map.getCanvas() || map.queryRenderedFeatures(event.point, { layers: ['corridor-hit'] }).length) return;
+          clearDetails();
+          props.onClear();
+        });
         map.on('click', 'corridor-hit', event => { const id = event.features?.[0]?.properties?.id; if (typeof id === 'string') props.onRoute(id); });
         map.on('mouseenter', 'corridor-hit', () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', 'corridor-hit', () => { map.getCanvas().style.cursor = ''; });
