@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { demoShipments } from '../../../src/core/demo';
 import { assessNotice, type AssessModel, type MindContext, type ModelRequest } from '../../../src/server/assessment/assess';
 import type { AssessableNotice } from '../../../src/server/assessment/exposure';
-import { answerTool, boundedPool, settleMind, shipMind, shipMindFromEnv, type MindConfig, type MindQuery } from '../../../src/server/assessment/mind';
+import { answerTool, askMind, boundedPool, settleMind, shipAskerFromEnv, shipMind, shipMindFromEnv, type MindConfig, type MindQuery } from '../../../src/server/assessment/mind';
 import type { BoardEvidence } from '../../../src/server/assessment/prompt';
 import type { Assessment } from '../../../src/server/assessment/schema';
 
@@ -173,5 +173,24 @@ describe('the bounded mind pool', () => {
     expect(await shipMind(run, config, busy)(request('voyage-4'))).toEqual({ status: 'failed', message: expect.stringContaining('deadline'), session: 'voyage-4' });
     expect(seen).toEqual([]);
     await blocker;
+  });
+});
+
+describe('asking the mind', () => {
+  const answered = (session: string, text: string) => ({ type: 'result', subtype: 'success', is_error: false, session_id: session, result: text });
+  test('resumes its session read-only, as itself, and cites only ids its tools showed and its answer names', async () => {
+    const config = await configIn();
+    const { run, seen } = scripted([init('voyage-5'), used('voyage-5', 'mcp__ship__read_board'), answered('voyage-5', 'Singapore is elevated (board-sg-7); sg-1 and reuters-9 say berths queue.')]);
+    expect(await askMind(run, config)('Why the delay?', 'voyage-5', context)).toEqual({ status: 'answered', answer: expect.stringContaining('Singapore'), cited: ['board-sg-7'], session: 'voyage-5' });
+    const options = seen[0]!;
+    expect(options.resume).toBe('voyage-5');
+    expect(options.outputFormat).toBeUndefined();
+    expect(options.tools).toEqual([]);
+    expect(options.allowedTools?.every(name => name.startsWith('mcp__ship__'))).toBe(true);
+    expect(String(options.systemPrompt)).toStartWith(`You are ${meridian.agent}, the mind aboard ${meridian.vessel}.`);
+  });
+  test('without the workspace id the mind is unavailable, said plainly, and nothing spawns', async () => {
+    const never: MindQuery = () => { throw new Error('the mind must not start'); };
+    expect(await shipAskerFromEnv({ ANTHROPIC_API_KEY: 'k' }, never)('Why?', 'voyage-6', context)).toEqual({ status: 'unavailable', message: expect.stringContaining('ANTHROPIC_WORKSPACE_ID'), session: 'voyage-6' });
   });
 });

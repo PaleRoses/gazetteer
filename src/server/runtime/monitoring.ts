@@ -8,7 +8,7 @@ import { activePorts, demoShipments } from '../../core/demo';
 import { ports, type PortId } from '../../core/ports';
 import { relaySuccess, type Comment, type Dashboard, type Disruption, type RelayOutcome, type Shipment } from '../../core/types';
 import type { PortAgent } from '../agents/port/agent';
-import type { ShipmentAgent } from '../agents/ship/agent';
+import type { ShipAnswer, ShipmentAgent } from '../agents/ship/agent';
 import { createBoardModel, recentBoard } from '../relay/model';
 import { boardFrom, postBoard } from '../relay/board';
 import { transmit, type Transmitted } from '../relay/outbox';
@@ -23,14 +23,14 @@ import { createHub, type Subscribe } from './hub';
 import { attemptRelay, disruptionFrom, publishDisruption, relayChannel, workspaceOfChannel } from '../relay/client';
 
 type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume' | 'deliver' | 'queued' | 'unpublished' | 'acknowledge'>;
-type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
+type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'ask' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
 const portMethods = [
   { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' },
   { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'queued', result: 'value' },
   { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof PortClient })[];
 const shipmentMethods = [
-  { name: 'initialize', result: 'value' }, { name: 'snapshot', result: 'value' }, { name: 'check', result: 'value' },
+  { name: 'initialize', result: 'value' }, { name: 'snapshot', result: 'value' }, { name: 'ask', result: 'value' }, { name: 'check', result: 'value' },
   { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof ShipmentClient })[];
 
@@ -40,6 +40,8 @@ export type Monitoring = Readonly<{
   /** Push channel behind GET /api/workspaces/:id/events. */
   subscribe: Subscribe;
   publishComment(workspaceId: string, shipmentId: string, comment: Comment): void;
+  /** The ship's mind answers as itself, read-only; unavailable (never thrown) without the model or past its deadline. */
+  ask(workspaceId: string, shipmentId: string, question: string): Promise<ShipAnswer>;
   close(): Promise<void>;
 }>;
 export async function createMonitoring(options: Readonly<{ dataDir?: string; workspaceIds: readonly string[]; hasWorkspace?: (workspaceId: string) => boolean }>): Promise<Monitoring> {
@@ -287,6 +289,8 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   if (live.status === 'unavailable') console.warn(live.message);
   return {
     dashboard,
+    ask: (workspaceId, shipmentId, question) => shipment(workspaceId, shipmentId).ask(question)
+      .catch((error: unknown): ShipAnswer => ({ status: 'unavailable', message: `The ship mind is unavailable: ${error instanceof Error ? error.message : String(error)}` })),
     simulate: async (workspaceId, portId, delayHours) => {
       begin(workspaceId);
       const id = randomUUID();

@@ -12,7 +12,7 @@ type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment'>>; origin: string; ingest?: IngestFeed; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask'>>; origin: string; ingest?: IngestFeed; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
 type App = Readonly<{ Bindings: Readonly<{ clientKey: string }>; Variables: Readonly<{ user: User; token: string | undefined; membership: Workspace }> }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
@@ -103,6 +103,11 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
     .get('/api/workspaces/:workspaceId/dashboard', member, async c => monitoringResponse(await monitoring.dashboard(workspaceOf(c))))
     .get('/api/workspaces/:workspaceId/events', member, c => events ? events(c.req.raw, workspaceOf(c)) : json({ error: 'Not found' }, 404))
     .get('/api/workspaces/:workspaceId/members', member, c => respond(access.members(c.get('user').id, workspaceOf(c)), members => ({ members })))
+    .post('/api/workspaces/:workspaceId/shipments/:shipmentId/ask', member, jsonOnly, body(z.object({ question: z.string().trim().min(1).max(500) })), async c => {
+      if (!monitoring.ask) return json({ error: 'The ship mind is unavailable.' }, 503);
+      const answer = await monitoring.ask(workspaceOf(c), shipmentOf(c), c.req.valid('json').question);
+      return answer.status === 'answered' ? json({ answer: answer.answer, cited: answer.cited }) : json({ error: answer.message }, 503);
+    })
     .post('/api/workspaces/:workspaceId/disruptions', member, jsonOnly, body(disruptionSchema), async c => {
       const input = c.req.valid('json');
       return monitoringResponse(await monitoring.simulate(workspaceOf(c), input.portId, input.delayHours));
