@@ -5,6 +5,7 @@ import { assessmentFromEnv, assessNotices, type AssessmentCache } from './assess
 import { postBoard, readBoard, readChannel, type ChannelRead } from './board/transport';
 import { emptyMemory, type PortMemory } from './port/memory';
 import { watchPort, type BoardIo } from './port/watch';
+import { accept, adopt, waiting } from './agents/port/outbox';
 import { pollPort } from './sources';
 import type { BoardMessage } from '../board';
 import { decideBoard, emptyBoardMemory, emptyTelemetryState, mmsiPattern, postDecisions, rememberBoard, selectBoardEvidence, telemetrySourceFromEnv, watchShipment, type ShipBoardMemory, type TelemetryState } from './telemetry';
@@ -33,6 +34,9 @@ const unionHeard = (read: RelayOutcome<ChannelRead>, heard: Inbox): RelayOutcome
   board: [...new Map([...read.value.board, ...heard.board].map(message => [message.id, message] as const)).values()],
   disruptions: [...new Map([...read.value.disruptions, ...heard.disruptions].map(item => [item.id, item] as const)).values()],
 });
+/** Registered: what waited for Relay joins the outbox, and nothing is left waiting. */
+const adoptAwaiting = (state: PortState, awaiting: readonly Disruption[] | null): PortState =>
+  ({ ...state, outbox: adopt({ pending: awaiting ?? [], outbox: state.outbox, published: state.published }).outbox });
 const connect = (state: Readonly<{ relay: RelayIdentity; ready: boolean }>, createChannel: boolean): Promise<RelayOutcome<null>> =>
   state.ready ? Promise.resolve(relaySuccess(null)) : attemptRelay(async () => {
     await joinChannel(state.relay, createChannel);
@@ -43,6 +47,8 @@ const connect = (state: Readonly<{ relay: RelayIdentity; ready: boolean }>, crea
 export class PortAgent extends Actor {
   @Persisted private state: PortState | null = null;
   @Persisted private nextCheckAt: number | null = null;
+  /** Simulated disruptions accepted before this actor was registered with Relay: local, persisted, adopted into the outbox on registration. */
+  @Persisted private awaiting: readonly Disruption[] | null = null;
 
   /** Terse local's alarm index is memory-only; startup restores the persisted deadline. */
   async resume(): Promise<void> {
@@ -65,6 +71,8 @@ export class PortAgent extends Actor {
       if (registration.status === 'unavailable') return registration;
       this.state = { portId, relay: registration.value, ready: false, outbox: [], published: [], checkedAt: null };
     }
+    this.state = adoptAwaiting(this.state, this.awaiting);
+    this.awaiting = [];
     const connection = await connect(this.state, createChannel);
     if (connection.status === 'unavailable') return connection;
     this.state = { ...this.state, ready: true };
@@ -76,17 +84,27 @@ export class PortAgent extends Actor {
     if (this.state) this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, { board: batch.board, disruptions: [] }) };
   }
 
+  /** Durable from the moment it is accepted: before registration it waits in `awaiting`, with no Relay needed. */
   async simulate(disruption: Disruption): Promise<void> {
-    if (!this.state || disruption.portId !== this.state.portId) return;
-    this.state = this.state.outbox.some(event => event.id === disruption.id) || this.state.published.includes(disruption.id)
-      ? this.state : { ...this.state, outbox: [...this.state.outbox, disruption] };
+    if (this.state ? disruption.portId !== this.state.portId : !this.id.endsWith(`-port-${disruption.portId}`)) return;
+    const queue = accept({ pending: this.awaiting ?? [], outbox: this.state?.outbox ?? [], published: this.state?.published ?? [] }, disruption, this.state !== null);
+    this.awaiting = queue.pending;
+    if (!this.state) return;
+    this.state = { ...this.state, outbox: queue.outbox };
     // Commit the outbox before publishing in a separate invocation.
     await this.scheduleCheck();
+  }
+
+  /** Disruptions accepted but not yet on Relay. */
+  async queued(): Promise<number> {
+    return waiting({ pending: this.awaiting ?? [], outbox: this.state?.outbox ?? [], published: [] });
   }
 
   async check(): Promise<RelayOutcome<null>> {
     await this.scheduleCheck();
     if (!this.state) return { status: 'unavailable', message: 'Port monitoring has not been initialized.' };
+    this.state = adoptAwaiting(this.state, this.awaiting);
+    this.awaiting = [];
     // Provider failures are data inside the sources layer, so a dead feed leaves the outbox untouched.
     const reaching = await pollPort(this.state.portId);
     this.state = { ...this.state, outbox: enqueueLive(this.state, reaching.map(toDisruption)) };

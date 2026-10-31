@@ -18,11 +18,11 @@ import { fileSeqStore, startRelayLive } from './realtime/live';
 import { createHub, type Subscribe } from './realtime/sse';
 import { disruptionFrom, relayChannel, workspaceOfChannel } from './relay';
 
-type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume' | 'deliver'>;
+type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume' | 'deliver' | 'queued'>;
 type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume' | 'deliver'>;
 const portMethods = [
   { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' },
-  { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' },
+  { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'queued', result: 'value' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof PortClient })[];
 const shipmentMethods = [
   { name: 'initialize', result: 'value' }, { name: 'snapshot', result: 'value' }, { name: 'check', result: 'value' },
@@ -86,9 +86,9 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     ...ports.filter(value => value.id !== 'singapore').map((value): StartupTask => ({ key: portKey(value.id), after: portKey('singapore'), run: async () => (await port(workspaceId, value.id).initialize(workspaceId, value.id, workspaceKey, false)).status === 'ok' })),
     ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: shipKey(seed.id), after: portKey('singapore'), run: async () => (await shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey)).status === 'ok' })),
   ];
-  /** Disruptions simulated before their port's actor was ready; delivered the moment it is. */
-  const queued = new Map<string, readonly Disruption[]>();
-  const queuedFor = (workspaceId: string): readonly Disruption[] => queued.get(workspaceId) ?? [];
+  /** Simulated disruptions wait in their port actor's persisted state, not here: a restart cannot lose them. */
+  const waitingOn = async (workspaceId: string): Promise<number> =>
+    (await Promise.all(ports.map(value => port(workspaceId, value.id).queued().catch(() => 0)))).reduce((total, count) => total + count, 0);
 
   const dashboard = async (workspaceId: string): Promise<RelayOutcome<Dashboard>> => {
     startup.ensure(workspaceId);
@@ -97,7 +97,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       const retained = await Promise.all(seedsOf(workspaceId).map(async seed =>
         (startup.isReady(workspaceId, shipKey(seed.id)) ? await shipment(workspaceId, seed.id).snapshot().catch(() => null) : null) ?? seed));
       const posts = board.board(workspaceId);
-      const waiting = queuedFor(workspaceId).length;
+      const waiting = status.complete ? 0 : await waitingOn(workspaceId);
       const built: Dashboard = {
         shipments: retained, ports, ...(posts ? { board: posts, portStatus: portStatuses(ports, retained, posts) } : {}),
         updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
@@ -121,12 +121,9 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     await dashboard(workspaceId);
   }, error => console.error('Realtime refresh failed:', error instanceof Error ? error.message : 'unknown error'));
   const announce = createCoalescer(async workspaceId => { await dashboard(workspaceId); }, error => console.error('Board announcement failed:', error instanceof Error ? error.message : 'unknown error'));
-  /** Hand queued disruptions to a port actor that just became ready: its outbox then guarantees delivery. */
+  /** A port actor that just became ready has adopted what waited for it: publish it now instead of at the next alarm. */
   const deliverQueued = async (workspaceId: string, id: PortId): Promise<void> => {
-    const mine = queuedFor(workspaceId).filter(item => item.portId === id);
-    if (mine.length === 0) return;
-    queued.set(workspaceId, queuedFor(workspaceId).filter(item => item.portId !== id));
-    await Promise.all(mine.map(item => port(workspaceId, id).simulate(item)));
+    if (await port(workspaceId, id).queued() === 0) return;
     await relayLimit(() => port(workspaceId, id).check());
   };
   /** One Relay stream per process feeds every actor by local RPC: actors read Relay only at start, never per alarm. */
@@ -174,11 +171,8 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
         id, portId, delayHours,
         evidence: { id, source: 'simulation', title: 'Simulated port congestion', detail: `Synthetic terminal bulletin: a ${delayHours}-hour berth delay at ${ports.find(value => value.id === portId)?.name ?? portId}. Deterministic demo assessment; not live intelligence.`, observedAt: new Date().toISOString() },
       };
-      if (!startup.isReady(workspaceId, portKey(portId))) {
-        queued.set(workspaceId, [...queuedFor(workspaceId), disruption]);
-        return dashboard(workspaceId);
-      }
       await port(workspaceId, portId).simulate(disruption);
+      if (!startup.isReady(workspaceId, portKey(portId))) return dashboard(workspaceId);
       const publication = await relayLimit(() => port(workspaceId, portId).check());
       if (publication.status === 'unavailable') return publication;
       await checkReadyShipments(workspaceId);
