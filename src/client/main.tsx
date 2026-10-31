@@ -17,6 +17,7 @@ import { mergeComment, type CommentEvent } from './feed';
 import { createChangeFlash, createWorkspaceFeed, type FeedMode } from './live';
 import { ActorLine } from './ActorLine';
 import { PixelShip, RiskMark } from './sprites';
+import { AskMind } from './AskMind';
 import { SocietyPanel } from './SocietyPanel';
 import { date, EvidenceCard, portName, RiskBadge, time } from './presentation';
 import { AgentBoard } from './AgentBoard';
@@ -133,6 +134,7 @@ function ShipmentDetails(props: Readonly<{ shipmentId: string; dashboard: Dashbo
     <section class="detail-section what-changed" classList={{ flash: flashing() }}><h3>{shipmentBrief(s()).source}<Show when={flashing()}><span class="live-chip">UPDATED</span></Show></h3><p>{shipmentBrief(s()).text}</p><p class="assessment-note">{assessmentFor(s())?.method === 'ai-assessed' ? `AI model: ${assessmentFor(s())?.model}. Based on cited evidence.` : s().voyage ? 'Voyage plan supplied by an operator. Positions and scenario assessments are simulated.' : 'Scenario assessment. Live notices may not yet be reflected in this estimate.'}</p><Show when={s().action}>{action => <div class="action-box"><TriangleAlert size={16} /><div><strong>Action needed</strong><p>{action()}</p></div></div>}</Show></section>
     <section class="detail-section"><h3>Route milestones</h3><ol class="milestones"><For each={s().milestones}>{milestone => <li class={milestone.status}><span class="milestone-node"><Show when={milestone.status === 'complete'}><Check size={10} /></Show></span><div><strong>{milestone.label}</strong><small>{date(milestone.at)} · {time(milestone.at)} UTC</small></div><Show when={milestone.status === 'current'}><span class="current-label">CURRENT</span></Show></li>}</For></ol></section>
     <section class="detail-section"><h3>Supporting evidence</h3><Show when={s().evidence.length > 0} fallback={<p class="muted">No supporting evidence has been attached to this ship.</p>}><For each={s().evidence}>{evidence => <EvidenceCard evidence={evidence} />}</For></Show></section>
+    <AskMind workspaceId={props.workspaceId} ship={s()} dashboard={props.dashboard} />
     <section class="detail-section comments"><h3><MessageSquare size={15} />Team notes<span class="note-count">{comments().length}</span></h3><Show when={comments().length === 0}><p class="muted">Keep the next handoff in view. Add a note for your team.</p></Show><For each={comments()}>{item => <article class="comment"><div><strong>{item.author}</strong><small>{date(item.createdAt)}, {time(item.createdAt)}</small></div><p>{item.body}</p></article>}</For><form onSubmit={comment}><label class="sr-only" for="comment-body">Add a team note</label><textarea id="comment-body" name="body" placeholder="Add a note for your team…" maxLength={4000} required rows={2} /><button class="text-button" disabled={sending()}>{sending() ? 'Posting…' : 'Post note'}<Send size={13} /></button></form><Show when={error() ?? loadError()}>{message => <ErrorNote message={message()} />}</Show></section>
   </aside>; }}</Show>;
 }
