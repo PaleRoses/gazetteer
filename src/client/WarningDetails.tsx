@@ -8,7 +8,7 @@ const observed = (value: string) => new Date(value).toLocaleString('en-US', { mo
 
 export function WarningDetails(props: Readonly<{
   item: IntelligenceItem | undefined; dashboard: Dashboard | null;
-  onClose: () => void; onShip: (id: string) => void; onLayout: () => void;
+  onBack?: () => void; onClose: () => void; onShip: (id: string) => void; onLayout: () => void;
 }>) {
   let content: HTMLElement | undefined;
   let closeButton: HTMLButtonElement | undefined;
@@ -26,7 +26,7 @@ export function WarningDetails(props: Readonly<{
   return <section ref={content} class="warning-dialog" role="dialog" aria-label={props.item?.evidence.title} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); props.onClose(); } }}>
       <Show when={props.item}>{item => <>
         <header><span class="warning-eyebrow"><TriangleAlert size={16} />MAP WARNING</span><button ref={closeButton} class="icon-button" aria-label="Close warning details" onClick={props.onClose}><X size={20} /></button></header>
-        <div class="warning-body"><div class="warning-tags"><For each={[...new Set(item().relevance.map(reason => reason.kind))]}>{kind => <span>{relevanceLabel[kind]}</span>}</For><span>{liveSource()?.report ? (liveSource()?.report?.kind === 'advisory' ? 'Security advisory' : 'Security news') : item().evidence.source === 'live' ? 'Live report' : 'Simulated report'}</span></div>
+        <div class="warning-body"><Show when={props.onBack}><button class="warning-group-back" onClick={() => props.onBack?.()}>← All warnings in this group</button></Show><div class="warning-tags"><For each={[...new Set(item().relevance.map(reason => reason.kind))]}>{kind => <span>{relevanceLabel[kind]}</span>}</For><span>{liveSource()?.report ? (liveSource()?.report?.kind === 'advisory' ? 'Security advisory' : 'Security news') : item().evidence.source === 'live' ? 'Live report' : 'Simulated report'}</span></div>
           <h2>{item().evidence.title}</h2>
           <p class="warning-description">{item().evidence.detail}</p>
           <p class="warning-observed">{liveSource()?.report?.kind === 'advisory' ? 'Issued' : liveSource()?.report ? 'Published / updated' : 'Observed'} <time dateTime={item().evidence.observedAt}>{liveSource()?.report?.kind === 'advisory' ? item().evidence.observedAt.slice(0, 10) : `${observed(item().evidence.observedAt)} UTC`}</time></p>

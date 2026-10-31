@@ -25,6 +25,8 @@ The News tab includes curated AP reporting from October 30, 2026 on Hormuz and A
 
 Security reports enter only the dashboard read model, never port-actor disruption polling. They cannot change ship risk or ETA. The Gulf Horizon demo shipment runs Jebel Ali–Singapore through Hormuz, with a real monitored corridor, durable shipment/port actors and source-linked news. All security reports require geographic relevance to a tracked voyage or monitored corridor; unrelated reports are omitted. Pins are approximate regional locations, not exact attack coordinates or hazard boundaries. Onshore reports and unverified claims retain those qualifications.
 
+Warning pins within 44 screen pixels merge into a numbered group. Groups update after map movement and resizing; zooming separates distant reports. Clicking a group opens an accessible popover with the individual reports and a zoom action, so even co-located reports remain readable. Counts represent warnings rather than unique incidents. The Gulf selection also includes the Reuters limpet-mine report, AP/UKMTO projectile reporting near Lavan, and MARAD’s navigation-signal interference warning.
+
 ### Map, briefing and news
 
 - Popup risk labels map the retained server values to **low**, **moderate**, and **high**. The brief preserves AI versus scenario provenance; the browser does not calculate another risk score.

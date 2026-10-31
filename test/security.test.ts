@@ -13,7 +13,7 @@ const reports = securityReports(now);
 test('dated security news and advisories survive the client schema without advancing publication dates', () => {
   const intelligence = buildIntelligence(ships, reports, now);
   const parsed = dashboardSchema.parse({ shipments: ships, ports, intelligence, updatedAt: now.toISOString(), mode: 'mixed', runtime: 'test', relay: 'test' });
-  expect(parsed.intelligence?.items).toHaveLength(4);
+  expect(parsed.intelligence?.items).toHaveLength(7);
   const evidence = parsed.intelligence!.items[0]!.evidence;
   expect(evidence.observedAt).toBe('2026-10-30T21:10:00Z');
   expect(evidence.source === 'live' && evidence.report?.reviewedAt).toBe(securityReviewedAt);
@@ -54,4 +54,14 @@ test('Jebel Ali–Singapore is a monitored sea corridor through Hormuz, with sou
   expect(route.intelligence?.items.some(item => item.evidence.id.endsWith(':hormuz'))).toBe(true);
   expect(route.intelligence?.items.some(item => item.evidence.id.endsWith(':aden'))).toBe(false);
   expect(route.intelligence?.items.find(item => item.evidence.id.endsWith('2026-011'))?.relevance[0]?.kind).toBe('route');
+});
+
+
+test('additional Gulf warnings retain attribution and match the Gulf corridor', () => {
+  const route = buildRouteMonitoring(ships, reports, now).find(route => route.endpoints.includes('jebel-ali'))!;
+  for (const suffix of [':limpet-mines', ':lavan', ':gnss']) {
+    const item = route.intelligence?.items.find(item => item.evidence.id.endsWith(suffix));
+    expect(item?.relevance.map(reason => reason.shipmentId)).toEqual(['gz-1053']);
+    expect(item?.evidence.source).toBe('live');
+  }
 });

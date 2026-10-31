@@ -2,7 +2,7 @@ import type { PortId, ReportContext } from '../../shared';
 
 export type NoticeKind = 'cyclone' | 'flood' | 'volcano' | 'earthquake' | 'weather' | 'security';
 export type NoticeSeverity = 'minor' | 'moderate' | 'severe' | 'extreme';
-export type NoticeProvider = 'gdacs' | 'nws' | 'usgs' | 'ap' | 'marad';
+export type NoticeProvider = 'gdacs' | 'nws' | 'usgs' | 'ap' | 'marad' | 'reuters';
 export type LonLat = readonly [number, number];
 
 export type NoticeGeometry =
