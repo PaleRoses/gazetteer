@@ -102,6 +102,20 @@ describe('release', () => {
   });
 });
 
+describe('lookup', () => {
+  test('find returns the record a key made, and free tells whether a window is open', () => {
+    const { ledger, time } = fresh();
+    const held = value(ledger.hold(terms()));
+    expect(ledger.find('case-1:reefer-a')).toEqual(held);
+    expect(ledger.find('nothing')).toBeUndefined();
+    expect(ledger.free('rotterdam:reefer-12', '2026-10-31T19:00:00.000Z', '2026-10-31T20:00:00.000Z')).toBe(false);
+    expect(ledger.free('rotterdam:reefer-12', '2026-10-31T22:00:00.000Z', '2026-10-31T23:00:00.000Z')).toBe(true);
+    time.advance(31 * 60_000);
+    expect(ledger.free('rotterdam:reefer-12', '2026-10-31T19:00:00.000Z', '2026-10-31T20:00:00.000Z')).toBe(true);
+    expect(ledger.find('case-1:reefer-a')!.status).toBe('expired');
+  });
+});
+
 describe('expiry and listing', () => {
   test('the sweep records expiry once and leaves confirmed bookings alone', () => {
     const { ledger, time } = fresh();

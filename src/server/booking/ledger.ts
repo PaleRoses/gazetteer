@@ -1,4 +1,3 @@
-import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
@@ -28,6 +27,12 @@ type Row = Readonly<{
   id: string; key: string; workspace_id: string; case_id: string; resource: string; start_at: string; end_at: string; price_cents: number;
   status: BookingStatus; expires_at: string; held_by: string; confirmed_at: string | null;
 }>;
+
+/**
+ * The actors' bundler (esbuild) cannot resolve `bun:` built-ins and Bun 1.3 has no `node:sqlite`, so the driver is loaded by a specifier it cannot
+ * see. The server and the actors share one ledger file this way.
+ */
+const { Database } = await import(['bun', 'sqlite'].join(':')) as typeof import('bun:sqlite');
 
 const success = <T>(value: T): Result<T> => ({ ok: true, value });
 const failure = <T>(error: BookingError): Result<T> => ({ ok: false, error });
@@ -112,6 +117,10 @@ export const createBookings = (databasePath: string, now: () => number = Date.no
 
   return {
     hold, confirm, release, sweep,
+    /** The record an idempotency key made, whatever has happened to it since. */
+    find: (key: string): Booking | undefined => { const row = byKey.get(key); return row ? record(row, iso(now())) : undefined; },
+    /** Whether a window on a resource is free of live holds and confirmed bookings. */
+    free: (resource: string, start: string, end: string): boolean => { sweep(); return clash.get(resource, end, start, iso(now())) === null; },
     get: (id: string): Booking | undefined => { const row = byId.get(id); return row ? record(row, iso(now())) : undefined; },
     list: (workspaceId: string): readonly Booking[] => { sweep(); return list.all(workspaceId).map(row => record(row, iso(now()))); },
     close: (): void => db.close(),
