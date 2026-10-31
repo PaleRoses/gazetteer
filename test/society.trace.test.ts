@@ -15,7 +15,7 @@ describe('the society on a fake clock, model off', () => {
     const bulletin = bulletins(board).find(item => item.portId === 'singapore' && item.risk !== 'normal' && item.evidenceIds.includes(observation!.id));
     expect(bulletin).toBeDefined();
     expect(board.indexOf(observation!)).toBeLessThan(board.indexOf(bulletin!));
-    const listeners = assessments(board).filter(item => item.method === 'rule-based' && item.citedEvidence.includes(bulletin!.id) && item.shipmentId !== observation!.author.id);
+    const listeners = assessments(board).filter(item => item.method === 'rule-based' && item.citedEvidence.includes(bulletin!.id) && item.shipmentId !== (observation as ShipObservation).shipmentId);
     expect(new Set(listeners.map(item => item.shipmentId)).size).toBeGreaterThanOrEqual(2);
     expect(listeners.every(item => item.confidence === null)).toBe(true);
     expect(bulletins(board).filter(item => item.portId === 'singapore').some(item => item.risk === 'severe')).toBe(true);

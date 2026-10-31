@@ -9,8 +9,11 @@ const risk = z.enum(['on-track', 'watch', 'delayed']);
 export const portRisk = z.enum(['normal', 'elevated', 'severe']);
 export const signalKind = z.enum(['off-route', 'slow-steaming', 'stationary-outside-port', 'ais-dark']);
 
+export const cityElement = z.enum(['traffic', 'hazards']);
+
 export const author = z.discriminatedUnion('role', [
   z.object({ role: z.literal('port'), id: portId }),
+  z.object({ role: z.literal('city'), city: portId, element: cityElement }),
   z.object({ role: z.literal('ship'), id: z.string().min(1), vessel: z.string().min(1), /** The mind aboard that speaks for the ship; absent only on messages posted before ships were named. */ agent: z.string().min(1).optional() }),
 ]);
 
@@ -23,6 +26,37 @@ export const portBulletin = z.object({
   risk: portRisk,
   anchored: z.number().int().nonnegative(),
   arrivals48h: z.number().int().nonnegative(),
+  evidenceIds: z.array(z.string()),
+});
+
+const serviceRate = z.object({ perHour: z.number().nonnegative(), provenance: z.literal('assumed'), basis: z.string().min(1) });
+
+/** What a city's traffic watch hears of the queue outside its port. */
+export const trafficReport = z.object({
+  ...envelope,
+  author: z.object({ role: z.literal('city'), city: portId, element: z.literal('traffic') }),
+  kind: z.literal('city.traffic'),
+  risk: portRisk,
+  anchored: z.number().int().nonnegative(),
+  arrivals48h: z.number().int().nonnegative(),
+  evidenceIds: z.array(z.string()),
+  basis: serviceRate,
+});
+
+const hazardNotice = z.object({
+  id: z.string().min(1), provider: z.enum(['gdacs', 'nws', 'usgs']),
+  kind: z.enum(['cyclone', 'flood', 'volcano', 'earthquake', 'weather']),
+  severity: z.enum(['minor', 'moderate', 'severe', 'extreme']),
+  title: z.string().min(1), url: z.string().min(1), fetchedAt: instant,
+});
+
+/** What a city's hazard watch hears of live notices reaching the city. */
+export const hazardReport = z.object({
+  ...envelope,
+  author: z.object({ role: z.literal('city'), city: portId, element: z.literal('hazards') }),
+  kind: z.literal('city.hazards'),
+  risk: portRisk,
+  notices: z.array(hazardNotice),
   evidenceIds: z.array(z.string()),
 });
 
@@ -76,11 +110,16 @@ export const etaNotice = z.object({
   citedEvidence: z.array(z.string()).optional(),
 });
 
-export const boardMessage = z.discriminatedUnion('kind', [portBulletin, shipObservation, shipAssessment, etaNotice]);
+export const boardMessage = z.discriminatedUnion('kind', [portBulletin, trafficReport, hazardReport, shipObservation, shipAssessment, etaNotice]);
 
 export type PortRisk = z.infer<typeof portRisk>;
 export type BoardAuthor = z.infer<typeof author>;
 export type PortBulletin = z.infer<typeof portBulletin>;
+export type CityElement = z.infer<typeof cityElement>;
+export type TrafficReport = z.infer<typeof trafficReport>;
+export type HazardReport = z.infer<typeof hazardReport>;
+export type HazardNotice = z.infer<typeof hazardNotice>;
+export type CityReport = TrafficReport | HazardReport;
 export type ShipObservation = z.infer<typeof shipObservation>;
 export type QueueDrainBasis = z.infer<typeof queueDrainBasis>;
 export type ShipAssessment = z.infer<typeof shipAssessment>;
@@ -98,6 +137,7 @@ export const parseBoardMessage = (value: unknown): BoardMessage | undefined => {
 export const concerns = (message: BoardMessage): Readonly<{ ports: readonly z.infer<typeof portId>[]; shipmentId: string | null }> => {
   switch (message.kind) {
     case 'port.bulletin': return { ports: [message.portId], shipmentId: null };
+    case 'city.traffic': case 'city.hazards': return { ports: [message.author.city], shipmentId: null };
     case 'ship.observation': return { ports: message.nearPort ? [message.nearPort] : [], shipmentId: message.shipmentId };
     case 'ship.assessment': return { ports: message.ports, shipmentId: message.shipmentId };
     case 'ship.eta': return { ports: [message.portId], shipmentId: message.shipmentId };
@@ -107,17 +147,21 @@ export const concerns = (message: BoardMessage): Readonly<{ ports: readonly z.in
 /** Who a message heard: the ids it cites. The one derivation every reader of the board uses. */
 export const citations = (message: BoardMessage): readonly string[] => {
   switch (message.kind) {
-    case 'port.bulletin': return message.evidenceIds;
+    case 'port.bulletin': case 'city.traffic': case 'city.hazards': return message.evidenceIds;
     case 'ship.assessment': return message.citedEvidence;
     case 'ship.eta': return message.citedEvidence ?? [];
     case 'ship.observation': return [];
   }
 };
 
+export const cityAgent = z.object({ element: cityElement, risk: portRisk, latest: z.string().min(1).nullable() });
+export type CityAgent = z.infer<typeof cityAgent>;
+
 export const portStatus = z.object({
   portId,
   risk: portRisk,
   relevance: z.number().int().nonnegative(),
   bulletin: portBulletin.nullable(),
+  agents: z.array(cityAgent).optional(),
 });
 export type PortStatus = z.infer<typeof portStatus>;
