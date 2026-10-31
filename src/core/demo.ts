@@ -1,4 +1,5 @@
 import { shipMindFor } from './names.js';
+import { shiftEta } from './eta.js';
 import { portById, ports, type PortId } from './ports.js';
 import { positionAlong, routeLengthKm, sharedLengthKm, voyageRoute } from './routes.js';
 import type { Disruption, Shipment } from './types.js';
@@ -84,14 +85,12 @@ export function assessDisruption(shipment: Shipment, disruption: Disruption): Sh
   const added = disruption.delayHours;
   if (added === null || shipment.appliedDisruptions.includes(disruption.id)
     || !(shipment.destination === disruption.portId || shipment.via.includes(disruption.portId))) return shipment;
-  const delayHours = shipment.delayHours + added;
-  const eta = afterHours(shipment.baselineEta, delayHours);
+  const shifted = shiftEta(shipment, added);
   const port = portById.get(disruption.portId);
   return {
-    ...shipment, eta, delayHours, risk: delayHours >= 24 ? 'delayed' : 'watch',
+    ...shifted, risk: shifted.delayHours >= 24 ? 'delayed' : 'watch',
     change: `${port?.name ?? disruption.portId} disruption adds ${added}h to the arrival estimate.`,
     action: 'Confirm the revised delivery window with your consignee.',
-    milestones: shipment.milestones.map(milestone => milestone.status === 'complete' ? milestone : { ...milestone, at: afterHours(milestone.at, added) }),
     evidence: [...shipment.evidence, disruption.evidence],
     appliedDisruptions: [...shipment.appliedDisruptions, disruption.id],
   };
