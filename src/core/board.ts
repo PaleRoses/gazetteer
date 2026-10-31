@@ -161,7 +161,8 @@ export const citations = (message: BoardMessage): readonly string[] => {
   }
 };
 
-export const cityAgent = z.object({ element: cityElement, risk: portRisk, latest: z.string().min(1).nullable() });
+/** Every agent stationed at a city. A service agent (the terminal desk, the haulier) grades no risk, so its risk is null rather than a fabricated 'normal'. */
+export const cityAgent = z.object({ element: z.enum(['traffic', 'hazards', 'terminal', 'haulier']), risk: portRisk.nullable(), latest: z.string().min(1).nullable() });
 export type CityAgent = z.infer<typeof cityAgent>;
 
 export const portStatus = z.object({

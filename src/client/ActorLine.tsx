@@ -7,8 +7,6 @@ import { actorName } from './board-view';
 import { PixelCrane, PixelShip, PixelTruck, RiskMark, riskColour, selectionColour } from './sprites';
 import './styles/ticker.css';
 
-export { PixelShip } from './sprites';
-
 export const boardAnchor = (id: string): string => `actor-message-${id}`;
 
 type Sprite = 'crane' | 'ship' | 'truck';

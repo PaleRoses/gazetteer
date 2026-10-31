@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { fit, remedyFor, type Offer } from '../../src/core/recovery';
-import { act2Anchor, plugOf, reeferAboard, reeferCommitments, terminalQuote, trucksFor, type Departure } from '../../src/core/services';
+import { portIds } from '../../src/core/ports';
+import { act2Anchor, plugOf, reeferAboard, reeferCommitments, servicesAt, terminalQuote, trucksFor, type Departure } from '../../src/core/services';
 
 const anchor = '2026-11-13T09:00:00.000Z';
 const hours = (h: number): string => new Date(Date.parse(anchor) + h * 3_600_000).toISOString();
@@ -74,6 +75,15 @@ describe('the act 2 sandbox', () => {
     expect(trucksFor('busan', anchor)).toEqual([]);
     const departures = trucksFor('rotterdam', anchor).map(truck => Date.parse(truck.departs));
     expect(departures).toEqual(departures.toSorted((a, b) => a - b));
+  });
+
+  test('a city lists exactly the agents that answer there: Rotterdam\'s terminal desk and haulier, and no other city\'s', () => {
+    const answering = (city: (typeof portIds)[number]): ReturnType<typeof servicesAt> => [
+      ...(['unload', 'storage'] as const).some(service => terminalQuote(city, anchor, { service }, now) !== null) ? ['terminal' as const] : [],
+      ...trucksFor(city, anchor).length > 0 ? ['haulier' as const] : [],
+    ];
+    expect(portIds.map(city => [city, servicesAt(city)])).toEqual(portIds.map(city => [city, answering(city)]));
+    expect(servicesAt('rotterdam')).toEqual(['terminal', 'haulier']);
   });
 
   test('power is billed by the hour it covers, never past the plug\'s last free hour', () => {
