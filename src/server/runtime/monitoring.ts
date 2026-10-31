@@ -15,6 +15,7 @@ import { transmit, type Transmitted } from '../relay/outbox';
 import { portStatuses } from '../agents/port/status';
 import { concerns } from '../../core/board';
 import { createCoalescer } from './coalesce';
+import { createDelivery } from './delivery';
 import type { Inbox } from '../relay/inbox';
 import { createLimiter, createStartup, type StartupTask } from './startup';
 import { fileSeqStore, startRelayLive } from '../relay/live';
@@ -162,6 +163,14 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     return true;
   };
   const touched = new Map<string, Set<PortId>>();
+  /** Each ready actor has a server-side watermark: a deliver that fails is re-sent, cumulatively, until the actor has taken it. */
+  const delivery = createDelivery();
+  const deliverTo = (workspaceId: string, key: string): Promise<void> => {
+    const arrived = ports.find(value => portKey(value.id) === key);
+    if (arrived) return delivery.deliver(workspaceId, key, batch => port(workspaceId, arrived.id).deliver(batch), batch => batch.board.length > 0);
+    const ship = seedsOf(workspaceId).find(seed => shipKey(seed.id) === key);
+    return ship ? delivery.deliver(workspaceId, key, batch => shipment(workspaceId, ship.id).deliver(batch)) : Promise.resolve();
+  };
   const absorb = async (workspaceId: string, batch: Inbox): Promise<number> => {
     const fresh: Inbox = { board: batch.board.filter(message => firstSight(`b:${message.id}`)), disruptions: batch.disruptions.filter(item => firstSight(`d:${item.id}`)) };
     const count = fresh.board.length + fresh.disruptions.length;
@@ -170,9 +179,10 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     const wake = touched.get(workspaceId) ?? new Set<PortId>();
     fresh.board.filter(message => message.kind === 'ship.observation' || message.kind === 'ship.eta').forEach(message => concerns(message).ports.forEach(id => wake.add(id)));
     touched.set(workspaceId, wake);
+    delivery.record(workspaceId, fresh);
     await Promise.all([
-      ...ports.filter(value => startup.isReady(workspaceId, portKey(value.id)) && fresh.board.length > 0).map(value => port(workspaceId, value.id).deliver(fresh).catch(() => undefined)),
-      ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, shipKey(seed.id))).map(seed => shipment(workspaceId, seed.id).deliver(fresh).catch(() => undefined)),
+      ...ports.filter(value => startup.isReady(workspaceId, portKey(value.id))).map(value => deliverTo(workspaceId, portKey(value.id))),
+      ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, shipKey(seed.id))).map(seed => deliverTo(workspaceId, shipKey(seed.id))),
     ]);
     return count;
   };
@@ -241,6 +251,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const startup = createStartup({
     tasksOf, limit: relayLimit,
     onReady: (workspaceId, key) => {
+      void deliverTo(workspaceId, key);
       const arrived = ports.find(value => portKey(value.id) === key);
       const ship = seedsOf(workspaceId).find(seed => shipKey(seed.id) === key);
       if (ship) void capture(`${workspaceId}\u0000${ship.id}`);
@@ -291,6 +302,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     publishComment: (workspaceId, shipmentId, comment) => hub.publish(workspaceId, { event: 'comment', data: { shipmentId, comment } }),
     close: async () => {
       startup.close();
+      delivery.close();
       if (live.status === 'ok') await live.value.close();
       await runtime.stop();
     },
