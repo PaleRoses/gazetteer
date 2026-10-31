@@ -3,7 +3,7 @@ import { createEffect, createMemo, createSignal, Match, on, onCleanup, Show, Swi
 import type { BoardAuthor, BoardMessage } from '../core/board';
 import type { Dashboard, Shipment } from '../core/types';
 import { portName } from './presentation';
-import { PixelCrane, PixelShip, PixelTruck, RiskMark } from './sprites';
+import { PixelCrane, PixelShip, PixelTruck, RiskMark, riskColour, selectionColour } from './sprites';
 import './styles/ticker.css';
 
 export { PixelShip } from './sprites';
@@ -32,6 +32,8 @@ const spriteOf = (author: BoardAuthor): Sprite => {
   const unhandled: never = author;
   return unhandled;
 };
+
+const palette = { '--risk-delayed': riskColour.delayed, '--risk-watch': riskColour.watch, '--risk-on-track': riskColour['on-track'], '--selection': selectionColour };
 
 const clock = (value: string): string => new Date(value).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
 
@@ -82,7 +84,7 @@ export function ActorLine(props: Readonly<{ dashboard: Dashboard; onOpenMessage:
     onCleanup(() => window.clearTimeout(timer));
   });
   const current = createMemo(() => posts()[index() % (count() || 1)]);
-  return <div class="actor-line"><Show when={current()} fallback={<p class="actor-waiting">{props.dashboard.board === undefined ? 'Actor messages have not been reported.' : 'No actor messages are available in this snapshot.'}</p>}>{message => <>
+  return <div class="actor-line" style={palette}><Show when={current()} fallback={<p class="actor-waiting">{props.dashboard.board === undefined ? 'Actor messages have not been reported.' : 'No actor messages are available in this snapshot.'}</p>}>{message => <>
     <ActorSprite author={message().author} dashboard={props.dashboard} label={actorName(message().author, props.dashboard)} />
     <a class="actor-dispatch" href={`#${encodeURIComponent(boardAnchor(message().id))}`} onClick={() => props.onOpenMessage(message().id)}><span class="actor-byline">{placeOf(message().author, props.dashboard)} · <time dateTime={message().at}>{clock(message().at)} UTC</time></span><span class="actor-summary">{message().summary}</span></a>
     <a class="ticker-thread" href={`#${encodeURIComponent(boardAnchor(message().id))}`} onClick={() => props.onOpenMessage(message().id)}>View thread <ArrowRight size={20} stroke-width={1.75} aria-hidden="true" /></a>

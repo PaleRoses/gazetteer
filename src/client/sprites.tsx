@@ -3,6 +3,9 @@ import type { Shipment } from '../core/types';
 
 const ink = '#0b0b0b';
 
+export const riskColour: Readonly<Record<Shipment['risk'], string>> = { delayed: '#f05a45', watch: '#f5b53d', 'on-track': '#e8e6df' };
+export const selectionColour = '#5fe3c0';
+
 export function PixelShip() {
   return <svg class="pixel-ship-glyph" viewBox="0 0 22 11" aria-hidden="true" shape-rendering="crispEdges"><path fill="currentColor" fill-rule="evenodd" d="M3 0h1v2H3zM2 2h4v6H2zM3 3v1h2V3zM7 3h3v2H7zM11 3h3v2h-3zM15 3h3v2h-3zM7 6h3v2H7zM11 6h3v2h-3zM15 6h3v2h-3zM19 6h2v2h-2zM0 8h22v1H0zM1 9h20v1H1zM2 10h17v1H2z"/></svg>;
 }
