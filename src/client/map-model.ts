@@ -105,3 +105,6 @@ export const cameraFor = (bounds: Bounds, width: number, height: number, padding
   const zoom = Math.log2(Math.max(Math.min((width - 2 * padding) / across, (height - 2 * padding) / down), 1e-9));
   return { center: [(west + east) / 2, latitudeOf((top + bottom) / 2)], zoom };
 };
+
+/** The zoom at which the globe's disc spans the viewport's shorter side inside the padding. */
+export const globeZoom = (width: number, height: number, padding: number): number => Math.log2(Math.max((Math.min(width, height) - 2 * padding) * Math.PI / TILE, 1e-9));

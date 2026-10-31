@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, Index, onCleanup, onMount, Show, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, Index, onCleanup, onMount, Show, untrack, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { Menu } from '@ark-ui/solid';
 import { ChevronDown } from 'lucide-solid';
@@ -7,7 +7,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type { Dashboard, Shipment } from '../core/types';
 import type { LngLat } from '../core/routes';
-import { boundsOf, cameraFor, fleetPorts, portFeatures, regions, routeLayers, statusLine, vesselViews, type Bounds, type Region } from './map-model';
+import { boundsOf, cameraFor, fleetPorts, globeZoom, portFeatures, regions, routeLayers, statusLine, vesselViews, type Bounds, type Region } from './map-model';
 import { PixelShip, RiskMark } from './sprites';
 import './styles/map.css';
 
@@ -63,7 +63,8 @@ export function ShipmentMap(props: Selection) {
     const { clientWidth, clientHeight } = map.getContainer();
     if (clientWidth === 0 || clientHeight === 0) return;
     const camera = cameraFor(bounds, clientWidth, clientHeight, 25);
-    map.easeTo({ center: [...camera.center], zoom: camera.zoom, duration });
+    const zoom = untrack(projection) === 'globe' ? Math.max(camera.zoom, globeZoom(clientWidth, clientHeight, 25)) : camera.zoom;
+    map.easeTo({ center: [...camera.center], zoom, duration });
   };
   onMount(() => {
     const host = container;
@@ -85,7 +86,13 @@ export function ShipmentMap(props: Selection) {
       map.on('error', event => { if (!disposed && 'sourceId' in event && event.sourceId === 'land') setFailed(true); });
     }).catch(() => { if (!disposed) setFailed(true); });
   });
-  createEffect(() => { ready()?.map.setProjection({ type: projection() }); });
+  createEffect(() => {
+    const current = ready();
+    if (!current) return;
+    current.map.setProjection({ type: projection() });
+    const framed = untrack(region);
+    if (framed) frame(current.map, framed.bounds, 500);
+  });
   createEffect(() => {
     const current = ready();
     if (!current) return;
