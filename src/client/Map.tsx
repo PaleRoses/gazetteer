@@ -12,6 +12,7 @@ import { WarningGroup } from './WarningGroup';
 import { clusterWarnings } from './warning-clusters';
 import { warningLabel, warningTone } from './warning-severity';
 import { PortDetails } from './PortDetails';
+import './warning-markers.css';
 
 type MapLibre = typeof import('maplibre-gl');
 type Runtime = Readonly<{ lib: MapLibre; map: MapLibreMap }>;
@@ -202,7 +203,15 @@ export function ShipmentMap(props: Selection) {
         const item = group.items[0]!;
         const location = map.unproject([group.center.x, group.center.y]);
         const coordinates: readonly [number, number] = [location.lng, location.lat];
-        const node = element('button', `news-marker warning-${warningTone(group.severity)}${multi ? ' news-cluster' : ''}`, multi ? String(group.items.length) : '!');
+        const node = element('button', `news-marker warning-${warningTone(group.severity)}${multi ? ' news-cluster' : ''}`);
+        const glyph = element('span', 'warning-mark', '!');
+        glyph.setAttribute('aria-hidden', 'true');
+        node.append(glyph);
+        if (multi) {
+          const count = element('span', 'warning-count', String(group.items.length));
+          count.setAttribute('aria-hidden', 'true');
+          node.append(count);
+        }
         node.setAttribute('type', 'button'); node.setAttribute('aria-haspopup', 'dialog');
         node.setAttribute('aria-label', multi ? `${group.items.length} warnings in this area; highest: ${warningLabel(group.severity)}` : `${warningLabel(group.severity)} warning: ${item.evidence.title}`);
         node.title = multi ? `${group.items.length} warnings · Highest: ${warningLabel(group.severity)} — click to explore` : `${warningLabel(group.severity)} · ${item.evidence.title}`;
