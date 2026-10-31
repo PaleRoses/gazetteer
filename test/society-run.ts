@@ -1,7 +1,7 @@
 import { type BoardMessage } from '../src/core/board';
 import { demoShipments } from '../src/core/demo';
 import { portById, type PortId } from '../src/core/ports';
-import { relaySuccess } from '../src/core/types';
+import { relaySuccess, type Shipment } from '../src/core/types';
 import { emptyTrafficMemory, watchTraffic, type BoardIo, type TrafficMemory } from '../src/server/agents/city/traffic';
 import { think, type Thoughts } from '../src/server/agents/ship/think';
 import { demoScenarios, simulationSource, type Scenario } from '../src/server/telemetry/simulation';
@@ -14,10 +14,10 @@ const clockAt = (cycle: number): string => new Date(start + cycle * cycleSeconds
 
 export type Run = Readonly<{ board: readonly BoardMessage[]; ships: ReadonlyMap<string, Thoughts> }>;
 
-export async function runSociety(scenarios: (cycle: number) => Readonly<Record<string, Scenario>> = () => demoScenarios): Promise<Run> {
+export async function runSociety(scenarios: (cycle: number) => Readonly<Record<string, Scenario>> = () => demoScenarios, extra: readonly Shipment[] = []): Promise<Run> {
   const board: BoardMessage[] = [];
   const post = (message: BoardMessage): void => { if (!board.some(known => known.id === message.id)) board.push(message); };
-  const fleet = demoShipments(new Date(start));
+  const fleet = [...demoShipments(new Date(start)), ...extra];
   let ships = new Map<string, Thoughts>(fleet.map(shipment => [shipment.id, { shipment }]));
   const shipCursor = new Map<string, number>();
   const portCursor = new Map<PortId, number>();

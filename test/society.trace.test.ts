@@ -51,6 +51,15 @@ describe('the society on a fake clock, model off', () => {
     behind.forEach(id => expect(Date.parse(ships.get(id!)!.shipment.eta)).toBeGreaterThan(Date.parse(original.get(id!)!)));
   });
 
+  test('a veteran 15 h at anchor, its ETA already past, is the head of the queue and waits for no one', async () => {
+    const template = demoShipments(new Date(start)).find(item => item.destination === 'singapore' && demoScenarios[item.id]?.kind === 'queue')!;
+    const shift = (at: string): string => new Date(Date.parse(at) - (Date.parse(template.baselineEta) - (start - 15 * 3_600_000))).toISOString();
+    const veteran = { ...template, id: 'gz-veteran', agent: 'Zz', baselineEta: shift(template.baselineEta), eta: shift(template.eta), milestones: template.milestones.map(milestone => ({ ...milestone, at: shift(milestone.at) })) };
+    const { board, ships } = await runSociety(() => ({ ...demoScenarios, 'gz-veteran': { kind: 'queue', offsetKm: 16, bearingDegrees: 120, holdHours: 40 } }), [veteran]);
+    expect(board.some(message => message.kind === 'city.traffic' && message.anchored >= 3)).toBe(true);
+    expect(ships.get('gz-veteran')!.shipment.eta).toBe(veteran.eta);
+  });
+
   test('a ship that leaves the queue says so, and the port stops counting it', async () => {
     const queue = Object.keys(demoScenarios).filter(id => demoScenarios[id]!.kind === 'queue');
     const leaves = (cycle: number) => cycle < cycles * 3 / 4 ? demoScenarios : { ...demoScenarios, ...Object.fromEntries(queue.map(id => [id, underway])) };
