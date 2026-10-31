@@ -127,3 +127,7 @@ export const createBookings = (databasePath: string, now: () => number = Date.no
   };
 };
 export type Bookings = ReturnType<typeof createBookings>;
+
+const open = new Map<string, Bookings>();
+/** One connection per file for the life of the process, for actors and the server alike: SQLite in WAL mode shares a file safely between processes. */
+export const ledgerAt = (path: string): Bookings => open.get(path) ?? (() => { const created = createBookings(path); open.set(path, created); return created; })();

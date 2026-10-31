@@ -1,10 +1,14 @@
-# Demo runbook (three minutes)
+# Demo runbook: act 1 and act 2
+
+**Act 1:** a ship is delayed, and the cities and ships notice, post, cite each other and reassess. **Act 2:** the agents save a refrigerated container without rerouting the ship.
+
+# Act 1: the world reacts
 
 Every time below is on the **scenario clock**. That clock starts at **t0**, the moment the demo workspace's ships are first created, which is the first load of the demo workspace on an empty `DATA_DIR`. Ship state is durable, so a restart does not reset the clock. A server that has been running for hours shows the finished story: six ships at anchor and three diversions off-route. Each beat reaches the board within a minute or two of its scenario time: one ship alarm (60 s), one city alarm, then Relay.
 
 **To catch two beats live at 16:00 PDT,** start the server on a fresh `DATA_DIR` and open `/demo` at **15:05 PDT** (22:05Z). That makes t0 15:05, so +0.90 h lands at about 15:59–16:01.
 
-## 1. Open `/demo`
+## 1.1 Open `/demo`
 
 `/demo` signs you into the shared demo workspace. This only works on a loopback origin, and not when `GAZETTEER_DEMO=off`. The address bar then returns to `/`. The top bar has **World**, **Relay** and **Simulation**.
 
@@ -25,7 +29,7 @@ Every time below is on the **scenario clock**. That clock starts at **t0**, the 
 - **gz-1051 Meridian Crest** (Indian Ocean): slow steaming at 6.8 kn against the 17 kn its ETA needs. Delayed by rule.
 - **gz-1052 Pacific Dawn** (mid-Pacific): an open AIS gap of 14 h. Watch by rule.
 
-## 2. The Singapore queue (+0.2 h to +2.0 h)
+## 1.2 The Singapore queue (+0.2 h to +2.0 h)
 
 Five arrivals reach their baseline ETA and go to anchor 10 to 25 km out, at 0.1 kn with nav status *at anchor*. Each time one does, the traffic watch posts the new count:
 
@@ -48,7 +52,7 @@ Five arrivals reach their baseline ETA and go to anchor 10 to 25 km out, at 0.1 
   - gz-1065: +3 h
   - gz-1067: +4 h
 
-## 3. The Red Sea diversion
+## 1.3 The Red Sea diversion
 
 Three ships planned via Suez are sailing the Cape of Good Hope lane at their service speed. On the plan they appear normal at first. When one passes 50 km from its planned route, it posts *off-route* (*"Vessel off the planned route. 50.x km off the planned route."*) and a watch by rule:
 
@@ -58,7 +62,7 @@ Three ships planned via Suez are sailing the Cape of Good Hope lane at their ser
 | 1.07 h | gz-1057 Serendib Trader (Colombo to Rotterdam), west of Sri Lanka |
 | 1.47 h | gz-1058 Gulf Meridian (Jebel Ali to Rotterdam), off Oman |
 
-## 4. A disruption from the Simulation page
+## 1.4 A disruption from the Simulation page
 
 Go to **Simulation**, then **Test a city disruption**. **City** defaults to Singapore and **Congestion delay** to 36 h (allowed range 1–168). Press **Simulate port delay**.
 
@@ -77,7 +81,7 @@ Go to **Simulation**, then **Test a city disruption**. **City** defaults to Sing
 - **The evidence item** reads *Simulated port congestion: "Synthetic terminal bulletin: a 36-hour berth delay at Singapore. Deterministic demo assessment; not live intelligence."*
 - **Ships that don't call at Singapore are untouched,** gz-1043 and gz-1045 for example.
 
-## 5. Ask a ship
+## 1.5 Ask a ship
 
 The client has **no Ask button** at this commit. The endpoint is `POST /api/workspaces/:workspaceId/shipments/:shipmentId/ask` with `{ "question": "..." }`. To use it, open the browser console on the app page:
 
@@ -91,7 +95,57 @@ await (await fetch(`/api/workspaces/${ws}/shipments/gz-1074/ask`, { method: 'POS
 - **Without a key,** you get *"The ship mind is unavailable: no ANTHROPIC_API_KEY is configured."*
 - **An unknown ship** gives a 404, `Ship not found`.
 
-## What is live and what is simulated
+# Act 2: saving the reefer aboard Meridian Star
+
+**All of act 2 is sandbox data** from `src/core/services.ts`. The terminal desk, the haulier and the consignee are fictional; the port (Rotterdam) and the road (Rotterdam to Venlo) are real. No operator quoted these prices or times.
+
+**How act 2 tells time.** Every act 2 time counts hours from one anchor: Meridian Star's (gz-1042) original Rotterdam arrival on the scenario clock, rounded down to the hour (`act2Anchor`). On the board that instant is t0 + 312 h, so its clock times depend on t0. Read *anchor + 8 h* wherever the storyboard says 18:00; the storyboard is the anchor read as 10:00. The board prints UTC (`HH:MMZ`).
+
+## 2.1 The cargo and what it is owed
+
+- **The box.** Reefer **MSTU 418265 1** (a valid ISO 6346 check digit) aboard Meridian Star, holding chilled produce at +2 °C.
+- **Its commitments.** It must reach **Venlo DC by anchor + 13.5 h (23:30)**. A truck was booked at **anchor + 4 h (14:00)**. The budget is **EUR 1,800**, and the box needs power the whole time.
+- **What breaks.** The act opens on a declared **6 h delay**: arrival moves from anchor (10:00) to **anchor + 6 h (16:00)**. The 14:00 truck can no longer be met, so the cargo agent opens a recovery case.
+
+## 2.2 The negotiation, step by step
+
+The numbers come from the data; the order comes from the deterministic negotiator (`agents/cargo/negotiate.ts`) and the real solver `fit()`. `test/core/services.test.ts` drives this exact sequence through `fit()` and `remedyFor()`. Without a model, every plan is labelled `rule-based`.
+
+1. **Ask.** The cargo agent asks Rotterdam's terminal desk for an unloading window after 16:00 and for powered storage from unloading until pickup. It asks Rotterdam's haulier for a reefer truck to Venlo.
+2. **First offers.**
+   - Terminal: unload at **18:00 for EUR 140**.
+   - Terminal: plug **R-114** from 18:00 at **EUR 95 an hour**, offered for its one-hour minimum.
+   - Haulier: the earliest truck, **17:00 for EUR 640**.
+3. **The blocker.** The plan is blocked: *"The truck leaves at 17:00Z, before the container is unloaded at 18:00Z."* (`truck-before-unload`, times shifted by the anchor). The cargo agent asks the haulier for a truck after 18:00.
+4. **A later truck.** The haulier offers **19:30 for EUR 720**, arriving in Venlo at **21:45**.
+5. **Power to match.** The plug's one-hour block ends before 19:30 (`storage-gap`), so the cargo agent asks the terminal for power until 19:30. R-114 is offered from **18:00 to 19:30 for EUR 142.50**. This step is one round more than the storyboard shows.
+6. **It fits.** Delivery at **21:45**, which beats 23:30. The cost is **EUR 1,002.50** (140 + 142.50 + 720), within EUR 1,800. The cargo agent holds the three offers, confirms them and releases what it no longer needs. Every hold and booking is keyed by case and offer, so nothing can be booked twice.
+
+## 2.3 A change: the 19:30 truck is withdrawn
+
+The haulier posts a withdrawal. The cargo agent keeps the 18:00 unload, which still works, and asks again:
+
+- **Haulier:** next truck after 18:00, **21:00 for EUR 760**, arriving in Venlo at **23:15**.
+- **Terminal:** R-114 extended to **18:00–21:00 for EUR 285**. This is a new offer id, so the 18:00–19:30 power can be released.
+- **New plan:** delivery at **23:15**, still before 23:30, for **EUR 1,185** (140 + 285 + 760). The ship is not rerouted.
+
+## 2.4 An interruption: restart the cargo agent
+
+The cargo agent is a durable actor (Terse). Restarted while a reply is pending, it restores its commitments and the whole case from saved state and decides the same ids and keys again. The booking ledger (`GET /api/workspaces/:id/bookings`) should show exactly one booking per resource and no duplicate holds.
+
+## 2.5 What act 2 needs that this runbook cannot vouch for
+
+What has landed, as of this commit:
+- the recovery protocol and solver (`core/recovery.ts`)
+- the board kinds and their rendering in the client
+- the sandbox ledger and its bookings endpoint
+- the HaulierAgent
+- the deterministic negotiator and the durable CargoAgent
+- this data
+
+What this runbook cannot yet vouch for: a terminal-desk actor answering with `terminalQuote`, the runtime creating the act 2 actors in the demo workspace, and the demo controls (*Withdraw truck*, *Restart cargo agent*). Check each against the build before showing it. If act 2 is not green on the pinned server, the demo runs act 1 and shows act 2 only as far as it is real; nothing is staged by hand.
+
+# What is live and what is simulated
 
 **Simulated:**
 
@@ -99,6 +153,7 @@ await (await fetch(`/api/workspaces/${ws}/shipments/gz-1074/ask`, { method: 'POS
 - The queue, the diversion, the slow ship and the dark ship are scripted on the scenario clock.
 - Vessel names are fictional, and no carrier is named.
 - Disruptions from the Simulation page are synthetic and are labelled as such.
+- Act 2's terminal desk, haulier, consignee, prices and times are sandbox data, and its bookings are sandbox records.
 
 **Real:** the 14 cities (names, UN/LOCODEs, coordinates) and the sea lanes. The lanes are searoute-ts paths over the Eurostat maritime network, illustrative and not for navigation.
 

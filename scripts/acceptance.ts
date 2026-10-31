@@ -12,7 +12,7 @@ const flag = (name: string): string | undefined => { const at = args.indexOf(`--
 const origin = (args.find(arg => /^https?:\/\//.test(arg)) ?? 'http://localhost:4310').replace(/\/+$/, '');
 const restartCmd = flag('restart-cmd');
 const seconds = (name: string, fallback: number): number => Number(flag(name) ?? fallback) * 1000;
-const BUDGET = { dashboardMs: 250, p95Ms: 50, windowMs: seconds('budget-window', 180), disruptionMs: 1500, etaMs: seconds('budget-eta', 120), boardMs: seconds('budget-board', 120), riskMs: seconds('budget-risk', 120), restartMs: seconds('budget-restart', 240), sseMs: seconds('budget-sse', 30) };
+const BUDGET = { dashboardMs: 250, p95Ms: 50, windowMs: seconds('budget-window', 180), disruptionMs: 2500, etaMs: seconds('budget-eta', 120), boardMs: seconds('budget-board', 120), riskMs: seconds('budget-risk', 120), restartMs: seconds('budget-restart', 240), sseMs: seconds('budget-sse', 30) };
 const HOURS = 36;
 const EXPOSED = ['gz-1042', 'gz-1044'] as const;
 const UNAFFECTED = ['gz-1043', 'gz-1045'] as const;

@@ -67,6 +67,8 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
   const operations = createOperations(resolve(dataDir, '..', 'operations.sqlite'));
+  // The ship minds' SDK transcripts live beside the actor data, never in ~/.claude; the actor host inherits this environment.
+  process.env.GAZETTEER_MINDS_DIR = resolve(dataDir, 'minds');
   const runtime = await startLocalActors({
     project, projectId: 'gazetteer', entrypoint: 'src/server/agents/index.ts',
     dataDir, apiKey: randomUUID(), quiet: true,

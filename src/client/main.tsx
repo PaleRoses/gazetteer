@@ -1,4 +1,3 @@
-import { AlertsPage, VesselEditor, VoyageFacts, createAlertNotifications } from './FleetOperations';
 import type { Operation } from '../core/operations';
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, type JSX } from 'solid-js';
 import { render, Portal } from 'solid-js/web';
@@ -7,6 +6,8 @@ import { ArrowDownRight, ArrowRight, Bell, Check, ChevronDown, FlaskConical, Lay
 import { z } from 'zod';
 import { portIds } from '../core/ports';
 import type { Comment, Dashboard, Diversion, Shipment, Workspace } from '../core/types';
+import './styles.css';
+import { AlertsPage, VesselEditor, VoyageFacts, createAlertNotifications } from './FleetOperations';
 import { commentsSchema, dashboardSchema, invitationSchema, membersSchema, request, sessionSchema, workspaceSchema, type Invitation, type Session } from './api';
 import { MapBackdrop, ShipmentMap } from './Map';
 import { mergeComment, type CommentEvent } from './feed';
@@ -20,7 +21,6 @@ import './feed-pages.css';
 import { RouteCard, RouteDetails, routeName } from './Routes';
 import { readView, viewHash, type View } from './navigation';
 import { shipmentBrief, assessmentFor } from './brief';
-import './styles.css';
 
 const minute = (eta: string | undefined): string => (eta ?? '').slice(0, 16);
 const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'CONNECTING', live: 'STREAMING', polling: 'POLLING · 5 S' };

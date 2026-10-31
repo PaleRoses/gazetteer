@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { fit, remedyFor, type Offer } from '../../src/core/recovery';
-import { act2Anchor, reeferAboard, reeferCommitments, terminalQuote, trucksFor, type Departure } from '../../src/core/services';
+import { act2Anchor, plugOf, reeferAboard, reeferCommitments, terminalQuote, trucksFor, type Departure } from '../../src/core/services';
 
 const anchor = '2026-11-13T09:00:00.000Z';
 const hours = (h: number): string => new Date(Date.parse(anchor) + h * 3_600_000).toISOString();
@@ -79,5 +79,15 @@ describe('the act 2 sandbox', () => {
   test('power is billed by the hour it covers, never past the plug\'s last free hour', () => {
     expect(quote({ service: 'storage', after: hours(8), until: hours(11) }).priceEur).toBe(285);
     expect(quote({ service: 'storage', after: hours(8), until: hours(30) })).toMatchObject({ until: hours(14), priceEur: 570 });
+  });
+
+  test('every storage interval on one plug is one ledger resource; other offers have none', () => {
+    const short = quote({ service: 'storage', after: hours(8), until: hours(9.5) });
+    const long = quote({ service: 'storage', after: hours(8), until: hours(11) });
+    expect(plugOf(short.id)).toBe('rotterdam:plug:R-114');
+    expect(plugOf(long.id)).toBe(plugOf(short.id));
+    expect(plugOf(quote({ service: 'unload', after: hours(6) }).id)).toBeNull();
+    expect(plugOf('rotterdam:truck:truck-1930')).toBeNull();
+    expect(plugOf('atlantis:storage:R-1:2026-01-01T00:00:00.000Z/2026-01-01T01:00:00.000Z')).toBeNull();
   });
 });
