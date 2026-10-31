@@ -1,13 +1,17 @@
+import { zValidator } from '@hono/zod-validator';
+import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { createEventsHandler } from './realtime/sse';
 import type { Access, AccessError, Result, Session } from './access';
 import type { Monitoring } from './monitoring';
-import type { Dashboard, RelayOutcome } from '../shared';
+import type { Dashboard, RelayOutcome, User, Workspace } from '../shared';
 export type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
 type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment'>>; origin: string; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
+type App = Readonly<{ Bindings: Readonly<{ clientKey: string }>; Variables: Readonly<{ user: User; token: string | undefined; membership: Workspace }> }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
   status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers },
@@ -24,16 +28,23 @@ const tokenFrom = (request: Request): string | undefined => request.headers.get(
 const email = z.string().trim().email().max(254);
 const password = z.string().min(12).max(1024);
 const signupSchema = z.object({ email, password, name: z.string().trim().min(1).max(80), workspaceName: z.string().trim().min(1).max(100).optional() });
+const loginSchema = z.object({ email, password: z.string().max(1024) });
 const disruptionSchema = z.object({ portId: z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']), delayHours: z.number().int().min(1).max(168) });
 const mailReceiptSchema = z.object({ id: z.string().trim().min(1) });
-const bodyWith = async <T>(request: Request, schema: z.ZodType<T>, action: (body: T) => Response | Promise<Response>): Promise<Response> => {
-  if (!request.headers.get('Content-Type')?.startsWith('application/json')) return json({ error: 'Expected application/json' }, 415);
-  const body = schema.safeParse(await request.json().catch(() => null));
-  return body.success ? action(body.data) : json({ error: 'Invalid request fields' }, 400);
-};
+
+/** A body is JSON or it is refused before it is read; a JSON body that fails its schema is one answer, whatever the failure. */
+const jsonOnly: MiddlewareHandler<App> = (c, next) =>
+  c.req.header('Content-Type')?.startsWith('application/json') ? next() : Promise.resolve(json({ error: 'Expected application/json' }, 415));
+const body = <S extends z.ZodType>(schema: S) => zValidator('json', schema, result => result.success ? undefined : json({ error: 'Invalid request fields' }, 400));
 
 const loopbackHosts: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
 const demoOperator = { email: 'demo@gazetteer.local', name: 'Demo operator', workspaceName: 'Demo fleet' } as const;
+const tooMany = (): Response => json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
+const workspaceResources = ['dashboard', 'events', 'disruptions', 'members', 'invitations'] as const;
+/** Ids are matched as written in the URL, never percent-decoded: `gz%2D1042` is not `gz-1042`. Segments: '', api, workspaces, <workspace>, shipments, <shipment>, comments. */
+const segment = (c: Context, index: number): string => new URL(c.req.url).pathname.split('/')[index] ?? '';
+const workspaceOf = (c: Context): string => segment(c, 3);
+const shipmentOf = (c: Context): string => segment(c, 5);
 
 export function createApi({ access, monitoring, origin, demo = process.env.GAZETTEER_DEMO !== 'off', mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
   const cookie = (token: string, maxAge = 604800): string => `gazetteer_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${origin.startsWith('https:') ? '; Secure' : ''}`;
@@ -51,49 +62,56 @@ export function createApi({ access, monitoring, origin, demo = process.env.GAZET
     snapshot: async workspaceId => { const outcome = await monitoring.dashboard(workspaceId); return outcome.status === 'ok' ? outcome.value : null; },
   });
 
-  return async (request, clientKey = 'unknown') => {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-    if (request.method === 'POST' && request.headers.get('Origin') !== origin) return json({ error: 'Origin not allowed' }, 403);
-    if (request.method === 'POST' && (path === '/api/signup' || path === '/api/login') && !access.allowAuth(clientKey)) return json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
-    if (path === '/api/demo-session' && request.method === 'GET') return json({ available: demoAvailable });
-    if (path === '/api/demo-session' && request.method === 'POST') {
-      if (!demoAvailable) return json({ error: 'Demo access is not enabled here.' }, 403);
-      if (!access.allowAuth(clientKey)) return json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
-      return authenticated(await access.demoSession(demoOperator));
-    }
-    if (path === '/api/signup' && request.method === 'POST') return bodyWith(request, signupSchema, async input => authenticated(await access.signup(input)));
-    if (path === '/api/login' && request.method === 'POST') return bodyWith(request, z.object({ email, password: z.string().max(1024) }), async input => authenticated(await access.login(input)));
+  const throttled: MiddlewareHandler<App> = (c, next) => access.allowAuth(c.env.clientKey) ? next() : Promise.resolve(tooMany());
+  const signedIn: MiddlewareHandler<App> = (c, next) => {
+    const token = tokenFrom(c.req.raw);
+    const session = access.session(token);
+    if (!session.ok) return Promise.resolve(respond(session));
+    c.set('user', session.value);
+    c.set('token', token);
+    return next();
+  };
+  const member: MiddlewareHandler<App> = (c, next) => {
+    const membership = access.membership(c.get('user').id, workspaceOf(c));
+    if (!membership.ok) return Promise.resolve(respond(membership));
+    c.set('membership', membership.value);
+    return next();
+  };
 
-    const session = access.session(tokenFrom(request));
-    if (!session.ok) return respond(session);
-    const user = session.value;
-    if (path === '/api/session' && request.method === 'GET') return respond(access.workspaces(user.id), workspaces => ({ user, workspaces }));
-    if (path === '/api/logout' && request.method === 'POST') {
-      access.logout(tokenFrom(request) ?? '');
+  const app = new Hono<App>()
+    // Order is the contract: origin, then the public routes, then a session, then membership per route.
+    .use('*', (c, next) => c.req.method === 'POST' && c.req.header('Origin') !== origin ? Promise.resolve(json({ error: 'Origin not allowed' }, 403)) : next())
+    .get('/api/demo-session', () => json({ available: demoAvailable }))
+    .post('/api/demo-session', async c => {
+      if (!demoAvailable) return json({ error: 'Demo access is not enabled here.' }, 403);
+      return access.allowAuth(c.env.clientKey) ? authenticated(await access.demoSession(demoOperator)) : tooMany();
+    })
+    .post('/api/signup', throttled, jsonOnly, body(signupSchema), async c => authenticated(await access.signup(c.req.valid('json'))))
+    .post('/api/login', throttled, jsonOnly, body(loginSchema), async c => authenticated(await access.login(c.req.valid('json'))))
+    .use('*', signedIn)
+    .get('/api/session', c => respond(access.workspaces(c.get('user').id), workspaces => ({ user: c.get('user'), workspaces })))
+    .post('/api/logout', c => {
+      access.logout(c.get('token') ?? '');
       return json({ ok: true }, 200, { 'Set-Cookie': cookie('', 0) });
-    }
-    if (path === '/api/workspaces' && request.method === 'POST') return bodyWith(request, z.object({ name: z.string().trim().min(1).max(100) }), input => respond(access.createWorkspace(user.id, input.name)));
-    if (path === '/api/invitations/accept' && request.method === 'POST') return bodyWith(request, z.object({ token: z.string().min(1).max(128) }), input => respond(access.acceptInvite(user.id, input.token)));
-    const match = /^\/api\/workspaces\/([^/]+)\/(dashboard|events|disruptions|members|invitations|shipments\/([^/]+)\/comments)$/.exec(path);
-    if (!match) return json({ error: 'Not found' }, 404);
-    const workspaceId = match[1];
-    const resource = match[2];
-    const membership = access.membership(user.id, workspaceId);
-    if (!membership.ok) return respond(membership);
-    if (resource === 'dashboard' && request.method === 'GET') return monitoringResponse(await monitoring.dashboard(workspaceId));
-    if (resource === 'events' && request.method === 'GET') return events ? events(request, workspaceId) : json({ error: 'Not found' }, 404);
-    if (resource === 'members' && request.method === 'GET') return respond(access.members(user.id, workspaceId), members => ({ members }));
-    if (resource === 'disruptions' && request.method === 'POST') return bodyWith(request, disruptionSchema, async input => monitoringResponse(await monitoring.simulate(workspaceId, input.portId, input.delayHours)));
-    if (resource === 'invitations' && request.method === 'POST') return bodyWith(request, z.object({ email }), async input => {
-      const invitation = access.invite(user.id, workspaceId, input.email);
+    })
+    .post('/api/workspaces', jsonOnly, body(z.object({ name: z.string().trim().min(1).max(100) })), c => respond(access.createWorkspace(c.get('user').id, c.req.valid('json').name)))
+    .post('/api/invitations/accept', jsonOnly, body(z.object({ token: z.string().min(1).max(128) })), c => respond(access.acceptInvite(c.get('user').id, c.req.valid('json').token)))
+    .get('/api/workspaces/:workspaceId/dashboard', member, async c => monitoringResponse(await monitoring.dashboard(workspaceOf(c))))
+    .get('/api/workspaces/:workspaceId/events', member, c => events ? events(c.req.raw, workspaceOf(c)) : json({ error: 'Not found' }, 404))
+    .get('/api/workspaces/:workspaceId/members', member, c => respond(access.members(c.get('user').id, workspaceOf(c)), members => ({ members })))
+    .post('/api/workspaces/:workspaceId/disruptions', member, jsonOnly, body(disruptionSchema), async c => {
+      const input = c.req.valid('json');
+      return monitoringResponse(await monitoring.simulate(workspaceOf(c), input.portId, input.delayHours));
+    })
+    .post('/api/workspaces/:workspaceId/invitations', member, jsonOnly, body(z.object({ email })), async c => {
+      const user = c.get('user');
+      const invitation = access.invite(user.id, workspaceOf(c), c.req.valid('json').email);
       if (!invitation.ok) return respond(invitation);
       const inviteUrl = `${origin}/?invite=${encodeURIComponent(invitation.value.token)}`;
       if (!mail) return json({ email: invitation.value.email, url: inviteUrl, delivery: 'link-only' });
       const sent = await mailTransport(new Request('https://api.resend.com/emails', {
         method: 'POST', headers: { Authorization: `Bearer ${mail.key}`, 'Content-Type': 'application/json', 'Idempotency-Key': invitation.value.id },
-        body: JSON.stringify({ from: mail.from, to: [invitation.value.email], subject: 'Join your Gazetteer workspace', text: `${user.name} invited you to ${membership.value.name} on Gazetteer.\n\nSign in with ${invitation.value.email} and accept your invitation:\n${inviteUrl}\n\nThis link expires in seven days. Shipment information is synthetic demo data.` }),
+        body: JSON.stringify({ from: mail.from, to: [invitation.value.email], subject: 'Join your Gazetteer workspace', text: `${user.name} invited you to ${c.get('membership').name} on Gazetteer.\n\nSign in with ${invitation.value.email} and accept your invitation:\n${inviteUrl}\n\nThis link expires in seven days. Shipment information is synthetic demo data.` }),
         signal: AbortSignal.timeout(10000),
       })).catch(() => null);
       const receipt = sent?.ok ? mailReceiptSchema.safeParse(await sent.json().catch(() => null)) : undefined;
@@ -101,19 +119,30 @@ export function createApi({ access, monitoring, origin, demo = process.env.GAZET
         ? { delivery: 'accepted', messageId: receipt.data.id }
         : { delivery: 'unconfirmed', warning: 'Email delivery is unconfirmed. Share this invitation link directly.' };
       return json({ email: invitation.value.email, url: inviteUrl, ...delivery });
-    });
-    const shipmentId = match[3];
-    if (shipmentId) {
+    })
+    // A known workspace resource asked the wrong way is refused after membership, as an unknown one is not found before it.
+    .on(['GET', 'POST'], '/api/workspaces/:workspaceId/shipments/:shipmentId/comments', member, async (c, next) => {
+      const workspaceId = workspaceOf(c);
       const dashboard = await monitoring.dashboard(workspaceId);
       if (dashboard.status === 'unavailable') return monitoringResponse(dashboard);
-      if (!dashboard.value.shipments.some(shipment => shipment.id === shipmentId)) return json({ error: 'Shipment not found' }, 404);
-      if (request.method === 'GET') return respond(access.comments(user.id, workspaceId, shipmentId), comments => ({ comments }));
-      return bodyWith(request, z.object({ body: z.string().trim().min(1).max(4000) }), input => {
-        const added = access.comment(user.id, workspaceId, shipmentId, input.body);
-        if (added.ok) monitoring.publishComment?.(workspaceId, shipmentId, added.value);
-        return added.ok ? respond(access.comments(user.id, workspaceId, shipmentId), comments => ({ comments })) : respond(added);
-      });
-    }
-    return json({ error: 'Method not allowed' }, 405);
-  };
+      return dashboard.value.shipments.some(shipment => shipment.id === shipmentOf(c)) ? next() : json({ error: 'Shipment not found' }, 404);
+    })
+    .get('/api/workspaces/:workspaceId/shipments/:shipmentId/comments', c => respond(access.comments(c.get('user').id, workspaceOf(c), shipmentOf(c)), comments => ({ comments })))
+    .post('/api/workspaces/:workspaceId/shipments/:shipmentId/comments', jsonOnly, body(z.object({ body: z.string().trim().min(1).max(4000) })), c => {
+      const [workspaceId, shipmentId] = [workspaceOf(c), shipmentOf(c)];
+      const added = access.comment(c.get('user').id, workspaceId, shipmentId, c.req.valid('json').body);
+      if (added.ok) monitoring.publishComment?.(workspaceId, shipmentId, added.value);
+      return added.ok ? respond(access.comments(c.get('user').id, workspaceId, shipmentId), comments => ({ comments })) : respond(added);
+    })
+    .notFound(() => json({ error: 'Not found' }, 404))
+    // A body that is not JSON at all is the validator's one throw; it answers like any invalid body. Anything else is not ours to hide.
+    .onError(error => {
+      if (error instanceof HTTPException && error.status === 400) return json({ error: 'Invalid request fields' }, 400);
+      throw error;
+    });
+
+  workspaceResources.forEach(resource => app.all(`/api/workspaces/:workspaceId/${resource}`, member, () => json({ error: 'Method not allowed' }, 405)));
+
+  return async (request, clientKey = 'unknown') =>
+    request.method === 'GET' || request.method === 'POST' ? app.fetch(request, { clientKey }) : json({ error: 'Method not allowed' }, 405);
 }
