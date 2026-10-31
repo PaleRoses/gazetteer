@@ -107,7 +107,7 @@ const trafficMethods = [
   { name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'unpublished', result: 'value' },
 ] as const;
 
-test('with Relay down for the whole check, a traffic watch still decides from what was delivered locally and queues its report', async () => {
+test('with Relay down, a traffic watch decides a delivery in the same turn, before any check, and a check after it queues nothing twice', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'gazetteer-offline-'));
   const relay = fakeRelay();
   const project = projectWith({ RELAY_BASE_URL: relay.url, GAZETTEER_LIVE_SOURCES: 'off' });
@@ -126,10 +126,11 @@ test('with Relay down for the whole check, a traffic watch still decides from wh
       expect(await watch.join('workspace', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
       relay.outage.down = true;
       await watch.deliver({ board: [stopped('a'), stopped('b')], disruptions: [] });
-      expect((await watch.check()).status).toBe('unavailable');
       const queued = (await watch.unpublished())?.board ?? [];
       expect(queued.map(message => message.kind)).toEqual(['city.traffic']);
       expect(queued[0]).toMatchObject({ risk: 'elevated', anchored: 2, evidenceIds: ['obs:a', 'obs:b'] });
+      expect((await watch.check()).status).toBe('unavailable');
+      expect((await watch.unpublished())?.board.map(message => message.id)).toEqual([queued[0]!.id]);
       expect(relay.sent.size).toBe(0);
     } finally { await runtime.stop(); }
   } finally {
@@ -144,7 +145,7 @@ const deskMethods = [
   { name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'unpublished', result: 'value' },
 ] as const;
 
-test('the terminal desk answers from the world\'s Rotterdam windows with Relay down, and its offer waits in the outbox', async () => {
+test('with Relay down, the terminal desk answers a delivered request in the same turn from the world\'s Rotterdam windows, and its offer waits in the outbox', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'gazetteer-desk-'));
   const relay = fakeRelay();
   const project = projectWith({ RELAY_BASE_URL: relay.url, GAZETTEER_LIVE_SOURCES: 'off' });
@@ -163,9 +164,10 @@ test('the terminal desk answers from the world\'s Rotterdam windows with Relay d
       expect(await desk.join('workspace', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
       relay.outage.down = true;
       await desk.deliver({ board: [ask], disruptions: [] });
-      expect((await desk.check()).status).toBe('unavailable');
       const queued = (await desk.unpublished())?.board ?? [];
       expect(queued).toMatchObject([{ kind: 'recovery.offer', caseId: 'case-1', answers: ['case-1/request/open/unload'], offer: { service: 'unload', at: later(8), priceEur: 140 } }]);
+      expect((await desk.check()).status).toBe('unavailable');
+      expect((await desk.unpublished())?.board.map(message => message.id)).toEqual([queued[0]!.id]);
       expect(relay.sent.size).toBe(0);
     } finally { await runtime.stop(); }
   } finally {

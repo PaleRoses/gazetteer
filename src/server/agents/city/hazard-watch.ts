@@ -8,8 +8,7 @@ import { joinRelay } from '../../relay/connect';
 import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
 import { toDisruption } from '../../sources/disruption';
 import { pollPort } from '../../sources/poll';
-import { checkIntervalMs } from '../alarm';
-import { assessHazards, decideHazards } from './hazards';
+import { assessHazards, decideHazards, hazardCheckMs } from './hazards';
 import { accept, adopt, waiting } from './outbox';
 
 type HazardState = Readonly<{
@@ -41,7 +40,7 @@ export class HazardWatch extends Actor {
   }
 
   private async scheduleCheck(): Promise<void> {
-    this.nextCheckAt = Date.now() + checkIntervalMs;
+    this.nextCheckAt = Date.now() + hazardCheckMs;
     this.alarm.set(this.nextCheckAt);
   }
 

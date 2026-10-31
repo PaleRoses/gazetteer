@@ -1,14 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import type { BoardMessage } from '../../../../src/core/board';
 import { assessHazards, decideHazards } from '../../../../src/server/agents/city/hazards';
+import { decideTraffic } from '../../../../src/server/agents/city/traffic';
 import type { PortNotice } from '../../../../src/server/sources/poll';
 import { runSociety } from '../../../society-run';
 
 const numbers = (text: string): readonly string[] => text.match(/\d+(?:\.\d+)?/g) ?? [];
+/** Every value in a message, never its key names: `arrivals48h` must not supply a 48. */
+const valuesOf = (value: unknown): string => Array.isArray(value) ? value.map(valuesOf).join(' ') : value !== null && typeof value === 'object' ? Object.values(value).map(valuesOf).join(' ') : String(value);
 /** A number in a watch's summary must be one the message carries in another field; constants appear as words. */
 const unexplained = (message: BoardMessage): readonly string[] => {
   const { summary, ...rest } = message;
-  const known = new Set(numbers(JSON.stringify(rest)));
+  const known = new Set(numbers(valuesOf(rest)));
   return numbers(summary).filter(token => !known.has(token));
 };
 const now = new Date('2026-10-31T20:00:00.000Z');
@@ -31,8 +34,10 @@ describe('city watch voice', () => {
     reports.forEach(report => expect(unexplained(report)).toEqual([]));
   });
 
-  test('the check can fail: a count the message does not carry is caught', () => {
+  test('the check can fail: a count the message does not carry is caught, and a digit in a key name is not a value', () => {
     const report = decideHazards(assessHazards('singapore', [reaching('a', 'minor', 'x'), reaching('b', 'minor', 'y'), reaching('c', 'minor', 'w')]), null, now)!;
     expect(unexplained({ ...report, summary: `${report.notices.length} live notices in force` })).toEqual(['3']);
+    const traffic = decideTraffic({ city: 'singapore', risk: 'elevated', levels: { anchored: 1, arrivals: 1 }, anchored: 2, arrivals48h: 3, anchoredShips: ['a', 'b'], evidenceIds: [] }, null, now)!;
+    expect(unexplained({ ...traffic, summary: 'arrivals due within 48 hours' })).toEqual(['48']);
   });
 });

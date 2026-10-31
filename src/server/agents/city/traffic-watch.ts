@@ -2,13 +2,12 @@ import { Actor, Persisted } from 'durable-actors';
 import type { BoardMessage } from '../../../core/board';
 import { portById, type PortId } from '../../../core/ports';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/types';
-import { postBoard, readBoard } from '../../relay/board';
+import { postBoard, readBoard, type BoardRead } from '../../relay/board';
 import type { RelayIdentity } from '../../relay/client';
 import { joinRelay } from '../../relay/connect';
 import { drainInbox, emptyInbox, mergeInbox, type Inbox } from '../../relay/inbox';
 import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
-import { checkIntervalMs } from '../alarm';
-import { emptyTrafficMemory, watchTraffic, type BoardIo, type TrafficMemory } from './traffic';
+import { emptyTrafficMemory, trafficCheckMs, watchTraffic, type BoardIo, type TrafficMemory } from './traffic';
 
 type TrafficState = Readonly<{
   city: PortId; relay: RelayIdentity | null; ready: boolean; memory: TrafficMemory;
@@ -32,7 +31,7 @@ export class TrafficWatch extends Actor {
   }
 
   private async scheduleCheck(): Promise<void> {
-    this.nextCheckAt = Date.now() + checkIntervalMs;
+    this.nextCheckAt = Date.now() + trafficCheckMs;
     this.alarm.set(this.nextCheckAt);
   }
 
@@ -53,21 +52,29 @@ export class TrafficWatch extends Actor {
     return relaySuccess(null);
   }
 
-  /** The server heard these on the Relay stream: take them locally instead of reading Relay. */
+  /** The server heard these on the Relay stream: taken locally and decided in the same turn, not at the next alarm. */
   async deliver(batch: Inbox): Promise<void> {
-    if (this.state) this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, { board: batch.board, disruptions: [] }) };
+    if (!this.state) return;
+    this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, { board: batch.board, disruptions: [] }) };
+    await this.decide(null);
   }
 
   async check(): Promise<RelayOutcome<null>> {
     await this.scheduleCheck();
     if (!this.state) return { status: 'unavailable', message: 'The traffic watch has not been initialized.' };
     const committed = this.state;
-    const place = portById.get(committed.city);
-    if (!place) return relaySuccess(null);
-    const heard = committed.inbox.board;
     // Relay only completes the history; the watch decides from what it holds and what was delivered locally, whatever Relay does.
     const history = committed.synced || !committed.ready || !committed.relay ? null : await readBoard(committed.relay, committed.memory.cursor);
-    const fromRelay = history?.status === 'ok' ? history.value : null;
+    const outcome = await this.decide(history?.status === 'ok' ? history.value : null);
+    return history?.status === 'unavailable' ? history : outcome;
+  }
+
+  /** One decision from the memory, the delivered inbox and Relay's history when a check read it; it makes no Relay call of its own. */
+  private async decide(fromRelay: BoardRead | null): Promise<RelayOutcome<null>> {
+    const committed = this.state;
+    const place = committed && portById.get(committed.city);
+    if (!committed || !place) return relaySuccess(null);
+    const heard = committed.inbox.board;
     const messages = [...new Map([...(fromRelay?.messages ?? []), ...heard].map(message => [message.id, message] as const)).values()];
     const read: BoardIo['read'] = async () => relaySuccess({ messages, cursor: fromRelay?.cursor ?? committed.memory.cursor });
     const post: BoardIo['post'] = async (_identity, message) => relaySuccess(message.id);
@@ -77,7 +84,7 @@ export class TrafficWatch extends Actor {
       ...latest, memory: watched.memory, outbox: enqueue(latest.outbox, watched.decided ? [watched.decided] : []),
       synced: latest.synced || fromRelay !== null, inbox: drainInbox(latest.inbox, { board: heard, disruptions: [] }),
     };
-    return history?.status === 'unavailable' ? history : watched.outcome;
+    return watched.outcome;
   }
 
   /** What this watch has decided that Relay has not acknowledged yet; the server echoes it at once and writes it to Relay itself. */
