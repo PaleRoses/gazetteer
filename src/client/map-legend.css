@@ -1,0 +1,23 @@
+.map-layer-legend{position:absolute;left:18px;bottom:42px;z-index:7;width:180px;background:var(--field);border:1px solid #555d5d;color:var(--bone);font-size:12px}
+.map-layer-legend summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 12px;cursor:pointer;list-style:none;font-size:11px;letter-spacing:1px;text-transform:uppercase}
+.map-layer-legend summary::-webkit-details-marker{display:none}
+.map-layer-legend:not([open]) .legend-chevron{transform:rotate(180deg)}
+.map-layer-legend fieldset{border:0;border-top:1px solid var(--line);margin:0;padding:6px}
+.map-layer-legend label{display:flex;align-items:center;gap:9px;padding:5px 6px;min-height:30px;cursor:pointer}
+.map-layer-legend label:hover{background:var(--raised)}
+.map-layer-legend label:has(input:not(:checked)){color:var(--muted)}
+.map-layer-legend input{appearance:none;flex-shrink:0;width:13px;height:13px;margin:0 0 0 auto;border:1px solid #737a76;border-radius:0;display:grid;place-content:center;cursor:pointer}
+.map-layer-legend input:checked{background:var(--bone);border-color:var(--bone)}
+.map-layer-legend input:checked:after{content:'✓';font-size:11px;line-height:1;color:var(--field)}
+.legend-symbol{display:inline-flex;align-items:center;justify-content:center;width:20px;font-family:ui-monospace,monospace;font-size:19px;line-height:1}
+.legend-ports{font-size:13px}.legend-routes{color:var(--agent);font-size:25px}.legend-warnings{color:#e0a03a;font-weight:800}.legend-diversions{color:#b9a7d6}
+.legend-risk-key{display:grid;gap:5px;padding:10px 12px;border-top:1px solid var(--line);font-size:10px;color:var(--muted)}
+.legend-risk-key span{display:flex;align-items:center;gap:8px}.legend-risk-key i{width:5px;height:5px;background:#e8e4d6}.legend-risk-key .legend-watch{background:#e0a03a}.legend-risk-key .legend-high{background:#e5603f}
+@media(max-width:650px){.map-layer-legend{left:12px;bottom:42px;width:165px}.map-layer-legend label{min-height:32px}}
+.map-layer-legend[open] ~ .alternative-map-caption{bottom:330px}
+@media(max-width:650px){.map-panel:has(.selected-voyage-link) .map-layer-legend{bottom:90px}.map-panel:has(.selected-voyage-link) .map-layer-legend[open] ~ .alternative-map-caption{bottom:380px}}
+.gz-map .map-layer-legend{background:var(--gz-black);color:var(--gz-white)}
+.gz-map .legend-routes{color:var(--gz-mint)}
+.gz-map .legend-risk-key .legend-normal{background:var(--gz-white)}
+.gz-map .legend-risk-key .legend-watch{background:var(--gz-amber)}
+.gz-map .legend-risk-key .legend-high{background:var(--gz-red)}

@@ -134,3 +134,13 @@
   background: transparent;
   border-color: var(--line);
 }
+
+/* Keep the region picker and map controls square after the map UI refresh. */
+.gz-map .gz-map-projection,
+.gz-map .gz-map-projection button,
+.gz-map .gz-map-region,
+.gz-map-region-menu,
+.gz-map-region-item,
+.gz-map .gz-city-pill {
+  border-radius: 0;
+}
