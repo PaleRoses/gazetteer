@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { connectParticipant, memoizeByToken, type RelayIdentity } from '../src/server/relay';
+import { attemptRelay, connectParticipant, memoizeByToken, type RelayIdentity } from '../src/server/relay';
 
 const identity = (token: string, extra: Partial<RelayIdentity> = {}): RelayIdentity => ({ token, channel: 'c', ...extra });
 const realFetch = globalThis.fetch;
@@ -46,5 +46,31 @@ describe('building a client from a stored identity', () => {
     spy();
     await connectParticipant(identity('tok'));
     expect(requests).toHaveLength(1);
+  });
+});
+
+describe('a bounded wait', () => {
+  test('an operation that never answers is reported unavailable at the deadline', async () => {
+    const started = Date.now();
+    const outcome = await attemptRelay(() => new Promise<string>(() => undefined), 'slow origin', 30);
+    expect(outcome).toEqual({ status: 'unavailable', message: 'slow origin' });
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  test('a prompt answer is returned as is, and a failure keeps the caller\'s message', async () => {
+    expect(await attemptRelay(async () => 7, 'x', 1000)).toEqual({ status: 'ok', value: 7 });
+    expect(await attemptRelay(async () => { throw new Error('503'); }, 'down', 1000)).toEqual({ status: 'unavailable', message: 'down' });
+  });
+});
+
+describe('a 503 storm', () => {
+  test('costs three requests and under three seconds through the SDK, not five with multi-second back-offs', async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => { requests += 1; return new Response(JSON.stringify({ ok: false, error: { code: 'unavailable', message: 'busy' } }), { status: 503 }); }) as unknown as typeof fetch;
+    const client = await connectParticipant(identity('tok', { agentId: 'agent-1', agentName: 'n' }));
+    const started = Date.now();
+    await expect(client.channels.list()).rejects.toThrow();
+    expect(requests).toBe(3);
+    expect(Date.now() - started).toBeLessThan(3000);
   });
 });

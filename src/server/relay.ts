@@ -7,9 +7,17 @@ import { pollSince, type Cursor } from './realtime/cursor';
 /** `agentId` and `agentName` are stored at registration so a client can be built without asking the origin who the token belongs to; identities persisted before that lack them. */
 export type RelayIdentity = Readonly<{ token: string; channel: string; agentId?: string; agentName?: string }>;
 /** Expected provider failures cross actor and HTTP boundaries as data, never fabricated success. */
-export async function attemptRelay<A>(operation: () => Promise<A>, message: string): Promise<RelayOutcome<A>> {
-  try { return relaySuccess(await operation()); }
+/**
+ * The SDK honours a server's Retry-After up to 60 s per retry, so its own policy cannot bound the wall clock; this does. An operation
+ * that overruns is reported unavailable and the actor moves on (what is still in flight is idempotent or a read).
+ */
+export const relayDeadlineMs = 15_000;
+export async function attemptRelay<A>(operation: () => Promise<A>, message: string, deadlineMs: number = relayDeadlineMs): Promise<RelayOutcome<A>> {
+  const timer: { handle?: ReturnType<typeof setTimeout> } = {};
+  const expired = new Promise<never>((_resolve, reject) => { timer.handle = setTimeout(() => reject(new Error(`no answer within ${deadlineMs} ms`)), deadlineMs); });
+  try { return relaySuccess(await Promise.race([operation(), expired])); }
   catch { return { status: 'unavailable', message }; }
+  finally { clearTimeout(timer.handle); }
 }
 const channelPrefix = 'gazetteer-';
 export const relayChannel = (workspaceId: string): string => `${channelPrefix}${workspaceId}`;
@@ -26,7 +34,8 @@ const disruptionSchema = z.object({
 });
 const disruptionKinds: readonly unknown[] = ['gazetteer.simulated-disruption', 'gazetteer.live-disruption'];
 
-const retryPolicy = { maxRetries: 4, backoffMs: 500, backoffMultiplier: 2, jitter: true };
+/** Two retries after the first try, 250 ms then 500 ms apart: a 503 storm costs three requests, not five with multi-second back-offs. */
+const retryPolicy = { maxRetries: 2, backoffMs: 250, backoffMultiplier: 2, jitter: true };
 
 export async function registerParticipant(workspaceKey: string, name: string, channel: string): Promise<RelayIdentity> {
   const relay = new AgentRelay({ workspaceKey, retryPolicy });
