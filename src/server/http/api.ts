@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { createEventsHandler } from './events';
 import { createIngestHandler, createVesselsHandler, type IngestFeed } from './ingest';
+import type { Bookings } from '../booking/ledger';
 import type { Access, AccessError, Result, Session } from '../access/access';
 import type { Monitoring } from '../runtime/monitoring';
 import { portIds } from '../../core/ports';
@@ -12,7 +13,7 @@ type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask'>>; origin: string; ingest?: IngestFeed; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask'>>; origin: string; ingest?: IngestFeed; bookings?: Pick<Bookings, 'list'>; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
 type App = Readonly<{ Bindings: Readonly<{ clientKey: string }>; Variables: Readonly<{ user: User; token: string | undefined; membership: Workspace }> }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
@@ -42,13 +43,13 @@ const body = <S extends z.ZodType>(schema: S) => zValidator('json', schema, resu
 const loopbackHosts: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
 const demoOperator = { email: 'demo@gazetteer.local', name: 'Demo operator', workspaceName: 'Demo fleet' } as const;
 const tooMany = (): Response => json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
-const workspaceResources = ['dashboard', 'events', 'disruptions', 'members', 'invitations'] as const;
+const workspaceResources = ['dashboard', 'events', 'disruptions', 'members', 'invitations', 'bookings'] as const;
 /** Ids are matched as written in the URL, never percent-decoded: `gz%2D1042` is not `gz-1042`. Segments: '', api, workspaces, <workspace>, shipments, <shipment>, comments. */
 const segment = (c: Context, index: number): string => new URL(c.req.url).pathname.split('/')[index] ?? '';
 const workspaceOf = (c: Context): string => segment(c, 3);
 const shipmentOf = (c: Context): string => segment(c, 5);
 
-export function createApi({ access, monitoring, origin, ingest, demo = process.env.GAZETTEER_DEMO !== 'off', mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
+export function createApi({ access, monitoring, origin, ingest, bookings, demo = process.env.GAZETTEER_DEMO !== 'off', mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
   const cookie = (token: string, maxAge = 604800): string => `gazetteer_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${origin.startsWith('https:') ? '; Secure' : ''}`;
   const authenticated = (result: Result<Session>): Response => {
     if (!result.ok) return respond(result);
@@ -108,6 +109,7 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
     .post('/api/invitations/accept', jsonOnly, body(z.object({ token: z.string().min(1).max(128) })), c => respond(access.acceptInvite(c.get('user').id, c.req.valid('json').token)))
     .get('/api/workspaces/:workspaceId/dashboard', member, async c => monitoringResponse(await monitoring.dashboard(workspaceOf(c))))
     .get('/api/workspaces/:workspaceId/events', member, c => events ? events(c.req.raw, workspaceOf(c)) : json({ error: 'Not found' }, 404))
+    .get('/api/workspaces/:workspaceId/bookings', member, c => json({ bookings: bookings?.list(workspaceOf(c)) ?? [] }))
     .get('/api/workspaces/:workspaceId/members', member, c => respond(access.members(c.get('user').id, workspaceOf(c)), members => ({ members })))
     .post('/api/workspaces/:workspaceId/shipments/:shipmentId/ask', member, inFleet('Ship not found'), jsonOnly, body(z.object({ question: z.string().trim().min(1).max(500) })), async c => {
       if (!monitoring.ask) return json({ error: 'The ship mind is unavailable.' }, 503);

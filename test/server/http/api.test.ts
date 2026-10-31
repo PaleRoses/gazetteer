@@ -4,6 +4,7 @@ import { demoShipments } from '../../../src/core/demo';
 import { ports } from '../../../src/core/ports';
 import { relaySuccess, type Dashboard } from '../../../src/core/types';
 import { createAccess } from '../../../src/server/access/access';
+import { createBookings } from '../../../src/server/booking/ledger';
 import { createApi } from '../../../src/server/http/api';
 import type { Monitoring } from '../../../src/server/runtime/monitoring';
 
@@ -195,5 +196,31 @@ describe('the ingest view', () => {
     const off = await createApi({ access, monitoring: monitoringFixture, origin })(new Request(`${origin}/api/ingest`));
     expect(await off.json()).toEqual({ feeds: [], zones: [] });
     access.close();
+  });
+});
+
+describe('bookings', () => {
+  test('are readable by a member of their workspace only, scoped to it, and other methods are refused', async () => {
+    const access = createAccess(':memory:');
+    const ledger = createBookings(':memory:');
+    const api = createApi({ access, monitoring: monitoringFixture, origin, bookings: ledger });
+    const owner = await signup(api, 'owner');
+    const other = await signup(api, 'other');
+    const mine = owner.workspaces[0];
+    const theirs = other.workspaces[0];
+    if (!mine || !theirs) throw new Error('Workspaces missing');
+    const future = (hours: number): string => new Date(Date.now() + hours * 3_600_000).toISOString();
+    const held = ledger.hold({ key: 'k1', workspaceId: mine.id, caseId: 'case-1', resource: 'rotterdam:reefer-12', start: future(2), end: future(6), priceEur: 180, expiresAt: future(1), heldBy: 'cargo:meridian-star' });
+    ledger.hold({ key: 'k2', workspaceId: theirs.id, caseId: 'case-9', resource: 'rotterdam:reefer-13', start: future(2), end: future(6), priceEur: 90, expiresAt: future(1), heldBy: 'cargo:other' });
+    if (!held.ok) throw new Error(held.error);
+    const path = `/api/workspaces/${mine.id}/bookings`;
+    expect((await api(request(path))).status).toBe(401);
+    expect((await api(request(path, other.cookie))).status).toBe(403);
+    const reply = await api(request(path, owner.cookie));
+    expect(reply.status).toBe(200);
+    expect(await reply.json()).toEqual({ bookings: [held.value] });
+    expect((await api(request(path, owner.cookie, {}))).status).toBe(405);
+    access.close();
+    ledger.close();
   });
 });
