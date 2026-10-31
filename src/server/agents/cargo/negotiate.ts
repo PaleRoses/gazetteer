@@ -1,16 +1,21 @@
 import {
   bookingKey, describeConstraint, fit, remedyFor, type Commitments, type Constraint, type Offer, type Plan, type RecoveryMessage, type Remedy,
-} from '../../../core/recovery';
+} from '../../../core/recovery.js';
 
-/** One sandbox booking the case holds, keyed by caseId and offerId so that replaying a decision never books twice. */
-export type Booking = Readonly<{ offerId: string; key: string; status: 'held' | 'confirmed' | 'released' }>;
+/**
+ * One sandbox booking the case asked for, keyed by caseId and offerId so that replaying a decision never books twice. The provider writes the ledger
+ * when it hears the hold, confirm or release; `requested` means the hold is posted and the ledger does not show it yet.
+ */
+export type Booking = Readonly<{ offerId: string; key: string; status: 'requested' | 'held' | 'confirmed' | 'released' }>;
+/** What the ledger says of a key now; undefined while the provider has not recorded it. */
+export type LedgerStatus = 'held' | 'confirmed' | 'released' | 'expired' | undefined;
 export type CaseState = Readonly<{
   caseId: string; agent: Readonly<{ id: string; vessel: string }>; commitments: Commitments;
   /** Offers heard, by id, with the message that carried each (what a reply cites). */
   offers: readonly Readonly<{ offer: Offer; messageId: string }>[];
   withdrawn: readonly string[]; bookings: readonly Booking[]; plan: Plan | null; posted: readonly string[];
 }>;
-/** What the ledger is asked to do; every action is idempotent by its key. */
+/** What the case asks its providers to do through the board; every action is idempotent by its key. */
 export type LedgerAction =
   | Readonly<{ kind: 'hold'; key: string; offerId: string; caseId: string; resource: string; start: string; end: string; priceEur: number; expiresAt: string }>
   | Readonly<{ kind: 'confirm'; key: string; offerId: string }>
@@ -116,30 +121,41 @@ export function negotiate(state: CaseState, now: string, method: Method = 'rule-
     if (booking(offerId) || !offer) return [];
     return [{ kind: 'hold', key: bookingKey(state.caseId, offerId), offerId, caseId: state.caseId, resource: offerId, ...resourceWindow(offer, state.commitments.transitHours), priceEur: offer.priceEur, expiresAt: offer.expiresAt }];
   });
-  const allHeld = holds.length === 0;
+  const allHeld = plan.offerIds.every(offerId => booking(offerId)?.status === 'held' || booking(offerId)?.status === 'confirmed');
   const confirms = allHeld ? plan.offerIds.flatMap((offerId): LedgerAction[] => booking(offerId)?.status === 'held' ? [{ kind: 'confirm', key: bookingKey(state.caseId, offerId), offerId }] : []) : [];
   const releases = allHeld ? state.bookings.flatMap((item): LedgerAction[] => item.status !== 'released' && !plan.offerIds.includes(item.offerId) ? [{ kind: 'release', key: item.key, offerId: item.offerId }] : []) : [];
   const posted = post({ ...state, plan }, announced);
   return { ...posted, actions: [...holds, ...confirms, ...releases] };
 }
 
-export type LedgerOutcome = Readonly<{ action: LedgerAction; ok: boolean; expiresAt?: string }>;
-
-/** Pure: what the ledger acknowledged becomes the case's bookings and the board's hold, confirm and release messages, each citing the offer it acts on. */
-export function settle(state: CaseState, outcomes: readonly LedgerOutcome[], now: string): Decision {
-  const done = outcomes.filter(outcome => outcome.ok);
-  const status = (action: LedgerAction): Booking['status'] => action.kind === 'hold' ? 'held' : action.kind === 'confirm' ? 'confirmed' : 'released';
-  const bookings = done.reduce<readonly Booking[]>((current, { action }) => [
+/**
+ * Pure: the actions become the board's hold, confirm and release messages, each citing the offer it acts on. A hold is `requested` until the ledger
+ * shows it; a release is final at once. A confirm changes nothing here: the ledger says when it is confirmed.
+ */
+export function settle(state: CaseState, actions: readonly LedgerAction[], now: string): Decision {
+  const status = (action: LedgerAction, current: Booking | undefined): Booking['status'] =>
+    action.kind === 'hold' ? 'requested' : action.kind === 'release' ? 'released' : current?.status ?? 'requested';
+  const bookings = actions.reduce<readonly Booking[]>((current, action) => [
     ...current.filter(item => item.offerId !== action.offerId),
-    { offerId: action.offerId, key: action.key, status: status(action) },
+    { offerId: action.offerId, key: action.key, status: status(action, current.find(item => item.offerId === action.offerId)) },
   ], state.bookings);
-  const message = ({ action, expiresAt }: LedgerOutcome): RecoveryMessage => {
+  const message = (action: LedgerAction): RecoveryMessage => {
     const base = { id: `${state.caseId}/${action.kind}/${action.offerId}`, at: now, caseId: state.caseId, author: author(state), answers: [...citing(state, [action.offerId])], offerId: action.offerId, key: action.key };
     switch (action.kind) {
-      case 'hold': return { ...base, kind: 'recovery.hold', expiresAt: expiresAt ?? action.expiresAt, summary: `Holding ${action.offerId} until ${(expiresAt ?? action.expiresAt).slice(11, 16)}Z.` };
-      case 'confirm': return { ...base, kind: 'recovery.confirm', summary: `Confirmed ${action.offerId}.` };
-      case 'release': return { ...base, kind: 'recovery.release', summary: `Released ${action.offerId}: the plan no longer needs it.` };
+      case 'hold': return { ...base, kind: 'recovery.hold', expiresAt: action.expiresAt, summary: `Holding ${action.offerId} until ${action.expiresAt.slice(11, 16)}Z.` };
+      case 'confirm': return { ...base, kind: 'recovery.confirm', summary: `Confirming ${action.offerId}: the whole plan fits the deadline and the budget.` };
+      case 'release': return { ...base, kind: 'recovery.release', summary: `Releasing ${action.offerId}: the plan no longer needs it.` };
     }
   };
-  return post({ ...state, bookings }, done.map(message));
+  return post({ ...state, bookings }, actions.map(message));
+}
+
+/** Pure: the ledger is the truth of every booking; one it lost (released or expired) is released here too. */
+export function reconcile(state: CaseState, ledger: (key: string) => LedgerStatus): CaseState {
+  const observed = (item: Booking): Booking['status'] => {
+    const status = ledger(item.key);
+    if (item.status === 'released' || status === undefined) return item.status;
+    return status === 'expired' ? 'released' : status;
+  };
+  return { ...state, bookings: state.bookings.map(item => ({ ...item, status: observed(item) })) };
 }

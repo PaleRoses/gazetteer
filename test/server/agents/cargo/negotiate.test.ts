@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Commitments, Offer, RecoveryMessage } from '../../../../src/core/recovery';
-import { hear, negotiate, openCase, settle, type CaseState, type Decision } from '../../../../src/server/agents/cargo/negotiate';
+import { hear, negotiate, openCase, reconcile, settle, type CaseState, type Decision, type LedgerAction, type LedgerStatus } from '../../../../src/server/agents/cargo/negotiate';
 
 const now = '2026-10-31T14:00:00.000Z';
 const later = '2026-10-31T23:00:00.000Z';
@@ -22,16 +22,23 @@ const offered = (offer: Offer): RecoveryMessage =>
 const withdrawn = (offerId: string): RecoveryMessage =>
   ({ id: `msg-withdraw-${offerId}`, kind: 'recovery.withdraw', at: now, caseId: 'case-1', author: haulier, offerId, reason: 'driver unavailable', answers: [`msg-${offerId}`], summary: `Withdrawn ${offerId}` });
 
-/** Runs the negotiator to quiet against an ideal ledger, the way the actor's cycle does. */
-const runToQuiet = (start: CaseState): Readonly<{ state: CaseState; messages: readonly RecoveryMessage[]; keys: readonly string[] }> => {
-  const loop = (state: CaseState, messages: readonly RecoveryMessage[], keys: readonly string[], left: number): ReturnType<typeof runToQuiet> => {
+type Ledger = ReadonlyMap<string, LedgerStatus>;
+/** The providers, as the haulier does it: each writes the ledger when it hears the hold, confirm or release. */
+const providersHear = (ledger: Ledger, actions: readonly LedgerAction[]): Ledger =>
+  new Map([...ledger, ...actions.map(action => [action.key, action.kind === 'hold' ? 'held' : action.kind === 'confirm' ? 'confirmed' : 'released'] as const)]);
+type Run = Readonly<{ state: CaseState; messages: readonly RecoveryMessage[]; keys: readonly string[]; ledger: Ledger }>;
+/** Runs the actor's cycle to quiet: negotiate, post, the providers write the ledger, the case reads it back. */
+const runToQuiet = (start: CaseState, initial: Ledger = new Map()): Run => {
+  const loop = (state: CaseState, messages: readonly RecoveryMessage[], keys: readonly string[], ledger: Ledger, left: number): Run => {
     const decided: Decision = negotiate(state, now);
-    const settled = settle(decided.state, decided.actions.map(action => ({ action, ok: true })), now);
+    const settled = settle(decided.state, decided.actions, now);
+    const next = providersHear(ledger, decided.actions);
+    const read = reconcile(settled.state, key => next.get(key));
     const all = [...messages, ...decided.messages, ...settled.messages];
     const nextKeys = [...keys, ...decided.actions.map(action => `${action.kind}:${action.key}`)];
-    return decided.actions.length === 0 && decided.messages.length === 0 || left === 0 ? { state: settled.state, messages: all, keys: nextKeys } : loop(settled.state, all, nextKeys, left - 1);
+    return decided.actions.length === 0 && decided.messages.length === 0 || left === 0 ? { state: read, messages: all, keys: nextKeys, ledger: next } : loop(read, all, nextKeys, next, left - 1);
   };
-  return loop(start, [], [], 10);
+  return loop(start, [], [], initial, 10);
 };
 const kinds = (messages: readonly RecoveryMessage[]) => messages.map(message => message.kind);
 
@@ -64,13 +71,13 @@ describe('the deterministic cargo negotiator', () => {
 
   test('a withdrawn truck is recovered with the next truck and longer storage, and the confirmed unload is never released', () => {
     const asked = negotiate(opened, now).state;
-    const confirmed = runToQuiet(hear(asked, [offered(unload), offered(plug), offered(truck17), offered(truck1930)])).state;
-    const lost = negotiate(hear(confirmed, [withdrawn('truck-1930')]), now);
+    const confirmed = runToQuiet(hear(asked, [offered(unload), offered(plug), offered(truck17), offered(truck1930)]));
+    const lost = negotiate(hear(confirmed.state, [withdrawn('truck-1930')]), now);
     expect(lost.actions).toEqual([{ kind: 'release', key: 'case-1:truck-1930', offerId: 'truck-1930' }]);
     expect(lost.messages.find(message => message.kind === 'recovery.request')).toMatchObject({ to: haulier, service: 'truck' });
-    const afterLoss = settle(lost.state, lost.actions.map(action => ({ action, ok: true })), now).state;
+    const afterLoss = settle(lost.state, lost.actions, now).state;
 
-    const recovered = runToQuiet(hear(afterLoss, [offered(truck21), offered(longPlug)]));
+    const recovered = runToQuiet(hear(afterLoss, [offered(truck21), offered(longPlug)]), providersHear(confirmed.ledger, lost.actions));
     const statuses = Object.fromEntries(recovered.state.bookings.map(item => [item.offerId, item.status]));
     expect(statuses).toEqual({ 'unload-18': 'confirmed', 'truck-1930': 'released', 'reefer-18-22': 'confirmed', 'truck-21': 'confirmed', 'reefer-18-20': 'released' });
     expect(recovered.keys.some(key => key === 'release:case-1:unload-18' || key === 'hold:case-1:unload-18')).toBe(false);
@@ -86,11 +93,20 @@ describe('the deterministic cargo negotiator', () => {
     expect(before.actions.map(action => action.key)).toEqual(['case-1:unload-18', 'case-1:reefer-18-20', 'case-1:truck-1930']);
   });
 
-  test('a failed hold is not recorded, and the next cycle asks the ledger again with the same key', () => {
+  test('nothing is confirmed until the ledger shows every hold of the plan', () => {
     const asked = negotiate(opened, now).state;
     const ready = negotiate(hear(asked, [offered(unload), offered(plug), offered(truck1930)]), now);
-    const failed = settle(ready.state, ready.actions.map(action => ({ action, ok: action.offerId !== 'truck-1930' })), now);
-    expect(failed.state.bookings.map(item => item.offerId)).toEqual(['unload-18', 'reefer-18-20']);
-    expect(negotiate(failed.state, now).actions).toEqual([expect.objectContaining({ kind: 'hold', key: 'case-1:truck-1930' })]);
+    const posted = settle(ready.state, ready.actions, now).state;
+    const partly = reconcile(posted, key => key === 'case-1:truck-1930' ? undefined : 'held');
+    expect(partly.bookings.map(item => [item.offerId, item.status])).toEqual([['unload-18', 'held'], ['reefer-18-20', 'held'], ['truck-1930', 'requested']]);
+    expect(negotiate(partly, now).actions).toEqual([]);
+    expect(negotiate(reconcile(partly, () => 'held'), now).actions.map(action => action.kind)).toEqual(['confirm', 'confirm', 'confirm']);
+  });
+  test('a hold the ledger lets expire is released in the case, never confirmed', () => {
+    const asked = negotiate(opened, now).state;
+    const ready = negotiate(hear(asked, [offered(unload), offered(plug), offered(truck1930)]), now);
+    const expired = reconcile(settle(ready.state, ready.actions, now).state, () => 'expired');
+    expect(expired.bookings.every(item => item.status === 'released')).toBe(true);
+    expect(negotiate(expired, now).actions.some(action => action.kind === 'confirm')).toBe(false);
   });
 });
