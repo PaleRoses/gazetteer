@@ -1,0 +1,287 @@
+{
+ "source": "https://meri.digitraffic.fi/api/ais/v1/locations",
+ "licence": "Fintraffic open data, CC BY 4.0",
+ "fetchedAt": "2026-10-31T19:44:28Z",
+ "dataUpdatedTime": "2026-10-31T19:44:27Z",
+ "totalFeatures": 617,
+ "selection": "6 under way 10-25 kn, 3 moored, 3 at anchor; verbatim features",
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "mmsi": 266314000,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     18.68816,
+     59.577458
+    ]
+   },
+   "properties": {
+    "mmsi": 266314000,
+    "sog": 10.3,
+    "cog": 67.6,
+    "navStat": 0,
+    "rot": 15,
+    "posAcc": true,
+    "raim": false,
+    "heading": 67,
+    "timestamp": 17,
+    "timestampExternal": 1793475857522
+   }
+  },
+  {
+   "mmsi": 376686000,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     28.611028,
+     60.012382
+    ]
+   },
+   "properties": {
+    "mmsi": 376686000,
+    "sog": 10.5,
+    "cog": 11.4,
+    "navStat": 0,
+    "rot": 0,
+    "posAcc": false,
+    "raim": false,
+    "heading": 10,
+    "timestamp": 36,
+    "timestampExternal": 1793475858784
+   }
+  },
+  {
+   "mmsi": 241849000,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     20.605752,
+     58.169555
+    ]
+   },
+   "properties": {
+    "mmsi": 241849000,
+    "sog": 12.6,
+    "cog": 33.0,
+    "navStat": 0,
+    "rot": 0,
+    "posAcc": true,
+    "raim": false,
+    "heading": 33,
+    "timestamp": 12,
+    "timestampExternal": 1793475853165
+   }
+  },
+  {
+   "mmsi": 305806000,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     17.336868,
+     60.736528
+    ]
+   },
+   "properties": {
+    "mmsi": 305806000,
+    "sog": 10.4,
+    "cog": 58.6,
+    "navStat": 0,
+    "rot": 26,
+    "posAcc": false,
+    "raim": false,
+    "heading": 74,
+    "timestamp": 20,
+    "timestampExternal": 1793475861642
+   }
+  },
+  {
+   "mmsi": 249242000,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     21.37686,
+     58.829562
+    ]
+   },
+   "properties": {
+    "mmsi": 249242000,
+    "sog": 12.6,
+    "cog": 37.2,
+    "navStat": 0,
+    "rot": 0,
+    "posAcc": false,
+    "raim": false,
+    "heading": 37,
+    "timestamp": 17,
+    "timestampExternal": 1793475856733
+   }
+  },
+  {
+   "mmsi": 273251360,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     21.29775,
+     58.7191
+    ]
+   },
+   "properties": {
+    "mmsi": 273251360,
+    "sog": 13.0,
+    "cog": 192.8,
+    "navStat": 0,
+    "rot": 0,
+    "posAcc": false,
+    "raim": false,
+    "heading": 192,
+    "timestamp": 60,
+    "timestampExternal": 1793475669967
+   }
+  },
+  {
+   "mmsi": 230098780,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     21.572155,
+     63.08112
+    ]
+   },
+   "properties": {
+    "mmsi": 230098780,
+    "sog": 0.0,
+    "cog": 165.8,
+    "navStat": 5,
+    "rot": 0,
+    "posAcc": true,
+    "raim": false,
+    "heading": 205,
+    "timestamp": 59,
+    "timestampExternal": 1793475839573
+   }
+  },
+  {
+   "mmsi": 230980380,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.42648,
+     65.005237
+    ]
+   },
+   "properties": {
+    "mmsi": 230980380,
+    "sog": 0.0,
+    "cog": 348.0,
+    "navStat": 5,
+    "rot": 0,
+    "posAcc": true,
+    "raim": false,
+    "heading": 49,
+    "timestamp": 36,
+    "timestampExternal": 1793475816488
+   }
+  },
+  {
+   "mmsi": 230961000,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     21.447925,
+     61.131073
+    ]
+   },
+   "properties": {
+    "mmsi": 230961000,
+    "sog": 0.0,
+    "cog": 360.0,
+    "navStat": 5,
+    "rot": 0,
+    "posAcc": true,
+    "raim": true,
+    "heading": 32,
+    "timestamp": 14,
+    "timestampExternal": 1793475854737
+   }
+  },
+  {
+   "mmsi": 538010578,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     26.120198,
+     59.912293
+    ]
+   },
+   "properties": {
+    "mmsi": 538010578,
+    "sog": 0.0,
+    "cog": 280.3,
+    "navStat": 1,
+    "rot": 0,
+    "posAcc": true,
+    "raim": false,
+    "heading": 45,
+    "timestamp": 10,
+    "timestampExternal": 1793475733537
+   }
+  },
+  {
+   "mmsi": 305036000,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     26.067475,
+     59.877118
+    ]
+   },
+   "properties": {
+    "mmsi": 305036000,
+    "sog": 0.1,
+    "cog": 108.0,
+    "navStat": 1,
+    "rot": 0,
+    "posAcc": true,
+    "raim": false,
+    "heading": 63,
+    "timestamp": 6,
+    "timestampExternal": 1793475668635
+   }
+  },
+  {
+   "mmsi": 636013409,
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.707783,
+     59.83467
+    ]
+   },
+   "properties": {
+    "mmsi": 636013409,
+    "sog": 0.0,
+    "cog": 90.2,
+    "navStat": 1,
+    "rot": 0,
+    "posAcc": false,
+    "raim": false,
+    "heading": 73,
+    "timestamp": 22,
+    "timestampExternal": 1793475741778
+   }
+  }
+ ]
+}

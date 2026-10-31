@@ -1,15 +1,20 @@
 import { assessDisruption, ports } from '../../domain';
-import type { Risk, Shipment } from '../../shared';
+import type { Evidence, Risk, Shipment } from '../../shared';
+import type { Signal } from '../telemetry/watcher';
+import type { Telemetry } from '../telemetry/telemetry';
 import type { Assessment } from './schema';
 import type { AssessableNotice } from './exposure';
 
 export type Method = 'ai-assessed' | 'deterministic-fallback';
+export type Basis = 'port-notice' | 'live-telemetry';
 export type AssessmentRecord = Readonly<{
-  noticeId: string; method: Method; model: string | null; assessedAt: string; affected: boolean;
+  noticeId: string; basis?: Basis; method: Method; model: string | null; assessedAt: string; affected: boolean;
   delayHours: Readonly<{ low: number; likely: number; high: number }>; confidence: number | null;
   rationale: string; citedEvidence: readonly string[]; fallbackReason: string | null;
 }>;
-export type AssessedShipment = Shipment & Readonly<{ assessments?: readonly AssessmentRecord[] }>;
+export type AssessedShipment = Shipment & Readonly<{ assessments?: readonly AssessmentRecord[]; telemetry?: Telemetry; signals?: readonly Signal[] }>;
+/** What an assessment is about: a port notice or a live-telemetry situation. Live evidence is not a simulated `Evidence`, so it travels as `signals`. */
+export type Subject = Readonly<{ id: string; basis: Basis; label: string; evidence: readonly Evidence[] }>;
 export type Provenanced = Readonly<{ assessment: Assessment; model: string; assessedAt: string }>;
 
 const afterHours = (at: string, hours: number): string => new Date(Date.parse(at) + hours * 3_600_000).toISOString();
@@ -18,15 +23,21 @@ const worse = (a: Risk, b: Risk): Risk => severity[a] >= severity[b] ? a : b;
 const portName = (id: string): string => ports.find(port => port.id === id)?.name ?? id;
 const record = (shipment: AssessedShipment, entry: AssessmentRecord): readonly AssessmentRecord[] => [...(shipment.assessments ?? []), entry];
 
-/** Pure and idempotent: a notice id already applied returns the very same shipment. */
-export function applyAssessment(shipment: AssessedShipment, notice: AssessableNotice, { assessment, model, assessedAt }: Provenanced): AssessedShipment {
-  if (shipment.appliedDisruptions.includes(notice.id)) return shipment;
+export const noticeSubject = (notice: AssessableNotice): Subject =>
+  ({ id: notice.id, basis: 'port-notice', label: `${portName(notice.portId)} notice`, evidence: [notice.evidence] });
+
+export const applyAssessment = (shipment: AssessedShipment, notice: AssessableNotice, provenanced: Provenanced): AssessedShipment =>
+  applySubject(shipment, noticeSubject(notice), provenanced);
+
+/** Pure and idempotent: a subject id already applied returns the very same shipment. */
+export function applySubject(shipment: AssessedShipment, subject: Subject, { assessment, model, assessedAt }: Provenanced): AssessedShipment {
+  if (shipment.appliedDisruptions.includes(subject.id)) return shipment;
   const entry: AssessmentRecord = {
-    noticeId: notice.id, method: 'ai-assessed', model, assessedAt, affected: assessment.affected, delayHours: assessment.delayHours,
+    noticeId: subject.id, basis: subject.basis, method: 'ai-assessed', model, assessedAt, affected: assessment.affected, delayHours: assessment.delayHours,
     confidence: assessment.confidence, rationale: assessment.rationale, citedEvidence: assessment.citedEvidence, fallbackReason: null,
   };
-  const settled = { appliedDisruptions: [...shipment.appliedDisruptions, notice.id], assessments: record(shipment, entry) };
-  const label = `${portName(notice.portId)} notice assessed by ${model}`;
+  const settled = { appliedDisruptions: [...shipment.appliedDisruptions, subject.id], assessments: record(shipment, entry) };
+  const label = `${subject.label} assessed by ${model}`;
   if (!assessment.affected) return { ...shipment, ...settled, change: `${label}: no change to the arrival estimate. ${assessment.rationale}` };
   const { low, likely, high } = assessment.delayHours;
   const delayHours = shipment.delayHours + likely;
@@ -35,7 +46,7 @@ export function applyAssessment(shipment: AssessedShipment, notice: AssessableNo
     change: `${label}: +${likely}h likely (range ${low}-${high}h, confidence ${Math.round(assessment.confidence * 100)}%). ${assessment.rationale}`,
     action: assessment.action ?? shipment.action,
     milestones: shipment.milestones.map(milestone => milestone.status === 'complete' ? milestone : { ...milestone, at: afterHours(milestone.at, likely) }),
-    evidence: [...shipment.evidence, ...(shipment.evidence.some(item => item.id === notice.evidence.id) ? [] : [notice.evidence])],
+    evidence: [...shipment.evidence, ...subject.evidence.filter(item => !shipment.evidence.some(known => known.id === item.id))],
   };
 }
 
