@@ -6,15 +6,15 @@ import { terminalQuote } from '../../../core/services';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/types';
 import { ledgerAt } from '../../booking/ledger';
 import { postBoard, readBoard } from '../../relay/board';
-import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } from '../../relay/client';
-import { connect } from '../../relay/connect';
+import type { RelayIdentity } from '../../relay/client';
+import { joinRelay } from '../../relay/connect';
 import { drainInbox, emptyInbox, mergeInbox, type Inbox } from '../../relay/inbox';
 import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
 import { checkIntervalMs } from '../alarm';
 import { emptyTerminalMemory, hear, type TerminalContext, type TerminalMemory } from './terminal';
 
 type DeskState = Readonly<{
-  city: PortId; workspaceId: string; relay: RelayIdentity; ready: boolean;
+  city: PortId; workspaceId: string; relay: RelayIdentity | null; ready: boolean;
   /** The ledger file and act 2's anchor on the scenario clock, given by the server: the world's quote decides every window and price from them. */
   bookingsPath: string; anchor: string;
   memory: TerminalMemory;
@@ -49,16 +49,19 @@ export class TerminalDesk extends Actor {
   }
 
   async initialize(workspaceId: string, city: PortId, workspaceKey: string, createChannel: boolean, bookingsPath: string, anchor: string): Promise<RelayOutcome<null>> {
-    if (this.state?.ready) { this.state = { ...this.state, anchor }; return relaySuccess(null); }
+    if (this.state) { this.state = { ...this.state, anchor }; return relaySuccess(null); }
     await this.scheduleCheck();
-    if (!this.state) {
-      const registration = await attemptRelay(() => registerParticipant(workspaceKey, this.id, relayChannel(workspaceId)), 'Agent Relay registration is unavailable. Retry initialization.');
-      if (registration.status === 'unavailable') return registration;
-      this.state = { city, workspaceId, relay: registration.value, ready: false, bookingsPath, anchor, memory: emptyTerminalMemory, inbox: emptyInbox, synced: false, outbox: [] };
-    }
-    const connection = await connect(this.state, createChannel);
-    if (connection.status === 'unavailable') return connection;
-    this.state = { ...this.state, ready: true };
+    this.state = { city, workspaceId, relay: null, ready: false, bookingsPath, anchor, memory: emptyTerminalMemory, inbox: emptyInbox, synced: false, outbox: [] };
+    return relaySuccess(null);
+  }
+
+  /** Relay membership, off the readiness path: the server calls this in the background and retries it with backoff. Registered once, remembered at once. */
+  async join(workspaceId: string, workspaceKey: string, createChannel: boolean): Promise<RelayOutcome<null>> {
+    if (!this.state) return { status: 'unavailable', message: 'Not initialized.' };
+    if (this.state.ready) return relaySuccess(null);
+    const member = await joinRelay(this.state, { name: this.id, workspaceId, workspaceKey, createChannel }, relay => { this.state = this.state && { ...this.state, relay }; });
+    if (member.status === 'unavailable') return member;
+    this.state = this.state && { ...this.state, relay: member.value, ready: true };
     return relaySuccess(null);
   }
 
@@ -73,7 +76,7 @@ export class TerminalDesk extends Actor {
     if (!this.state) return { status: 'unavailable', message: 'The terminal desk has not been initialized.' };
     const committed = this.state;
     const heard = committed.inbox.board;
-    const history = committed.synced ? null : await readBoard(committed.relay, null);
+    const history = committed.synced || !committed.ready || !committed.relay ? null : await readBoard(committed.relay, null);
     const fromRelay = history?.status === 'ok' ? history.value.messages : [];
     const messages = [...new Map([...fromRelay, ...heard].map(message => [message.id, message] as const)).values()].filter(isRecovery);
     const decided = hear(contextOf(committed), committed.memory, messages);
@@ -87,21 +90,21 @@ export class TerminalDesk extends Actor {
 
   /** What this desk has decided that Relay has not acknowledged yet; the server echoes it at once and writes it to Relay itself. */
   async unpublished(): Promise<Outgoing<Disruption> | null> {
-    return this.state ? { relay: this.state.relay, board: this.state.outbox, disruptions: [] } : null;
+    return this.state ? { relay: this.state.ready ? this.state.relay : null, board: this.state.outbox, disruptions: [] } : null;
   }
 
   /** Relay acknowledged these board posts: they leave the outbox. */
   async acknowledge(sent: Readonly<{ board: readonly string[]; disruptions: readonly string[] }>): Promise<void> {
-    if (this.state) this.state = { ...this.state, ready: true, outbox: without(this.state.outbox, sent.board) };
+    if (this.state) this.state = { ...this.state, outbox: without(this.state.outbox, sent.board) };
   }
 
   /** The alarm's own write path, for when no server is driving: the same steps the server performs, through the same `transmit`. */
   async publish(): Promise<RelayOutcome<null>> {
     const outgoing = await this.unpublished();
     if (!outgoing || !this.state) return { status: 'unavailable', message: 'The terminal desk has not been initialized.' };
-    const connection = await connect(this.state, false);
-    if (connection.status === 'unavailable') return connection;
-    const sent = await transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) });
+    const { relay } = outgoing;
+    if (!relay) return { status: 'unavailable', message: 'Not yet a member of the Relay channel.' };
+    const sent = await transmit(outgoing, { post: message => postBoard(relay, message), publish: () => Promise.resolve(relaySuccess(null)) });
     await this.acknowledge({ board: sent.board, disruptions: [] });
     return sent.failure ? { status: 'unavailable', message: sent.failure } : relaySuccess(null);
   }

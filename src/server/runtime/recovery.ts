@@ -13,10 +13,10 @@ import type { Outgoing, Transmitted } from '../relay/outbox';
 import { createDelivery } from './delivery';
 import { createCoalescer } from './coalesce';
 import { haulierStub, type HaulierClient } from './recovery-haulier';
-import { createStartup, type Startup } from './startup';
+import { createStartup, type Startup, type StartupTask } from './startup';
 
 /** Act 2's runtime: the cargo agent, Rotterdam's terminal desk and its haulier, started beside act 1's actors and routed the recovery.* messages they answer. */
-type Common = Pick<CargoAgent, 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
+type Common = Pick<CargoAgent, 'join' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
 export type CargoClient = Common & Pick<CargoAgent, 'initialize' | 'snapshot'>;
 export type TerminalClient = Common & Pick<TerminalDesk, 'initialize'>;
 export type Clients = Readonly<{
@@ -25,7 +25,7 @@ export type Clients = Readonly<{
   haulier: (workspaceId: string, city: PortId) => HaulierClient;
 }>;
 
-const common = [{ name: 'check', result: 'value' }, { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' }] as const;
+const common = [{ name: 'join', result: 'value' }, { name: 'check', result: 'value' }, { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' }] as const;
 const cargoMethods = [{ name: 'initialize', result: 'value' }, { name: 'snapshot', result: 'value' }, ...common] satisfies readonly (ActorRpcMethod & { name: keyof CargoClient })[];
 const terminalMethods = [{ name: 'initialize', result: 'value' }, ...common] satisfies readonly (ActorRpcMethod & { name: keyof TerminalClient })[];
 
@@ -134,7 +134,10 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
 
   const startup: Startup = createStartup({
     limit,
-    tasksOf: workspaceId => bringUp(workspaceId).map(member => ({ key: member.key, run: async () => (await member.initialize()).status === 'ok' })),
+    tasksOf: workspaceId => bringUp(workspaceId).map((member): StartupTask => ({
+      key: member.key, run: async () => (await member.initialize()).status === 'ok',
+      follow: async () => (await member.client.join(workspaceId, deps.workspaceKey, false)).status === 'ok',
+    })),
     onReady: (workspaceId, key) => {
       void membersOf(workspaceId).find(member => member.key === key)?.client.resume().catch(() => undefined);
       void deliverTo(workspaceId, key);

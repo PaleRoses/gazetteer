@@ -6,8 +6,8 @@ import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/
 import { phraseFromEnv } from '../../assessment/mind';
 import { ledgerAt } from '../../booking/ledger';
 import { postBoard, readBoard } from '../../relay/board';
-import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } from '../../relay/client';
-import { connect } from '../../relay/connect';
+import type { RelayIdentity } from '../../relay/client';
+import { joinRelay } from '../../relay/connect';
 import { drainInbox, emptyInbox, mergeInbox, type Inbox } from '../../relay/inbox';
 import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
 import { checkIntervalMs } from '../alarm';
@@ -16,7 +16,7 @@ import { hear, openCase, reconcile, type Booking, type CaseState } from './negot
 import { wordPlans } from './voice.js';
 
 type CargoState = Readonly<{
-  workspaceId: string; relay: RelayIdentity; ready: boolean;
+  workspaceId: string; relay: RelayIdentity | null; ready: boolean;
   /** The ledger file, given by the server at initialization; the cargo agent only reads it, the providers write it. */
   bookingsPath: string;
   /** The commitments and the whole case: durable, so a restarted agent resumes mid-negotiation and re-decides the same ids and keys. */
@@ -58,19 +58,22 @@ export class CargoAgent extends Actor {
 
   /** Opens the case once; a second call (a restart, a replayed request) keeps the persisted case and its commitments as they are. */
   async initialize(workspaceId: string, workspaceKey: string, bookingsPath: string, caseId: string, vessel: string, commitments: Commitments): Promise<RelayOutcome<null>> {
-    if (this.state?.ready) return relaySuccess(null);
+    if (this.state) return relaySuccess(null);
     await this.scheduleCheck();
-    if (!this.state) {
-      const registration = await attemptRelay(() => registerParticipant(workspaceKey, this.id, relayChannel(workspaceId)), 'Agent Relay registration is unavailable. Retry initialization.');
-      if (registration.status === 'unavailable') return registration;
-      this.state = {
-        workspaceId, relay: registration.value, ready: false, bookingsPath, recovery: openCase(caseId, { id: this.id, vessel }, commitments),
+    this.state = {
+        workspaceId, relay: null, ready: false, bookingsPath, recovery: openCase(caseId, { id: this.id, vessel }, commitments),
         inbox: emptyInbox, synced: false, outbox: [],
       };
-    }
-    const connection = await connect(this.state, false);
-    if (connection.status === 'unavailable') return connection;
-    this.state = { ...this.state, ready: true };
+    return relaySuccess(null);
+  }
+
+  /** Relay membership, off the readiness path: the server calls this in the background and retries it with backoff. Registered once, remembered at once. */
+  async join(workspaceId: string, workspaceKey: string, createChannel: boolean): Promise<RelayOutcome<null>> {
+    if (!this.state) return { status: 'unavailable', message: 'Not initialized.' };
+    if (this.state.ready) return relaySuccess(null);
+    const member = await joinRelay(this.state, { name: this.id, workspaceId, workspaceKey, createChannel }, relay => { this.state = this.state && { ...this.state, relay }; });
+    if (member.status === 'unavailable') return member;
+    this.state = this.state && { ...this.state, relay: member.value, ready: true };
     return relaySuccess(null);
   }
 
@@ -85,7 +88,8 @@ export class CargoAgent extends Actor {
     if (!this.state) return { status: 'unavailable', message: 'The cargo agent has not been initialized.' };
     const committed = this.state;
     const heard = committed.inbox.board;
-    const read = committed.synced ? relaySuccess({ messages: heard }) : await readBoard(committed.relay, null);
+    const member = committed.ready ? committed.relay : null;
+    const read = committed.synced || !member ? relaySuccess({ messages: heard }) : await readBoard(member, null);
     if (read.status === 'unavailable') return read;
     const messages = [...new Map([...read.value.messages, ...heard].map(message => [message.id, message] as const)).values()].filter(isRecovery);
     const ledger = ledgerAt(committed.bookingsPath);
@@ -94,7 +98,7 @@ export class CargoAgent extends Actor {
     const voiced = await wordPlans(done.state, done.messages, phrase, committed.mind ?? null);
     const latest = this.state ?? committed;
     this.state = {
-      ...latest, recovery: done.state, mind: voiced.session, outbox: enqueue(latest.outbox, voiced.messages), synced: true,
+      ...latest, recovery: done.state, mind: voiced.session, outbox: enqueue(latest.outbox, voiced.messages), synced: committed.synced || member !== null,
       inbox: drainInbox(latest.inbox, { board: heard, disruptions: [] }),
     };
     return relaySuccess(null);
@@ -109,21 +113,21 @@ export class CargoAgent extends Actor {
 
   /** What this cargo agent has decided that Relay has not acknowledged yet; the server echoes it at once and writes it to Relay itself. */
   async unpublished(): Promise<Outgoing<Disruption> | null> {
-    return this.state ? { relay: this.state.relay, board: this.state.outbox, disruptions: [] } : null;
+    return this.state ? { relay: this.state.ready ? this.state.relay : null, board: this.state.outbox, disruptions: [] } : null;
   }
 
   /** Relay acknowledged these board posts: they leave the outbox. */
   async acknowledge(sent: Readonly<{ board: readonly string[]; disruptions: readonly string[] }>): Promise<void> {
-    if (this.state) this.state = { ...this.state, ready: true, outbox: without(this.state.outbox, sent.board) };
+    if (this.state) this.state = { ...this.state, outbox: without(this.state.outbox, sent.board) };
   }
 
   /** The alarm's own write path, for when no server is driving: the same steps the server performs, through the same `transmit`. */
   async publish(): Promise<RelayOutcome<null>> {
     const outgoing = await this.unpublished();
     if (!outgoing || !this.state) return { status: 'unavailable', message: 'The cargo agent has not been initialized.' };
-    const connection = await connect(this.state, false);
-    if (connection.status === 'unavailable') return connection;
-    const sent = await transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) });
+    const { relay } = outgoing;
+    if (!relay) return { status: 'unavailable', message: 'Not yet a member of the Relay channel.' };
+    const sent = await transmit(outgoing, { post: message => postBoard(relay, message), publish: () => Promise.resolve(relaySuccess(null)) });
     await this.acknowledge({ board: sent.board, disruptions: [] });
     return sent.failure ? { status: 'unavailable', message: sent.failure } : relaySuccess(null);
   }

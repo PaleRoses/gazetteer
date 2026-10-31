@@ -141,8 +141,8 @@ export const absorb = (memory: TrafficMemory, messages: readonly BoardMessage[],
 });
 
 export type BoardIo = Readonly<{
-  read: (identity: RelayIdentity, cursor: RelayCursor) => Promise<RelayOutcome<BoardRead>>;
-  post: (identity: RelayIdentity, message: BoardMessage) => Promise<RelayOutcome<string>>;
+  read: (identity: RelayIdentity | null, cursor: RelayCursor) => Promise<RelayOutcome<BoardRead>>;
+  post: (identity: RelayIdentity | null, message: BoardMessage) => Promise<RelayOutcome<string>>;
 }>;
 
 export type Watch = Readonly<{ city: PortId; coordinates: LonLat; now: Date }>;
@@ -152,7 +152,7 @@ export type Watch = Readonly<{ city: PortId; coordinates: LonLat; now: Date }>;
  * heartbeat. Failures are data: an unreadable board leaves the memory untouched; a failed post keeps the old report, so the next
  * alarm derives the same id and Relay dedupes it.
  */
-export async function watchTraffic(io: BoardIo, identity: RelayIdentity, memory: TrafficMemory, watch: Watch): Promise<Readonly<{ memory: TrafficMemory; outcome: RelayOutcome<null>; decided: TrafficReport | null }>> {
+export async function watchTraffic(io: BoardIo, identity: RelayIdentity | null, memory: TrafficMemory, watch: Watch): Promise<Readonly<{ memory: TrafficMemory; outcome: RelayOutcome<null>; decided: TrafficReport | null }>> {
   const read = await io.read(identity, memory.cursor);
   if (read.status === 'unavailable') return { memory, outcome: read, decided: null };
   const absorbed = { ...absorb(memory, read.value.messages, watch.city), cursor: read.value.cursor };

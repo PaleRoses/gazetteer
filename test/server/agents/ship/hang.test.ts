@@ -10,8 +10,8 @@ import type { Disruption } from '../../../../src/core/types';
 import type { ShipmentAgent } from '../../../../src/server/agents/ship/agent';
 import { emptyInbox } from '../../../../src/server/relay/inbox';
 
-type ShipClient = Pick<ShipmentAgent, 'initialize' | 'deliver' | 'check' | 'snapshot'>;
-const methods = [{ name: 'initialize', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'snapshot', result: 'value' }] as const;
+type ShipClient = Pick<ShipmentAgent, 'initialize' | 'join' | 'deliver' | 'check' | 'snapshot'>;
+const methods = [{ name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'snapshot', result: 'value' }] as const;
 const disruption: Disruption = { id: 'hang-test-disruption', portId: 'singapore', delayHours: 36, evidence: { id: 'hang-test-disruption', source: 'simulation', title: 'Berth closure', detail: 'Synthetic.', observedAt: '2026-10-31T20:00:00.000Z' } };
 
 /** A Relay that accepts registration and joining, and can be made to answer reads never. */
@@ -52,6 +52,7 @@ test('with Relay hanging, a ship\'s check returns at once and applies the delive
     const ship = createActorStub<ShipClient>('ShipmentAgent', 'hang-test-ship', methods, transport);
     const seed = demoShipments(new Date('2026-10-31T12:00:00.000Z'))[0]!;
     expect(await ship.initialize('workspace', seed, 'workspace-key')).toEqual({ status: 'ok', value: null });
+    expect(await ship.join('workspace', 'workspace-key', false)).toEqual({ status: 'ok', value: null });
     relay.hang.on = true;
     await ship.deliver({ ...emptyInbox, disruptions: [disruption] });
     const began = performance.now();
