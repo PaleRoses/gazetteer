@@ -45,6 +45,8 @@ describe('what changed', () => {
     const after = dashboard('2026-10-31T12:01:00.000Z', shipments => shipments.map(shipment => shipment.id === 'gz-1042' ? { ...shipment, eta: '2026-12-01T00:00:00.000Z', risk: 'delayed' as const } : shipment));
     expect(changesBetween(before, after).map(change => `${change.id}:${change.kind}`).sort()).toEqual(['gz-1042:eta', 'gz-1042:risk']);
     expect(changesBetween(before, before)).toEqual([]);
+    const drifted = dashboard('2026-10-31T12:01:00.000Z', shipments => shipments.map(shipment => ({ ...shipment, eta: new Date(Date.parse(shipment.eta) + 900).toISOString() })));
+    expect(changesBetween(before, drifted)).toEqual([]);
     expect(changesBetween(null, after)).toEqual([]);
   });
 });

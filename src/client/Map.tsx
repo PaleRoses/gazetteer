@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import type { GeoJSONSource, Map as MapLibreMap, Marker, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
@@ -65,31 +65,30 @@ const decorate = (button: HTMLElement, view: VesselView, selected: boolean): voi
 
 const setLines = (map: MapLibreMap, id: string, data: GeoJSON.FeatureCollection): void => { (map.getSource(id) as GeoJSONSource | undefined)?.setData(data); };
 
-export function ShipmentMap({ dashboard, selected, focusId, onSelect }: Selection) {
-  const container = useRef<HTMLDivElement>(null);
-  const [ready, setReady] = useState<Readonly<{ lib: MapLibre; map: MapLibreMap }> | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const markers = useRef(new Map<string, Marker>());
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
-  const framed = useRef<string | undefined>(undefined);
+export function ShipmentMap(props: Selection) {
+  let container: HTMLDivElement | undefined;
+  const [ready, setReady] = createSignal<Readonly<{ lib: MapLibre; map: MapLibreMap }> | null>(null);
+  const [failed, setFailed] = createSignal(false);
+  const [now, setNow] = createSignal(Date.now());
+  const markers = new Map<string, Marker>();
+  let framed: string | undefined;
 
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), TICK_MS); return () => window.clearInterval(timer); }, []);
+  const tick = window.setInterval(() => setNow(Date.now()), TICK_MS);
+  onCleanup(() => window.clearInterval(tick));
 
-  useEffect(() => {
-    const host = container.current;
+  onMount(() => {
+    const host = container;
     if (!host) return;
     let disposed = false;
     let created: MapLibreMap | undefined;
-    const trackedMarkers = markers.current;
+    onCleanup(() => { disposed = true; markers.forEach(marker => marker.remove()); markers.clear(); created?.remove(); });
     void import('maplibre-gl').then(module => {
       if (disposed) return;
       const lib: MapLibre = 'default' in module ? (module as unknown as { default: MapLibre }).default : module;
       lib.setWorkerUrl(new URL(workerUrl, window.location.href).href);
       const map = new lib.Map({
         container: host, style: style(window.location.origin), center: [30, 24], zoom: 1.15, minZoom: 0.6, maxZoom: 7,
-        attributionControl: false, dragRotate: false, pitchWithRotate: false, cooperativeGestures: false,
+        attributionControl: false, dragRotate: false, pitchWithRotate: false,
       });
       created = map;
       map.touchZoomRotate.disableRotation();
@@ -99,58 +98,63 @@ export function ShipmentMap({ dashboard, selected, focusId, onSelect }: Selectio
       map.on('load', () => { addRouteLayers(map); if (!disposed) setReady({ lib, map }); });
       map.on('error', event => { if (!disposed && (event as { sourceId?: string }).sourceId === 'land') setFailed(true); });
     }).catch(() => { if (!disposed) setFailed(true); });
-    return () => { disposed = true; trackedMarkers.forEach(marker => marker.remove()); trackedMarkers.clear(); created?.remove(); setReady(null); };
-  }, []);
+  });
 
-  const views = useMemo(() => vesselViews(dashboard?.shipments ?? [], now), [dashboard, now]);
-  const selectedId = selected?.id;
+  const views = createMemo(() => vesselViews(props.dashboard?.shipments ?? [], now()));
+  const selectedId = () => props.selected?.id;
 
-  useEffect(() => {
-    if (!ready) return;
-    const { lib, map } = ready;
-    const layers = routeLayers(views, selectedId);
+  createEffect(() => {
+    const current = ready();
+    if (!current) return;
+    const { lib, map } = current;
+    const list = views();
+    const chosen = selectedId();
+    const layers = routeLayers(list, chosen);
     setLines(map, 'lanes', layers.lanes); setLines(map, 'sailed', layers.sailed); setLines(map, 'ahead', layers.ahead);
-    const known = markers.current;
-    const live = new Set(views.map(view => view.id));
-    known.forEach((marker, id) => { if (!live.has(id) && !id.startsWith('port:')) { marker.remove(); known.delete(id); } });
-    views.forEach(view => {
-      const existing = known.get(view.id);
-      const marker = existing ?? new lib.Marker({ element: vesselElement(id => onSelectRef.current(id), view), anchor: 'center' }).setLngLat([...view.position]).addTo(map);
-      if (!existing) known.set(view.id, marker);
+    const live = new Set(list.map(view => view.id));
+    markers.forEach((marker, id) => { if (!live.has(id) && !id.startsWith('port:')) { marker.remove(); markers.delete(id); } });
+    list.forEach(view => {
+      const existing = markers.get(view.id);
+      const marker = existing ?? new lib.Marker({ element: vesselElement(id => props.onSelect(id), view), anchor: 'center' }).setLngLat([...view.position]).addTo(map);
+      if (!existing) markers.set(view.id, marker);
       marker.setLngLat([...view.position]);
-      decorate(marker.getElement(), view, view.id === selectedId);
+      decorate(marker.getElement(), view, view.id === chosen);
     });
-  }, [ready, views, selectedId]);
+  });
 
-  useEffect(() => {
-    if (!ready || !dashboard) return;
-    const { lib, map } = ready;
+  createEffect(() => {
+    const current = ready();
+    const dashboard = props.dashboard;
+    if (!current || !dashboard) return;
+    const { lib, map } = current;
     dashboard.ports.forEach(port => {
       const key = `port:${port.id}`;
-      if (markers.current.has(key)) return;
+      if (markers.has(key)) return;
       const node = element('div', 'port-marker');
       node.append(element('span', 'port-dot'), element('span', 'port-label', port.name));
-      markers.current.set(key, new lib.Marker({ element: node, anchor: 'left', offset: [-4, 0] }).setLngLat([...port.coordinates] as [number, number]).addTo(map));
+      markers.set(key, new lib.Marker({ element: node, anchor: 'left', offset: [-4, 0] }).setLngLat([...port.coordinates] as [number, number]).addTo(map));
     });
-  }, [ready, dashboard]);
+  });
 
-  useEffect(() => {
-    if (!ready || !focusId || framed.current === focusId) return;
-    const view = views.find(item => item.id === focusId);
+  createEffect(() => {
+    const current = ready();
+    const focus = props.focusId;
+    if (!current || !focus || framed === focus) return;
+    const view = views().find(item => item.id === focus);
     const bounds = view && boundsOf(view.route);
     if (!bounds) return;
-    framed.current = focusId;
-    ready.map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: FRAME_PADDING, maxZoom: 4.2, duration: 900 });
-  }, [ready, focusId, views]);
+    framed = focus;
+    current.map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: FRAME_PADDING, maxZoom: 4.2, duration: 900 });
+  });
 
-  return <div className="map-canvas">
-    <div ref={container} className="map-gl" role="group" aria-label="Shipment map. Select a vessel with the markers or the shipment list." />
-    {failed && <p className="map-fallback" role="status">The map could not be drawn. The shipment list still shows every route and ETA.</p>}
-    <div className="map-legend" aria-hidden="true"><span><i className="legend-dot on-track" />On schedule</span><span><i className="legend-dot watch" />Watch</span><span><i className="legend-dot delayed" />Delayed</span></div>
+  return <div class="map-canvas">
+    <div ref={container} class="map-gl" role="group" aria-label="Shipment map. Select a vessel with the markers or the shipment list." />
+    <Show when={failed()}><p class="map-fallback" role="status">The map could not be drawn. The shipment list still shows every route and ETA.</p></Show>
+    <div class="map-legend" aria-hidden="true"><span><i class="legend-dot on-track" />On schedule</span><span><i class="legend-dot watch" />Watch</span><span><i class="legend-dot delayed" />Delayed</span></div>
   </div>;
 }
 
 const backdrop = new URL('./world-coastline.svg', import.meta.url).href;
 export function MapBackdrop() {
-  return <div className="map-canvas"><svg className="world-map" viewBox="0 30 1000 420" aria-hidden="true"><image href={backdrop} width="1000" height="500" /></svg></div>;
+  return <div class="map-canvas"><svg class="world-map" viewBox="0 30 1000 420" aria-hidden="true"><image href={backdrop} width="1000" height="500" /></svg></div>;
 }
