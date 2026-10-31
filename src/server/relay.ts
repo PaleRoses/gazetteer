@@ -36,9 +36,11 @@ const disruptionKinds: readonly unknown[] = ['gazetteer.simulated-disruption', '
 
 /** Two retries after the first try, 250 ms then 500 ms apart: a 503 storm costs three requests, not five with multi-second back-offs. */
 const retryPolicy = { maxRetries: 2, backoffMs: 250, backoffMultiplier: 2, jitter: true };
+/** `RELAY_BASE_URL` points the SDK at another Relay: a self-hosted one, or a local fake in tests. Unset, the SDK's default applies. */
+const relayOptions = () => ({ retryPolicy, ...(process.env.RELAY_BASE_URL ? { baseUrl: process.env.RELAY_BASE_URL } : {}) });
 
 export async function registerParticipant(workspaceKey: string, name: string, channel: string): Promise<RelayIdentity> {
-  const relay = new AgentRelay({ workspaceKey, retryPolicy });
+  const relay = new AgentRelay({ workspaceKey, ...relayOptions() });
   const registration = await relay.agents.register({ name: `${name}-${randomUUID().slice(0, 8)}`, type: 'agent' });
   return { token: registration.token, channel, agentId: registration.id, agentName: registration.name };
 }
@@ -51,7 +53,7 @@ type Assembler = Readonly<{ buildAgentClient?: (registration: Readonly<{ id: str
  * An SDK without that assembler falls back to `reconnect`.
  */
 export const connectParticipant = (identity: RelayIdentity): Promise<RelayAgentClient> => {
-  const relay = new AgentRelay({ agentToken: identity.token, retryPolicy });
+  const relay = new AgentRelay({ agentToken: identity.token, ...relayOptions() });
   const assemble = (relay as unknown as Assembler).buildAgentClient;
   return identity.agentId !== undefined && identity.agentName !== undefined && typeof assemble === 'function'
     ? Promise.resolve(assemble.call(relay, { id: identity.agentId, name: identity.agentName, token: identity.token }))
