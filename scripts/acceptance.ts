@@ -1,7 +1,7 @@
 // Automated run of the README demo journey against a running Gazetteer.
 //   bun scripts/acceptance.ts <origin> [--restart-cmd "<shell command>"] [--budget-eta 120] [--budget-board 120] [--budget-risk 120] [--budget-sse 30] [--budget-restart 240]
 // Prints a PASS/FAIL/SKIP table with measured times and exits non-zero on any FAIL. Tooling, not shipped code.
-import type { Dashboard, Shipment } from '../src/shared';
+import type { Dashboard, Shipment } from '../src/core/types';
 
 type Status = 'PASS' | 'FAIL' | 'SKIP';
 type Row = Readonly<{ id: string; name: string; status: Status; ms: number | null; budget: string; detail: string }>;

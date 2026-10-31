@@ -1,4 +1,4 @@
-import type { Disruption } from '../../../shared';
+import type { Disruption } from '../../../core/types';
 
 /**
  * A port's disruption queue. `pending` holds what arrived before the actor was registered with Relay: it needs no Relay to exist,

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Comment, Dashboard, Shipment, User, Workspace } from '../shared';
+import type { Comment, Dashboard, Shipment, User, Workspace } from '../core/types';
 
 const coordinate = z.tuple([z.number(), z.number()]);
 const portId = z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']);
@@ -29,7 +29,7 @@ export const invitationSchema = z.discriminatedUnion('delivery', [
 ]);
 export const membersSchema = z.object({ members: z.array(z.object({ id: z.string(), name: z.string(), email: z.string(), role: z.enum(['owner', 'member']) })) });
 export type Session = z.infer<typeof sessionSchema>;
-export type Member = z.infer<typeof membersSchema>['members'][number];
+type Member = z.infer<typeof membersSchema>['members'][number];
 export type Invitation = z.infer<typeof invitationSchema>;
 export type ApiResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: string; status: number }>;
 export async function request<T>(path: string, schema: z.ZodType<T>, body?: unknown, signal?: AbortSignal): Promise<ApiResult<T>> {

@@ -1,5 +1,5 @@
 import { createEffect, createSignal, on, onCleanup, type Accessor } from 'solid-js';
-import type { Dashboard } from '../shared';
+import type { Dashboard } from '../core/types';
 import { dashboardSchema, request } from './api';
 import { changesBetween, isCurrent, parseCommentEvent, parseDashboardEvent, type Change, type CommentEvent } from './feed';
 

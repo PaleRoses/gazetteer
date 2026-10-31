@@ -1,4 +1,4 @@
-import type { PortId } from '../../shared';
+import type { PortId } from '../../core/types';
 import { distanceToGeometryKm, nearestOnPath } from './geo';
 import type { LonLat, Notice, NoticeKind } from './notice';
 
@@ -8,7 +8,7 @@ export const radiusKm: Readonly<Record<NoticeKind, number>> = {
 };
 
 /** A notice with no feed-declared end stays relevant this long after it was last observed. */
-export const relevanceHours: Readonly<Record<NoticeKind, number>> = {
+const relevanceHours: Readonly<Record<NoticeKind, number>> = {
   cyclone: 48, flood: 72, volcano: 72, earthquake: 72, weather: 12,
 };
 

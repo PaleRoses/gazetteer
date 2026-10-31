@@ -1,6 +1,6 @@
 import type { Feature, FeatureCollection, LineString } from 'geojson';
-import type { Shipment } from '../shared';
-import { positionAlong, progressAt, splitAt, unwrap, voyageRoute, type LngLat, type Route } from '../sea-routes';
+import type { Shipment } from '../core/types';
+import { positionAlong, progressAt, splitAt, unwrap, voyageRoute, type LngLat, type Route } from '../core/routes';
 
 export type VesselView = Readonly<{
   id: string; vessel: string; risk: Shipment['risk']; position: LngLat; progress: number; route: Route; laneSource: 'sea-lane' | 'supplied';

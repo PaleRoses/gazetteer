@@ -3,7 +3,7 @@ import { render, Portal } from 'solid-js/web';
 import { Dialog, Menu, Tabs } from '@ark-ui/solid';
 import { Anchor, ArrowDownRight, ArrowRight, Check, ChevronDown, Compass, FlaskConical, Layers3, LogOut, MapPin, MessageSquare, Plus, Radio, Search, Send, Ship, TriangleAlert, Users, X } from 'lucide-solid';
 import { z } from 'zod';
-import type { Comment, Dashboard, Shipment, Workspace } from '../shared';
+import type { Comment, Dashboard, Shipment, Workspace } from '../core/types';
 import { commentsSchema, dashboardSchema, invitationSchema, membersSchema, request, sessionSchema, workspaceSchema, type Invitation, type Session } from './api';
 import { MapBackdrop, ShipmentMap } from './Map';
 import { mergeComment, type CommentEvent } from './feed';

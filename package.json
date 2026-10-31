@@ -3,15 +3,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/server/index.ts",
+    "dev": "bun --watch src/server/main.ts",
     "dev:ui": "vite --host 127.0.0.1",
     "build": "vite build",
-    "start": "bun src/server/index.ts",
+    "start": "bun src/server/main.ts",
     "check": "tsc --noEmit",
     "test": "bun test",
-    "test:runtime": "GAZETTEER_RUNTIME_INTEGRATION=1 bun test test/runtime.integration.test.ts",
-    "setup:relay": "bun src/server/setup-relay.ts",
-    "acceptance": "bun scripts/acceptance.ts"
+    "test:runtime": "GAZETTEER_RUNTIME_INTEGRATION=1 bun test test/server/runtime/monitoring.integration.test.ts",
+    "setup:relay": "bun scripts/setup-relay.ts",
+    "acceptance": "bun scripts/acceptance.ts",
+    "verify": "tsc --noEmit && knip && depcruise src && bun test && bun scripts/check-actors.ts && vite build"
   },
   "dependencies": {
     "@agent-relay/sdk": "15.0.1",
@@ -32,6 +33,8 @@
     "@types/bun": "^1.3.0",
     "@types/geojson": "^7946.0.16",
     "bun": "1.4.4",
+    "dependency-cruiser": "^18.7.0",
+    "knip": "^6.44.1",
     "searoute-ts": "^2.3.1",
     "typescript": "^5.9.3",
     "vite": "^6.4.1",

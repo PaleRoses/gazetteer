@@ -1,6 +1,6 @@
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import { lineString, point } from '@turf/helpers';
-import { distanceKm, routeLengthKm, type Route } from '../../sea-routes';
+import { distanceKm, routeLengthKm, type Route } from '../../core/routes';
 import { advanceTrack, currentLoitering, emptyTrack, gfwDefaults, isOpenGap, type GfwParameters, type PortState, type Track } from './gfw';
 import { navStatusLabels, type LonLat, type Telemetry } from './telemetry';
 
@@ -11,13 +11,13 @@ export const defaultThresholds: Thresholds = { ...gfwDefaults, offRouteKm: 50, s
 
 export type KnownPort = Readonly<{ name: string; coordinates: LonLat }>;
 export type Plan = Readonly<{ route: Route; eta: string; ports: readonly KnownPort[] }>;
-export type SignalKind = 'off-route' | 'slow-steaming' | 'stationary-outside-port' | 'ais-dark';
+type SignalKind = 'off-route' | 'slow-steaming' | 'stationary-outside-port' | 'ais-dark';
 export type Signal = Readonly<{
   id: string; kind: SignalKind; title: string; detail: string; observedAt: string;
   provenance: Telemetry['provenance']; provider: Telemetry['provider']; fetchedAt: string;
   measured: Readonly<Record<string, number | string | null>>; thresholds: Readonly<Record<string, number>>; telemetry: Telemetry;
 }>;
-export type Reading = Readonly<{
+type Reading = Readonly<{
   ageMinutes: number; offRouteKm: number | null; remainingKm: number | null; hoursToEta: number; impliedKnots: number | null;
   nearestPort: Readonly<{ name: string; km: number }> | null; portState: PortState | null; loiteringHours: number | null;
 }>;

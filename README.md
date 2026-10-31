@@ -47,13 +47,13 @@ There is no password reset, account email verification, membership removal, prod
 
 ## Ownership
 
-- `src/domain.ts`: pure, idempotent synthetic shipment impact and demo catalog.
-- `src/shared.ts`: shared domain values.
-- `src/server/actors.ts`: one persisted Terse actor per port/shipment, workspace-scoped; one-minute alarms.
-- `src/server/relay.ts`: actual Agent Relay SDK, channel publication and replay.
-- `src/server/monitoring.ts`: Terse local lifecycle and typed actor calls; no second actor implementation.
-- `src/server/access.ts`: SQLite accounts, hashed session/invitation tokens, owner/member checks and shared comments.
-- `src/server/http.ts`: validated HTTP requests, membership checks, origin protection, invitation delivery.
+- `src/core/demo.ts`: pure, idempotent synthetic shipment impact and demo catalog.
+- `src/core/types.ts`: shared domain values.
+- `src/server/agents/`: one persisted Terse actor per port/shipment, workspace-scoped; one-minute alarms.
+- `src/server/relay/`: actual Agent Relay SDK, channel publication and replay.
+- `src/server/runtime/monitoring.ts`: Terse local lifecycle and typed actor calls; no second actor implementation.
+- `src/server/access/access.ts`: SQLite accounts, hashed session/invitation tokens, owner/member checks and shared comments.
+- `src/server/http/api.ts`: validated HTTP requests, membership checks, origin protection, invitation delivery.
 - `src/client`: map, shipment details and shared-workspace UI.
 
 The port actor retains a disruption outbox; shipment actors replay Relay events through the pure assessment. Durable state lives under `DATA_DIR` (default `.data`). Keep that directory and `.env` across restarts; do not commit either. Startup fails explicitly if Relay is not configured.

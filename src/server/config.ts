@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
-export type MailConfiguration =
+type MailConfiguration =
   | Readonly<{ kind: 'manual' }>
   | Readonly<{ kind: 'resend'; key: string; from: string }>;
 
-export type StartupConfiguration = Readonly<{
+type StartupConfiguration = Readonly<{
   port: number;
   hostname: string;
   origin: string;

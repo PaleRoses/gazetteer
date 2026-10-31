@@ -1,5 +1,5 @@
 export type LonLat = readonly [number, number];
-export type TelemetryProvider = 'aisstream' | 'digitraffic' | 'simulation';
+type TelemetryProvider = 'aisstream' | 'digitraffic' | 'simulation';
 
 /** One AIS position report, normalised. `null` means the transponder reported "not available". */
 export type Telemetry = Readonly<{

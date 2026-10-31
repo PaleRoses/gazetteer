@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from
 import type { GeoJSONSource, Map as MapLibreMap, Marker, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
-import type { Dashboard, Shipment } from '../shared';
+import type { Dashboard, Shipment } from '../core/types';
 import { boundsOf, graticule, routeLayers, vesselViews, type VesselView } from './map-model';
 
 type MapLibre = typeof import('maplibre-gl');

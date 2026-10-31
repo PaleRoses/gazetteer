@@ -14,7 +14,7 @@ const feature = z.object({
     severitydata: z.object({ severitytext: z.string() }).optional(),
   }),
 });
-export const gdacsEnvelope = z.object({ features: z.array(z.unknown()) });
+const gdacsEnvelope = z.object({ features: z.array(z.unknown()) });
 
 /** GDACS timestamps are UTC without a zone designator. */
 const utc = (value: string): string => `${value}Z`;

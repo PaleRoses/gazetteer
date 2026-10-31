@@ -6,7 +6,7 @@ import { describeError, knownCog, knownSog, mmsiPattern, unavailable, type Telem
  * its example repository (github.com/aisstream/example) carries no licence, so none of its code is copied.
  * Limits that shape this module: 3 connections per account, 1 subscription update per second, 200 MMSI filters. One shared connection serves every ship.
  */
-export const aisstreamUrl = 'wss://stream.aisstream.io/v0/stream';
+const aisstreamUrl = 'wss://stream.aisstream.io/v0/stream';
 const resubscribeDelayMs = 1_100;
 const maxFilters = 200;
 

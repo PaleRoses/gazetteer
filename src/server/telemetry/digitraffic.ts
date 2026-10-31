@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { describeError, knownCog, knownSog, mmsiPattern, unavailable, type Telemetry, type TelemetryOutcome, type TelemetrySource } from './telemetry';
 
 /** Fintraffic Digitraffic marine AIS, open data (CC BY 4.0). https://www.digitraffic.fi/en/marine-traffic/ — keyless REST, Baltic coverage. */
-export const digitrafficLocationsUrl = 'https://meri.digitraffic.fi/api/ais/v1/locations';
+const digitrafficLocationsUrl = 'https://meri.digitraffic.fi/api/ais/v1/locations';
 const userAgent = 'gazetteer-hackathon';
 
 const featureSchema = z.object({
@@ -10,10 +10,10 @@ const featureSchema = z.object({
   geometry: z.object({ coordinates: z.tuple([z.number(), z.number()]) }),
   properties: z.object({ sog: z.number(), cog: z.number(), navStat: z.number().int(), timestampExternal: z.number() }),
 });
-export const locationsSchema = z.object({ features: z.array(featureSchema) });
-export type DigitrafficFeature = z.infer<typeof featureSchema>;
+const locationsSchema = z.object({ features: z.array(featureSchema) });
+type DigitrafficFeature = z.infer<typeof featureSchema>;
 
-export const toTelemetry = (feature: DigitrafficFeature, fetchedAt: string): Telemetry => ({
+const toTelemetry = (feature: DigitrafficFeature, fetchedAt: string): Telemetry => ({
   mmsi: String(feature.mmsi), position: feature.geometry.coordinates, sogKnots: knownSog(feature.properties.sog), cogDegrees: knownCog(feature.properties.cog),
   navStatus: feature.properties.navStat, observedAt: new Date(feature.properties.timestampExternal).toISOString(), provenance: 'live', provider: 'digitraffic', fetchedAt,
 });

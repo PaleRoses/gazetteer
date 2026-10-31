@@ -1,5 +1,5 @@
-import { assessDisruption, ports } from '../../domain';
-import type { Evidence, Risk, Shipment } from '../../shared';
+import { assessDisruption, ports } from '../../core/demo';
+import type { Evidence, Risk, Shipment } from '../../core/types';
 import type { Signal } from '../telemetry/watcher';
 import type { Telemetry } from '../telemetry/telemetry';
 import type { Assessment } from './schema';

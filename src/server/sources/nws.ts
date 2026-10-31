@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import type { PortId } from '../../shared';
+import type { PortId } from '../../core/types';
 import { getJson, type Fetcher } from './http';
 import { userAgent, type FetchResult, type Notice, type NoticeGeometry, type NoticeSeverity } from './notice';
 
 /** NWS forecast zones that contain a demo port. Verified against api.weather.gov/zones/forecast: PZZ655 is "Inner waters from Point Mugu to San Mateo Pt.", which holds San Pedro Bay; CAZ366 is the Los Angeles coast zone of /points/33.74,-118.26. */
-export const zonePorts: Readonly<Record<string, readonly PortId[]>> = { PZZ655: ['los-angeles'], CAZ366: ['los-angeles'] };
+const zonePorts: Readonly<Record<string, readonly PortId[]>> = { PZZ655: ['los-angeles'], CAZ366: ['los-angeles'] };
 
 const severities: Readonly<Record<string, NoticeSeverity>> = { Minor: 'minor', Moderate: 'moderate', Severe: 'severe', Extreme: 'extreme', Unknown: 'minor' };
 const ring = z.array(z.tuple([z.number(), z.number()]).rest(z.number()));
@@ -20,7 +20,7 @@ const feature = z.object({
     geocode: z.object({ UGC: z.array(z.string()) }), '@id': z.string().optional(),
   }),
 });
-export const nwsEnvelope = z.object({ features: z.array(z.unknown()) });
+const nwsEnvelope = z.object({ features: z.array(z.unknown()) });
 
 const squash = (text: string): string => text.replace(/\s+/g, ' ').trim();
 const clip = (text: string, limit: number): string => text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
@@ -59,7 +59,7 @@ export const normalizeNws = (raw: unknown, fetchedAt: string): readonly Notice[]
   }) : [];
 };
 
-export const nwsUrl = `https://api.weather.gov/alerts/active?zone=${Object.keys(zonePorts).join(',')}`;
+const nwsUrl = `https://api.weather.gov/alerts/active?zone=${Object.keys(zonePorts).join(',')}`;
 
 export const fetchNws = async (now: Date, fetcher: Fetcher = fetch, timeoutMs = 15_000): Promise<FetchResult> => {
   const response = await getJson('nws', nwsUrl, userAgent, fetcher, timeoutMs);

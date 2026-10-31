@@ -1,6 +1,6 @@
-import { ports } from '../../domain.js';
-import { positionAlong, progressAt, routeLengthKm, voyageRoute } from '../../sea-routes.js';
-import type { Shipment } from '../../shared.js';
+import { ports } from '../../core/demo.js';
+import { positionAlong, progressAt, routeLengthKm, voyageRoute } from '../../core/routes.js';
+import type { Shipment } from '../../core/types.js';
 import type { LonLat, Telemetry, TelemetrySource } from './telemetry';
 
 /**
@@ -65,7 +65,7 @@ export function simulate(shipment: Shipment, scenario: Scenario, now: string): T
   }
 }
 
-export const simulationKey = (shipmentId: string): string => `sim:${shipmentId}`;
+const simulationKey = (shipmentId: string): string => `sim:${shipmentId}`;
 
 /** A telemetry source for one shipment. It needs no network and cannot fail. */
 export const simulationSource = (shipment: Shipment, scenarios: Readonly<Record<string, Scenario>> = demoScenarios, clock: () => string = () => new Date().toISOString()): TelemetrySource =>
