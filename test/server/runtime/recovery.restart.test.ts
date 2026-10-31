@@ -57,7 +57,7 @@ test('the cargo agent restarted before it answers the offers it was just sent le
     return fresh.length;
   };
 
-  const session = async <A>(operation: (recovery: Recovery) => Promise<A>): Promise<A> => {
+  const session = async <A>(operation: (recovery: Recovery) => Promise<A>, probe = true): Promise<A> => {
     const runtime = await startLocalActors({ project, projectId: 'gazetteer-recovery', entrypoint: 'src/server/agents/index.ts', dataDir, apiKey: randomUUID(), quiet: true });
     try {
       const transport = createActorTransport({ projectId: runtime.connection.projectId, controlPlaneUrl: runtime.connection.controlPlaneUrl, apiKey: runtime.connection.apiKey, homeRegion: runtime.connection.storageRegion });
@@ -76,7 +76,7 @@ test('the cargo agent restarted before it answers the offers it was just sent le
         }
         throw new Error('the act 2 actors did not come up');
       };
-      await ready();
+      if (probe) await ready();
       // The server has the whole board: after a restart it hands the returning actors what it heard.
       if (board.size > 0) await recovery.deliver(workspaceId, { board: [...board.values()], disruptions: [] });
       try { return await operation(recovery); } finally { recovery.close(); }
@@ -121,3 +121,46 @@ test('the cargo agent restarted before it answers the offers it was just sent le
     rmSync(project, { recursive: true, force: true });
   }
 }, 240_000);
+
+test('the press carries the negotiation to a confirmed plan by itself: nobody steps the actors, and no minute-long alarm is waited for', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'gazetteer-pump-'));
+  const relay = fakeRelay();
+  const project = projectWith({ RELAY_BASE_URL: relay.url, GAZETTEER_LIVE_SOURCES: 'off' });
+  const bookingsPath = join(dataDir, 'bookings.sqlite');
+  const ledger = createBookings(bookingsPath);
+  const board = new Map<string, BoardMessage>();
+  let current: Recovery | undefined;
+  const absorb = async (_: string, batch: { board: readonly BoardMessage[] }): Promise<number> => {
+    const fresh = batch.board.filter(message => !board.has(message.id));
+    fresh.forEach(message => board.set(message.id, message));
+    if (fresh.length > 0) await current?.deliver(workspaceId, { board: fresh, disruptions: [] });
+    return fresh.length;
+  };
+  try {
+    const runtime = await startLocalActors({ project, projectId: 'gazetteer-pump', entrypoint: 'src/server/agents/index.ts', dataDir, apiKey: randomUUID(), quiet: true });
+    try {
+      const transport = createActorTransport({ projectId: runtime.connection.projectId, controlPlaneUrl: runtime.connection.controlPlaneUrl, apiKey: runtime.connection.apiKey, homeRegion: runtime.connection.storageRegion });
+      const recovery = createRecovery({
+        clients: actorClients(transport), workspaceKey: 'workspace-key', bookingsPath, ledger, limit: run => run(),
+        meridianStar: async () => ({ id: 'gz-1042', vessel: 'Meridian Star', baselineEta: new Date().toISOString() }),
+        send: async outgoing => ({ board: outgoing.board.map(message => message.id), disruptions: [], failure: null }),
+        absorb, announce: () => undefined, delaysMs: [20],
+      });
+      current = recovery;
+      recovery.begin(workspaceId);
+      const confirmed = (): boolean => ledger.list(workspaceId).filter(row => row.status === 'confirmed').length >= 3;
+      for (let tries = 0; tries < 600 && !(confirmed() && recovery.view(workspaceId)?.case?.delivered); tries += 1) await Bun.sleep(100);
+      expect(confirmed()).toBe(true);
+      expect(recovery.view(workspaceId)?.case?.delivered).toEqual(expect.any(String));
+      const kinds = [...board.values()].map(message => message.kind);
+      expect(kinds.filter(kind => kind === 'recovery.request').length).toBeGreaterThanOrEqual(3);
+      expect(kinds).toContain('recovery.plan');
+      recovery.close();
+    } finally { await runtime.stop(); }
+  } finally {
+    ledger.close();
+    relay.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+}, 120_000);

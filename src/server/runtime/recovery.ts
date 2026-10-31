@@ -91,6 +91,9 @@ export type Recovery = Readonly<{
   close(): void;
 }>;
 
+const pumpRounds = 40;
+const pumpSilentRounds = 2;
+const pumpPauseMs = 150;
 const reason = 'Simulated: the truck was withdrawn by the demo control.';
 const unavailable = (message: string): RelayOutcome<never> => ({ status: 'unavailable', message });
 
@@ -142,7 +145,7 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
     })),
     onReady: (workspaceId, key) => {
       void membersOf(workspaceId).find(member => member.key === key)?.client.resume().catch(() => undefined);
-      void deliverTo(workspaceId, key);
+      void deliverTo(workspaceId, key).then(() => pump(workspaceId));
       deps.announce(workspaceId);
     },
     ...(deps.delaysMs ? { delaysMs: deps.delaysMs } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}),
@@ -180,6 +183,24 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
     return echoed;
   };
 
+  const stepAll = async (workspaceId: string): Promise<number> => {
+    const ready = membersOf(workspaceId).filter(member => startup.isReady(workspaceId, member.key));
+    const counts = await Promise.all(ready.map(member => stepMember(workspaceId, member)));
+    return counts.reduce((total, count) => total + count, 0);
+  };
+  /**
+   * The negotiation is a chain (ask, offer, plan, counter-ask, counter-offer, hold, ledger, confirm) longer than the server's settle bound, and
+   * an actor's own alarm is a minute away: nothing else would carry it to its end when Relay's stream is not there to wake the server. So the
+   * recovery actors are stepped until two rounds in a row say nothing new.
+   */
+  const pump = createCoalescer(async workspaceId => {
+    for (let round = 0, silent = 0; silent < pumpSilentRounds && round < pumpRounds && !closed; round += 1) {
+      const spoken = await stepAll(workspaceId);
+      silent = spoken === 0 ? silent + 1 : 0;
+      if (spoken === 0) await new Promise<void>(done => { setTimeout(done, pumpPauseMs).unref?.(); });
+    }
+  }, error => { if (!closed) console.error('Recovery pump failed:', error instanceof Error ? error.message : 'unknown error'); });
+
   return {
     begin: workspaceId => { begun.add(workspaceId); startup.ensure(workspaceId); },
     deliver: async (workspaceId, batch) => {
@@ -187,18 +208,16 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
       if (routed.length === 0) return;
       delivery.record(workspaceId, { board: routed, disruptions: [] });
       await Promise.all(membersOf(workspaceId).filter(member => startup.isReady(workspaceId, member.key)).map(member => deliverTo(workspaceId, member.key)));
+      void pump(workspaceId);
     },
-    step: async workspaceId => {
-      const ready = membersOf(workspaceId).filter(member => startup.isReady(workspaceId, member.key));
-      const counts = await Promise.all(ready.map(member => stepMember(workspaceId, member)));
-      return counts.reduce((total, count) => total + count, 0);
-    },
+    step: stepAll,
     view: workspaceId => begun.has(workspaceId) ? { case: cases.get(workspaceId) ?? null, reservations: ledger.list(workspaceId) } : undefined,
     withdrawTruck: async workspaceId => {
       const member = membersOf(workspaceId).find(item => item.key === haulierKey(city));
       if (!member || !startup.isReady(workspaceId, member.key)) return unavailable('The haulier is not ready yet.');
       const withdrawn = await clients.haulier(workspaceId, city).withdraw(reason, null);
       await stepMember(workspaceId, member);
+      void pump(workspaceId);
       return withdrawn;
     },
     restartCargo: async workspaceId => {
@@ -206,6 +225,7 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
       if (!member || !startup.isReady(workspaceId, member.key)) return unavailable('The cargo agent is not ready yet.');
       await member.client.resume();
       await stepMember(workspaceId, member);
+      void pump(workspaceId);
       return relaySuccess(null);
     },
     close: () => { closed = true; startup.close(); delivery.close(); },
