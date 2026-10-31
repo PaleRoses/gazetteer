@@ -141,14 +141,16 @@ const buildChain = (messages: readonly BoardMessage[], inbound: (shipmentId: str
   return { observation: link.observation, watch: link.watch, assessments: [...byShip.values()] };
 };
 
-/** Every shipment whose ETA moved since the baseline, and whether a ship.eta citing evidence (or a new evidence record) accounts for it. */
+/** Every shipment whose ETA moved since the baseline, and whether evidence accounts for it: a new evidence record, a ship.eta citing something, or a new ship.assessment citing something (a ship's first ETA notice carries no citation; its assessment does). */
 const etaMoves = (dashboard: Dashboard | null, before: Baseline, messages: readonly BoardMessage[], knownBoard: ReadonlySet<string>): readonly Readonly<{ shipmentId: string; carries: boolean }>[] => {
   const notices = messages.filter((message): message is EtaNotice => message.kind === 'ship.eta' && !knownBoard.has(message.id));
+  const assessments = messages.filter((message): message is ShipAssessment => message.kind === 'ship.assessment' && !knownBoard.has(message.id));
   return (dashboard?.shipments ?? []).flatMap(ship => {
     const was = before.get(ship.id);
     if (!was || !moved(ship.eta, was.eta)) return [];
-    const cited = notices.some(notice => notice.shipmentId === ship.id && notice.citedEvidence !== undefined && notice.citedEvidence.length > 0);
-    return [{ shipmentId: ship.id, carries: cited && ship.evidence.length > was.evidence }];
+    const cited = notices.some(notice => notice.shipmentId === ship.id && notice.citedEvidence !== undefined && notice.citedEvidence.length > 0)
+      || assessments.some(assessment => assessment.shipmentId === ship.id && assessment.citedEvidence.length > 0);
+    return [{ shipmentId: ship.id, carries: cited || ship.evidence.length > was.evidence }];
   });
 };
 
