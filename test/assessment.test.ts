@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { assessDisruption, demoShipments } from '../src/domain';
+import { positionAlong, voyageRoute } from '../src/sea-routes';
 import { applyAssessment, assessNotice, assessNotices, cacheKey, evidenceIds, isExposed, validateAssessment, type AssessableNotice, type AssessDeps, type AssessmentCache, type AssessModel, type Assessment } from '../src/server/assessment';
 
 const at = '2026-10-31T12:00:00.000Z';
@@ -19,10 +20,18 @@ describe('exposure pre-filter', () => {
   });
   test('a departed origin is not exposed, but a notice geometry over the remaining route is', () => {
     const shanghai = { ...notice, portId: 'shanghai' as const };
-    const midPacific = { center: [-165, 38] as const, radiusKm: 200 };
+    const midPacific = { center: positionAlong(voyageRoute(laurel)!, 0.5)!, radiusKm: 200 };
     expect(isExposed(laurel, shanghai)).toBe(false);
     expect(isExposed(laurel, { ...shanghai, geometry: midPacific })).toBe(true);
     expect(isExposed(atlas, { ...shanghai, geometry: midPacific })).toBe(false);
+  });
+  test('a lane-scoped notice exposes by route proximity alone: the reporting port is no shortcut', () => {
+    const storm = { center: positionAlong(voyageRoute(atlas)!, 0.6)!, radiusKm: 300 };
+    const lane = { ...notice, portId: 'shanghai' as const, scope: 'lane' as const, geometry: storm };
+    expect([meridian, laurel, atlas, northern].map(shipment => isExposed(shipment, lane))).toEqual([true, false, true, false]);
+    expect(isExposed(northern, { ...lane, scope: 'port' })).toBe(true);
+    expect(isExposed(northern, { ...lane, scope: 'port', geometry: undefined })).toBe(true);
+    expect(isExposed(northern, { ...lane, geometry: undefined, scope: 'lane' })).toBe(false);
   });
   test('an unexposed shipment makes no model call and comes back identical', async () => {
     const { model, calls } = counted(good);

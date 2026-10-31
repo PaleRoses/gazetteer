@@ -24,7 +24,7 @@ export const toDisruption = ({ notice, hit, lanes }: PortNotice): Disruption => 
   const name = places.find(place => place.id === hit.portId)?.name ?? hit.portId;
   const geometry = circleOf(notice);
   return {
-    id: `${notice.id}@${hit.basis === 'nearest-to-lane' ? 'lane' : hit.portId}`, portId: hit.portId, delayHours: null,
+    id: `${notice.id}@${hit.basis === 'nearest-to-lane' ? 'lane' : hit.portId}`, portId: hit.portId, scope: hit.basis === 'nearest-to-lane' ? 'lane' : 'port', delayHours: null,
     evidence: {
       id: notice.id, source: 'live', provider: notice.provider, url: notice.url, title: notice.title,
       detail: `${notice.detail} ${evidenceLine(hit, name, lanes)}`.trim(), observedAt: notice.observedAt,
