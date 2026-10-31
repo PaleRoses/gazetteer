@@ -1,21 +1,24 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, type JSX } from 'solid-js';
 import { render, Portal } from 'solid-js/web';
 import { Dialog, Menu, Tabs } from '@ark-ui/solid';
-import { ArrowDownRight, ArrowRight, Check, ChevronDown, FlaskConical, Layers3, LogOut, MapPin, MessageSquare, Plus, Radio, Search, Send, Ship, TriangleAlert, Users, X } from 'lucide-solid';
+import { ArrowDownRight, ArrowRight, Check, FlaskConical, Layers3, LogOut, MapPin, MessageSquare, Plus, Radio, Search, Send, Ship, TriangleAlert, Users, X } from 'lucide-solid';
 import { z } from 'zod';
 import { portIds } from '../core/ports';
 import type { Comment, Dashboard, Shipment, Workspace } from '../core/types';
+import '@fontsource-variable/jost';
 import './styles.css';
+import './styles/shell.css';
 import { commentsSchema, dashboardSchema, invitationSchema, membersSchema, request, sessionSchema, workspaceSchema, type Invitation, type Session } from './api';
 import { MapBackdrop, ShipmentMap } from './Map';
 import { mergeComment, type CommentEvent } from './feed';
 import { createChangeFlash, createWorkspaceFeed, type FeedMode } from './live';
 import { ActorLine, PixelShip } from './ActorLine';
+import { RiskMark } from './sprites';
 import { SocietyPanel } from './SocietyPanel';
 import { date, EvidenceCard, portName, RiskBadge, time } from './presentation';
 
 const minute = (eta: string | undefined): string => (eta ?? '').slice(0, 16);
-const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'CONNECTING', live: 'STREAMING', polling: 'POLLING · 5 S' };
+const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'Connecting', live: 'Streaming', polling: 'Polling every 5 s' };
 const textField = (data: FormData, key: string): string => { const value = data.get(key); return typeof value === 'string' ? value : ''; };
 const DECLINED_DEMO = 'gazetteer.demo.declined';
 const DEMO_EMAIL = 'demo@gazetteer.local';
@@ -121,9 +124,17 @@ function ShipmentDetails(props: Readonly<{ shipmentId: string; dashboard: Dashbo
   </aside>; }}</Show>;
 }
 
+const fleetStatus = (shipment: Shipment): string => {
+  switch (shipment.risk) {
+    case 'delayed': return shipment.delayHours > 0 ? `Delayed · +${shipment.delayHours} h` : 'Delayed';
+    case 'watch': return 'Watch';
+    case 'on-track': return 'On track';
+  }
+};
+
 function ShipmentCard(props: Readonly<{ shipment: Shipment; selected: boolean; onSelect: (id: string) => void }>) {
   const flash = createChangeFlash(() => minute(props.shipment.eta));
-  return <button class="shipment-card" classList={{ selected: props.selected, flash: flash() }} onClick={() => props.onSelect(props.shipment.id)} aria-pressed={props.selected}><span class={`fleet-pixel ${props.shipment.risk}`}><PixelShip /></span><span class="fleet-identity"><strong>{props.shipment.vessel}</strong><span class="fleet-risk-line"><RiskBadge risk={props.shipment.risk} /><Show when={props.shipment.delayHours > 0}><span class="delay">· +{props.shipment.delayHours}h</span></Show></span></span><Show when={props.shipment.risk !== 'on-track'}><span class={`fleet-alert ${props.shipment.risk}`} aria-hidden="true">{props.shipment.risk === 'watch' ? '△' : '!'}</span></Show></button>;
+  return <button class={`fleet-row ${props.shipment.risk}`} classList={{ selected: props.selected, flash: flash() }} onClick={() => props.onSelect(props.shipment.id)} aria-pressed={props.selected}><span class="fleet-sprite"><PixelShip /></span><span class="fleet-identity"><strong>{props.shipment.vessel}</strong><span class="fleet-status">{fleetStatus(props.shipment)}</span></span><RiskMark risk={props.shipment.risk} /></button>;
 }
 
 function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
@@ -135,7 +146,7 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
   const [threadId, setThreadId] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const riskOrder: Readonly<Record<Shipment['risk'], number>> = { delayed: 0, watch: 1, 'on-track': 2 };
-  const fleet = createMemo(() => dashboard()?.shipments.toSorted((left, right) => riskOrder[left.risk] - riskOrder[right.risk] || left.vessel.localeCompare(right.vessel)) ?? []);
+  const fleet = createMemo(() => dashboard()?.shipments.toSorted((left, right) => riskOrder[left.risk] - riskOrder[right.risk] || right.delayHours - left.delayHours || left.vessel.localeCompare(right.vessel)) ?? []);
   const selected = createMemo(() => dashboard()?.shipments.find(shipment => shipment.id === selectedId()) ?? fleet()[0]);
   const shipments = createMemo(() => fleet().filter(shipment => `${shipment.vessel} ${shipment.reference} ${shipment.cargo}`.toLowerCase().includes(query().toLowerCase())));
   const counts = createMemo(() => ({ delayed: fleet().filter(ship => ship.risk === 'delayed').length, watch: fleet().filter(ship => ship.risk === 'watch').length, onTrack: fleet().filter(ship => ship.risk === 'on-track').length }));
@@ -151,16 +162,16 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
     if (result.ok) feed.accept(result.value); else setError(result.error);
   }
   return <>
-    <div class="simulation-banner"><span><span class="simulation-light" />{dashboard()?.mode === 'simulation' ? 'Simulated sources' : dashboard() ? 'Mixed-source workspace' : 'Connecting to workspace'}<span class="banner-separator">/</span>{dashboard()?.mode === 'simulation' ? 'Current notices are simulated. No live tracking is implied.' : 'Source provenance is shown on each evidence item.'}</span><span class="banner-scope">ALL TIMES UTC</span></div>
     <Show when={failure()}>{message => <div class="global-error"><ErrorNote message={message()} /><button type="button" class="retry-button" onClick={() => { setError(null); feed.retry(); }}>Retry</button></div>}</Show>
-    <main class="operations-layout"><aside class="shipments-panel" id="workspace-shipments"><div class="shipments-heading"><span class="section-kicker">YOUR OPERATIONS</span><h1>Fleet<span>{dashboard()?.shipments.length ?? '—'}</span></h1><p>Risk first. Every voyage in view.</p><nav class="workspace-jump" aria-label="Workspace sections"><a href="#workspace-ports">Ports</a><a href="#actor-board">Actor board</a></nav></div><div class="shipment-search"><Search size={15} /><label class="sr-only" for="search">Search ships</label><input id="search" value={query()} onInput={event => setQuery(event.currentTarget.value)} placeholder="Find a ship" /></div>
-      <div class="fleet-scope"><Show when={dashboard()} fallback={<span>Connecting to fleet</span>}><span>{counts().delayed} delayed · {counts().watch} watch · {counts().onTrack} on track</span></Show><Show when={query()}><button type="button" onClick={() => setQuery('')}>Show all {fleet().length} ships</button></Show></div>
-      <div class="shipment-list"><Show when={!dashboard()}><div class="empty-state"><Radio size={22} /><p>{failure() ? 'Ship updates unavailable.' : 'Loading your ships…'}</p></div></Show><Show when={dashboard() && shipments().length === 0}><div class="empty-state"><Check size={22} /><p>No ships match your search.</p></div></Show><For each={shipments()}>{shipment => <ShipmentCard shipment={shipment} selected={selected()?.id === shipment.id} onSelect={setSelectedId} />}</For></div>
-      <footer class="list-footer"><span class={`status-dot ${feed.mode()}`} /><span>{dashboard() ? `Updated ${time(dashboard()?.updatedAt ?? '')} UTC` : 'Connecting to workspace'}</span><span class={`feed-mode ${feed.mode()}`}>{feedLabel[feed.mode()]}</span></footer></aside>
-      <section class="world-panel" id="world" aria-label="World"><div class="world-health"><Show when={dashboard()?.relayHealth}>{health => <span class={`relay-health ${health().state}`}>Relay {health().state}<Show when={health().since}>{since => <> since {time(since())} UTC</>}</Show></span>}</Show><Show when={dashboard()?.startup && dashboard()?.startup?.ready !== dashboard()?.startup?.total}><span>Agents joining · {dashboard()?.startup?.ready}/{dashboard()?.startup?.total}</span></Show></div><section class="map-panel" aria-label="Ship overview map"><ShipmentMap dashboard={dashboard()} selected={selected()} focusId={selectedId()} onSelect={setSelectedId} /></section></section>
-      <Show when={dashboard()}>{current => <ActorLine dashboard={current()} onOpenMessage={setThreadId} />}</Show>
-      <Show when={dashboard()}>{current => <Show when={selected()?.id} keyed>{id => <ShipmentDetails shipmentId={id} dashboard={current()} workspaceId={props.workspaceId} live={feed.mode() === 'live'} incoming={feed.comments()} />}</Show>}</Show>
+    <main class="operations-layout" id="world"><aside class="fleet-rail" id="workspace-shipments" aria-labelledby="fleet-title"><div class="fleet-head"><h1 id="fleet-title">Fleet</h1><span class="fleet-count">{dashboard()?.shipments.length ?? '—'}</span></div>
+      <p class="fleet-summary"><Show when={dashboard()} fallback={<span>Connecting to fleet</span>}><span>{counts().delayed} delayed · {counts().watch} watch · {counts().onTrack} on track</span></Show><Show when={query()}><button type="button" onClick={() => setQuery('')}>Show all</button></Show></p>
+      <div class="fleet-search"><Search size={18} stroke-width={1.6} /><label class="sr-only" for="search">Search ships</label><input id="search" value={query()} onInput={event => setQuery(event.currentTarget.value)} placeholder="Find a ship" /></div>
+      <div class="fleet-list"><Show when={!dashboard()}><div class="empty-state"><Radio size={22} /><p>{failure() ? 'Ship updates unavailable.' : 'Loading your ships…'}</p></div></Show><Show when={dashboard() && shipments().length === 0}><div class="empty-state"><Check size={22} /><p>No ships match your search.</p></div></Show><For each={shipments()}>{shipment => <ShipmentCard shipment={shipment} selected={selected()?.id === shipment.id} onSelect={setSelectedId} />}</For></div></aside>
+      <section class="world-panel" aria-label="World"><section class="map-panel" aria-label="Ship overview map"><ShipmentMap dashboard={dashboard()} selected={selected()} focusId={selectedId()} onSelect={setSelectedId} /></section></section>
+      <div class="ticker-slot"><Show when={dashboard()}>{current => <ActorLine dashboard={current()} onOpenMessage={setThreadId} />}</Show></div>
     </main>
+    <p class="workspace-status"><span class={`status-dot ${feed.mode()}`} /><span>{feedLabel[feed.mode()]}</span><Show when={dashboard()}>{current => <span>Updated {time(current().updatedAt)} UTC</span>}</Show><span>{dashboard()?.mode === 'simulation' ? 'Simulated sources. No live tracking is implied.' : dashboard() ? 'Mixed sources. Provenance is shown on each evidence item.' : 'Connecting to workspace'}</span><Show when={dashboard()?.relayHealth}>{health => <span class={`relay-health ${health().state}`}>Relay {health().state}<Show when={health().since}>{since => <> since {time(since())} UTC</>}</Show></span>}</Show><Show when={dashboard()?.startup && dashboard()?.startup?.ready !== dashboard()?.startup?.total}><span>Agents joining · {dashboard()?.startup?.ready}/{dashboard()?.startup?.total}</span></Show><span>All times UTC</span></p>
+    <Show when={dashboard()}>{current => <Show when={selected()?.id} keyed>{id => <ShipmentDetails shipmentId={id} dashboard={current()} workspaceId={props.workspaceId} live={feed.mode() === 'live'} incoming={feed.comments()} />}</Show>}</Show>
     <section class="simulation-section" id="simulation" aria-labelledby="simulation-title"><span class="section-kicker">SIMULATION</span><h2 id="simulation-title">Test a city disruption</h2><p>Synthetic inputs only. This publishes a port-delay scenario to the shared actor board; it is not a real port event.</p><form onSubmit={simulate}><label>City<select name="portId"><For each={dashboard()?.ports ?? []}>{port => <option value={port.id} selected={port.id === 'singapore'}>{port.name}</option>}</For></select></label><label>Congestion delay (hours)<input name="delayHours" type="number" min="1" max="168" step="1" value="36" required /></label><button class="primary" disabled={simulating() || !dashboard()}>{simulating() ? 'Publishing scenario…' : 'Simulate port delay'}</button></form><p class="muted">Storm simulation is unavailable: the current endpoint supports port-delay scenarios only.</p></section>
     <Show when={dashboard()}>{current => <SocietyPanel dashboard={current()} onSelectShip={setSelectedId} threadId={threadId()} onOpenMessage={setThreadId} />}</Show>
   </>;
@@ -183,7 +194,13 @@ function WorkspaceScreen(props: Readonly<{ session: Session; demo: boolean; onOp
     setAccepting(false);
     if (result.ok) { props.onSession({ ...props.session, workspaces: [...props.session.workspaces.filter(item => item.id !== result.value.id), result.value] }); setWorkspaceId(result.value.id); setTeamOpen(false); clearInvitation(); } else setError(result.error);
   }
-  return <div class="workspace-shell"><header class="topbar"><Brand /><nav class="primary-nav" aria-label="Primary"><a href="#world">World</a><a href="#actor-board">Relay</a><a href="#simulation">Simulation</a></nav><div class="workspace-picker"><Layers3 size={15} /><label class="sr-only" for="workspace">Workspace</label><select id="workspace" value={workspaceId()} onChange={event => { setWorkspaceId(event.currentTarget.value); setTeamOpen(false); }}><For each={props.session.workspaces}>{item => <option value={item.id}>{item.name}</option>}</For></select><ChevronDown size={13} /></div><div class="topbar-right"><span class="demo-tag"><Users size={12} /> SHARED WORKSPACE</span><button class="team-button" onClick={() => setTeamOpen(true)} disabled={!workspace()}><Users size={15} />Team</button><Menu.Root positioning={{ placement: 'bottom-end' }} onSelect={details => { if (details.value === 'demo') props.onOpenDemo(); }}><Menu.Trigger class="avatar avatar-menu" title={props.session.user.email} aria-label={`Account menu for ${props.session.user.email}`}>{props.session.user.name.slice(0, 1).toUpperCase()}</Menu.Trigger><Portal><Menu.Positioner><Menu.Content class="account-menu"><div class="account-menu-who"><strong>{props.session.user.name}</strong><small>{props.session.user.email}</small></div><Show when={props.demo && props.session.user.email !== DEMO_EMAIL}><Menu.Item value="demo" class="account-menu-item"><FlaskConical size={15} />Open demo workspace</Menu.Item></Show><Menu.Item value="signout" class="account-menu-item" onSelect={props.onLogout}><LogOut size={15} />Sign out</Menu.Item></Menu.Content></Menu.Positioner></Portal></Menu.Root><button class="icon-button" onClick={props.onLogout} aria-label="Sign out"><LogOut size={16} /></button></div></header>
+  const [hash, setHash] = createSignal(window.location.hash);
+  const followHash = () => setHash(window.location.hash);
+  window.addEventListener('hashchange', followHash);
+  onCleanup(() => window.removeEventListener('hashchange', followHash));
+  const section = createMemo((): 'world' | 'relay' | 'simulation' => hash() === '#simulation' ? 'simulation' : hash() === '#actor-board' || hash() === '#workspace-ports' || hash().startsWith('#actor-message-') ? 'relay' : 'world');
+  const current = (name: ReturnType<typeof section>): 'page' | undefined => section() === name ? 'page' : undefined;
+  return <div class="workspace-shell"><header class="topbar"><Brand /><nav class="primary-nav" aria-label="Primary"><a href="#world" aria-current={current('world')}>World</a><a href="#actor-board" aria-current={current('relay')}>Relay</a><a href="#simulation" aria-current={current('simulation')}>Simulation</a></nav><div class="topbar-account"><Show when={props.session.workspaces.length > 1}><div class="workspace-picker"><Layers3 size={15} /><label class="sr-only" for="workspace">Workspace</label><select id="workspace" value={workspaceId()} onChange={event => { setWorkspaceId(event.currentTarget.value); setTeamOpen(false); }}><For each={props.session.workspaces}>{item => <option value={item.id}>{item.name}</option>}</For></select></div></Show><Menu.Root positioning={{ placement: 'bottom-end' }} onSelect={details => { if (details.value === 'demo') props.onOpenDemo(); else if (details.value === 'team') setTeamOpen(true); }}><Menu.Trigger class="avatar avatar-menu" title={props.session.user.email} aria-label={`Account menu for ${props.session.user.email}`}>{props.session.user.name.slice(0, 1).toUpperCase()}</Menu.Trigger><Portal><Menu.Positioner><Menu.Content class="account-menu"><div class="account-menu-who"><strong>{props.session.user.name}</strong><small>{props.session.user.email}</small><Show when={workspace()}>{item => <small>{item().name}</small>}</Show></div><Menu.Item value="team" class="account-menu-item" disabled={!workspace()}><Users size={15} />Team</Menu.Item><Show when={props.demo && props.session.user.email !== DEMO_EMAIL}><Menu.Item value="demo" class="account-menu-item"><FlaskConical size={15} />Open demo workspace</Menu.Item></Show><Menu.Item value="signout" class="account-menu-item" onSelect={props.onLogout}><LogOut size={15} />Sign out</Menu.Item></Menu.Content></Menu.Positioner></Portal></Menu.Root></div></header>
     <Show when={inviteToken()}><div class="invite-banner"><span><Users size={16} />You have a workspace invitation. Signed in as {props.session.user.email}.</span><div class="invite-actions"><button disabled={accepting()} onClick={() => { void acceptInvitation(); }}>{accepting() ? 'Joining…' : 'Accept invitation'}<ArrowRight size={14} /></button><button disabled={accepting()} onClick={clearInvitation}>Use my workspace instead</button></div></div></Show>
     <Show when={error()}>{message => <div class="global-error"><ErrorNote message={message()} /></div>}</Show>
     <Show when={!inviteToken() ? workspace()?.id : undefined} keyed>{id => <WorkspaceOperations workspaceId={id} />}</Show>
