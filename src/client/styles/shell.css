@@ -55,3 +55,9 @@
 
 @media(max-width:1150px){.workspace-shell{--rail-w:320px;--gutter:26px}.primary-nav{gap:26px;font-size:16px}.fleet-head h1{font-size:28px}}
 @media(max-width:760px){.workspace-shell{--header-h:auto;--gutter:18px}.topbar{flex-wrap:wrap;gap:14px 20px;padding:16px var(--gutter)}.primary-nav{gap:18px;font-size:15px}.operations-layout{display:flex;flex-direction:column;height:auto}.fleet-rail{padding:6px 6px 12px}.fleet-list{max-height:330px}.world-panel{min-height:460px}.ticker-slot{order:3}.detail-panel{display:block;padding:25px var(--gutter)}}
+.fleet-head .fleet-add{display:grid;place-items:center;width:32px;height:32px;margin:0 0 0 auto;padding:0;border:1px solid #3a3a3a;border-radius:7px;background:none;color:var(--muted)}
+.fleet-head .fleet-add:hover{color:var(--bone);border-color:var(--muted)}
+.topbar-alerts:empty{display:none}
+.alert-bell{position:relative;display:grid;place-items:center;width:36px;height:36px;color:var(--muted);text-decoration:none}
+.alert-bell:hover,.alert-bell[aria-current=page]{color:var(--bone)}
+.alert-bell-count{position:absolute;top:1px;right:-2px;display:grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--risk-watch);color:var(--field);font-size:11px;font-weight:700;line-height:1}
