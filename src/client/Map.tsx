@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { riskLabel, shipmentBrief } from './brief';
+import { WarningDetails } from './WarningDetails';
 import type { GeoJSONSource, Map as MapLibreMap, Marker, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
@@ -77,6 +78,11 @@ export function ShipmentMap(props: Selection) {
   const [now, setNow] = createSignal(Date.now());
   const markers = new Map<string, Marker>();
   let framed: string | undefined;
+  const [warningHost, setWarningHost] = createSignal<HTMLElement>();
+  let warningPopup: import('maplibre-gl').Popup | undefined;
+  const [warningId, setWarningId] = createSignal<string | null>(null);
+  let warningTrigger: HTMLElement | null = null;
+  const warning = createMemo(() => (props.corridor?.intelligence ?? props.dashboard?.intelligence)?.items.find(item => item.evidence.id === warningId()));
   const [frameWidth, setFrameWidth] = createSignal(0);
   const [popupHost, setPopupHost] = createSignal<HTMLElement | undefined>();
   let popup: import('maplibre-gl').Popup | undefined;
@@ -132,7 +138,7 @@ export function ShipmentMap(props: Selection) {
     markers.forEach((marker, id) => { if (!live.has(id) && !id.includes(':')) { marker.remove(); markers.delete(id); } });
     list.forEach(view => {
       const existing = markers.get(view.id);
-      const marker = existing ?? new lib.Marker({ element: vesselElement(id => props.onSelect(id), view), anchor: 'center' }).setLngLat([...view.position]).addTo(map);
+      const marker = existing ?? new lib.Marker({ element: vesselElement(id => { setWarningId(null); props.onSelect(id); }, view), anchor: 'center' }).setLngLat([...view.position]).addTo(map);
       if (!existing) markers.set(view.id, marker);
       marker.setLngLat([...view.position]);
       decorate(marker.getElement(), view, view.id === chosen);
@@ -204,7 +210,9 @@ export function ShipmentMap(props: Selection) {
     for (const item of info?.items ?? []) {
       if (!item.coordinates || (!props.corridor && props.selected && !item.relevance.some(r => r.shipmentId === props.selected?.id))) continue;
       const node = element('button', 'news-marker', '!'); node.setAttribute('aria-label', item.evidence.title); node.title = item.evidence.title;
-      node.addEventListener('click', () => { document.querySelector('.intelligence-panel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); });
+      node.setAttribute('type', 'button'); node.setAttribute('aria-haspopup', 'dialog');
+      node.dataset.warningId = item.evidence.id;
+      node.addEventListener('click', event => { event.stopPropagation(); props.onDismiss(); warningTrigger = node; setWarningId(item.evidence.id); current.map.panTo([...item.coordinates!], { duration: 250 }); });
       owned.push(new current.lib.Marker({ element: node }).setLngLat([...item.coordinates]).addTo(current.map));
     }
     const option = props.inspected;
@@ -213,9 +221,28 @@ export function ShipmentMap(props: Selection) {
     onCleanup(() => owned.forEach(m => m.remove()));
   });
 
+
+  const closeWarning = () => {
+    setWarningId(null);
+    const trigger = warningTrigger?.isConnected ? warningTrigger : container?.querySelector<HTMLElement>(`button[data-warning-id="${CSS.escape(warningTrigger?.dataset.warningId ?? '')}"]`);
+    trigger?.focus({ preventScroll: true });
+  };
+  createEffect(() => {
+    const current = ready();
+    const item = warning();
+    if (!current || !item?.coordinates) { warningPopup?.remove(); warningPopup = undefined; setWarningHost(undefined); return; }
+    const host = document.createElement('div');
+    host.style.setProperty('--warning-max-height', `${Math.max(180, Math.min(330, current.map.getContainer().clientHeight / 2 - 40))}px`);
+    const created = new current.lib.Popup({ closeButton: false, closeOnClick: false, offset: 18, maxWidth: '340px', className: 'warning-popup' })
+      .setLngLat([...item.coordinates]).setDOMContent(host).addTo(current.map);
+    warningPopup = created; setWarningHost(host);
+    onCleanup(() => created.remove());
+  });
+
   return <div class="map-canvas">
-    <div ref={container} class="map-gl" role="group" aria-label="Shipment map. Select a vessel with the markers or the shipment list." />
-    <Show when={popupHost()}>{host => <Portal mount={host()}><button class="popup-dismiss" aria-label="Close ship popup" onClick={props.onDismiss}>×</button><button class="popup-open" onClick={props.onOpen}><span class="reference">{props.selected?.reference}</span><strong>{props.selected?.vessel}</strong><span class="popup-eta">ETA {props.selected && new Date(props.selected.eta).toLocaleString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} UTC</span><span class={`risk-badge ${props.selected?.risk}`}>{props.selected && riskLabel[props.selected.risk]}</span><span class="popup-brief">{props.selected && shipmentBrief(props.selected).text}</span><span class="popup-source">{props.selected && shipmentBrief(props.selected).source}</span><span class="popup-cta">Open voyage & news →</span></button></Portal>}</Show>
+    <Show when={warningHost()}>{host => <Portal mount={host()}><WarningDetails item={warning()} dashboard={props.dashboard} onClose={closeWarning} onShip={props.onSelect} onLayout={() => { const position = warning()?.coordinates; if (position) warningPopup?.setLngLat([...position]); }} /></Portal>}</Show>
+    <div ref={container} class="map-gl" tabIndex={-1} role="group" aria-label="Shipment map. Select a vessel with the markers or the shipment list." />
+    <Show when={popupHost()}>{host => <Portal mount={host()}><button class="popup-dismiss" aria-label="Close ship popup" onClick={props.onDismiss}>×</button><button class="popup-open" onClick={props.onOpen}><span class="reference">{props.selected?.reference}</span><strong>{props.selected?.vessel}</strong><span class="popup-eta">ETA {props.selected && new Date(props.selected.eta).toLocaleString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} UTC</span><span class={`risk-badge ${props.selected?.risk}`}>{props.selected && riskLabel[props.selected.risk]}</span><span class="popup-brief">{props.selected && shipmentBrief(props.selected).text}</span><span class="popup-source">{props.selected && shipmentBrief(props.selected).source}</span><span class="popup-cta">Open voyage briefing →</span></button></Portal>}</Show>
     <Show when={props.inspected}><div class="alternative-map-caption">{props.inspected?.name} · indicative connection; revised ETA unconfirmed</div></Show>
     <Show when={failed()}><p class="map-fallback" role="status">The map could not be drawn. The shipment list still shows every route and ETA.</p></Show>
     <div class="map-legend" aria-hidden="true"><span><i class="legend-dot on-track" />Low risk</span><span><i class="legend-dot watch" />Moderate risk</span><span><i class="legend-dot delayed" />High risk</span></div>

@@ -1,7 +1,5 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
-import { Portal } from 'solid-js/web';
-import { Dialog } from '@ark-ui/solid';
-import { Activity, Anchor, ArrowRight, Radio, Ship, X } from 'lucide-solid';
+import { Activity, Anchor, ArrowRight, Radio, Ship } from 'lucide-solid';
 import type { BoardMessage } from '../board';
 import type { Dashboard, Port } from '../shared';
 import { boardAuthor, boardExplanation, boardKinds, boardPort, boardRisk, boardTime, filterBoard, readableBoardSummary } from './board-view';
@@ -28,17 +26,14 @@ function MessageCard(props: Readonly<{ message: BoardMessage; ports: readonly Po
 }
 
 export function AgentBoard(props: Readonly<{ dashboard: Dashboard | null; connection: string }>) {
-  const [open, setOpen] = createSignal(false);
   const [kind, setKind] = createSignal('all');
   const [entity, setEntity] = createSignal('all');
   const [query, setQuery] = createSignal('');
   const ports = () => props.dashboard?.ports ?? [];
   const messages = createMemo(() => filterBoard(props.dashboard?.board ?? [], kind(), entity(), query(), ports()));
   const reset = () => { setKind('all'); setEntity('all'); setQuery(''); };
-  return <Dialog.Root open={open()} onOpenChange={event => setOpen(event.open)} lazyMount unmountOnExit>
-    <Dialog.Trigger class="agent-board-trigger"><Activity size={15} />Agent activity<Show when={props.dashboard?.board?.length}>{count => <span>{count()}</span>}</Show></Dialog.Trigger>
-    <Portal><Dialog.Backdrop class="agent-board-backdrop" /><Dialog.Positioner class="agent-board-positioner"><Dialog.Content class="agent-board-dialog">
-      <header class="agent-board-header"><div><span class="section-kicker">THE AGENT MESSAGE BOARD</span><Dialog.Title>What the agents are seeing</Dialog.Title><Dialog.Description>Updates shared by your ship and port agents, translated into an activity feed.</Dialog.Description></div><Dialog.CloseTrigger class="icon-button" aria-label="Close agent activity"><X size={22} /></Dialog.CloseTrigger></header>
+  return <main class="agent-board-page" aria-label="Agent activity">
+      <header class="agent-board-header"><div><span class="section-kicker">THE AGENT MESSAGE BOARD</span><h1>Agent activity</h1><p>Messages exchanged by your ship and port agents: observations, risk assessments, arrival updates and port bulletins.</p></div></header>
       <div class="agent-board-status"><span><Radio size={13} />{props.connection === 'live' ? 'Receiving live updates' : props.connection === 'polling' ? 'Checking for updates every 5 seconds' : 'Connecting to updates'}</span><span>Latest {props.dashboard?.board?.length ?? 0} messages · All times UTC</span></div>
       <div class="agent-board-filters"><label>Search activity<input type="search" placeholder="Ship, port or message" value={query()} onInput={event => setQuery(event.currentTarget.value)} /></label><label>Message type<select value={kind()} onChange={event => setKind(event.currentTarget.value)}><option value="all">All messages</option><For each={Object.entries(boardKinds)}>{([value, label]) => <option value={value}>{label}</option>}</For></select></label><label>Ship or port<select value={entity()} onChange={event => setEntity(event.currentTarget.value)}><option value="all">All ships and ports</option><optgroup label="Ships"><For each={props.dashboard?.shipments ?? []}>{ship => <option value={`ship:${ship.id}`}>{ship.vessel}</option>}</For></optgroup><optgroup label="Ports"><For each={ports()}>{port => <option value={`port:${port.id}`}>{boardPort(port.id, ports())}</option>}</For></optgroup></select></label></div>
       <div class="agent-board-content"><p class="agent-board-context">Vessel positions are simulated. A board message reports an agent’s observation or assessment; it does not confirm a carrier action.</p>
@@ -46,6 +41,5 @@ export function AgentBoard(props: Readonly<{ dashboard: Dashboard | null; connec
           <Show when={messages().length > 0} fallback={<div class="agent-board-empty"><Activity size={28} /><h3>{props.dashboard?.board?.length ? 'No matching messages' : 'No agent messages yet'}</h3><p>{props.dashboard?.board?.length ? 'Try another ship, port, message type or search.' : 'Ship observations, port bulletins and arrival updates will appear here as agents share them.'}</p><Show when={kind() !== 'all' || entity() !== 'all' || query()}><button onClick={reset}>Clear filters<ArrowRight size={14} /></button></Show></div>}><div class="agent-board-count" role="status">{messages().length} messages · Newest first</div><ol class="agent-message-list"><For each={messages()}>{message => <MessageCard message={message} ports={ports()} />}</For></ol></Show>
         </Show>
       </div>
-    </Dialog.Content></Dialog.Positioner></Portal>
-  </Dialog.Root>;
+  </main>;
 }

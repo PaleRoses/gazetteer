@@ -1,0 +1,12 @@
+.warning-popup{z-index:6}.warning-popup .maplibregl-popup-content{padding:0;border-radius:10px;overflow:hidden;box-shadow:0 9px 35px #173b6240}.warning-dialog{width:min(320px,calc(100vw - 48px));max-height:min(var(--warning-max-height,300px),60dvh);display:flex;flex-direction:column;background:#fff;border-radius:12px;overflow:hidden;color:#233e55}
+.warning-dialog>header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e5ebef;flex-shrink:0}
+.warning-eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:1px;font-weight:650;color:#926413}
+.warning-body{padding:16px;overflow:auto;overscroll-behavior:contain}
+.warning-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:15px}.warning-tags span{padding:4px 7px;background:#fff3da;color:#89621c;border-radius:4px;font-size:11px}
+.warning-dialog h2{font-size:17px;line-height:1.35;letter-spacing:-.5px;margin:0 0 14px}.warning-description{font-size:12px;line-height:1.65;color:#50687a;white-space:pre-line}
+.warning-observed{font-size:11px;color:#748797;margin-top:12px;line-height:1.6}.warning-relevance,.warning-ships{margin-top:22px;padding-top:20px;border-top:1px solid #e5ebef}
+.warning-dialog h3{font-size:14px;margin-bottom:10px}.warning-relevance p{font-size:13px;line-height:1.7;padding-left:12px;border-left:2px solid #e0b65f;margin:9px 0;color:#526b7d}.warning-ships>p{font-size:12px;color:#748797;line-height:1.6;margin-bottom:12px}
+.warning-ships button{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;border:1px solid #dce6ed;border-radius:6px;padding:11px 12px;margin:8px 0;background:#f7fafc;color:#275879;cursor:pointer}.warning-ships button:hover{background:#edf4f9}.warning-ships strong,.warning-ships small{display:block}.warning-ships strong{font-size:13px}.warning-ships small{font-size:11px;color:#748797;margin-top:4px;line-height:1.6}
+.warning-impact-note{font-size:11px;line-height:1.7;color:#768797;margin:20px 0 15px}.warning-source{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:#22639a;text-decoration:underline;text-underline-offset:3px}
+.news-marker{min-width:28px;min-height:28px;z-index:4}.news-marker:hover{background:#ffcf72;box-shadow:0 0 0 3px #e9b75a55}.news-marker:focus-visible{outline:3px solid #215f9b;outline-offset:3px}
+

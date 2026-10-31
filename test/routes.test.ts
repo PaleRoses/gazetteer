@@ -74,9 +74,9 @@ describe('shared route monitoring', () => {
 
 describe('workspace-scoped route navigation', () => {
   test('route drilldowns and route overview survive reload and browser navigation', () => {
-    for (const view of [{ kind: 'route', id }, { kind: 'voyage', id: 'gz-1042' }, { kind: 'routes' }, { kind: 'shipments' }] as const) expect(readView(viewHash(view, 'workspace-a'), 'workspace-a')).toEqual(view);
+    for (const view of [{ kind: 'route', id }, { kind: 'voyage', id: 'gz-1042' }, { kind: 'routes' }, { kind: 'news' }, { kind: 'activity' }, { kind: 'shipments' }] as const) expect(readView(viewHash(view, 'workspace-a'), 'workspace-a')).toEqual(view);
   });
   test('foreign workspace, malformed and partial links cannot open a stale briefing', () => {
-    for (const hash of ['#route/other/route', '#route/workspace-a', '#route/%ZZ/a', '#voyage/workspace-a/a/extra']) expect(readView(hash, 'workspace-a')).toEqual({ kind: 'shipments' });
+    for (const hash of ['#route/other/route', '#route/workspace-a', '#route/%ZZ/a', '#voyage/workspace-a/a/extra', '#news/other', '#activity/workspace-a/extra']) expect(readView(hash, 'workspace-a')).toEqual({ kind: 'shipments' });
   });
 });
