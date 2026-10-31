@@ -52,6 +52,15 @@ describe('ship reaction to a port bulletin', () => {
     expect(alone.summary.watching).toEqual(['city:h']);
   });
 
+  test('a veteran that has loitered longest is the head of the queue even when the report does not list it', () => {
+    const stop = (id: string, at: string, loiteringHours: number): BoardMessage => ({ id, kind: 'ship.observation', author: { role: 'ship', id, vessel: id }, at, summary: 's', shipmentId: id, signals: ['stationary-outside-port'], measured: { loiteringHours }, position: [103.9, 1.2], nearPort: 'singapore', provider: 'test', observedAt: at });
+    const veteran = stop('obs:veteran', '2026-10-31T11:59:00.000Z', 15);
+    const board: BoardMessage[] = [veteran, stop('obs:a', '2026-10-31T10:00:00.000Z', 3), stop('obs:b', '2026-10-31T10:00:00.000Z', 1), bulletin({ id: 'b', anchored: 2, evidenceIds: ['obs:a', 'obs:b'] })];
+    expect(react(meridian, board, {}, 'obs:veteran', now).shipment).toBe(meridian);
+    expect(react(meridian, board, {}, 'obs:a', now).shipment).toBe(meridian);
+    expect(react(meridian, board, {}, 'obs:b', now).reactions.singapore?.hours).toBe(ahead(1));
+  });
+
   test('the same bulletin changes nothing and a shorter queue relaxes the estimate; the delay is set, not added', () => {
     const first = react(meridian, [bulletin({ id: 'b1', anchored: 20 })], {}, null, now);
     const again = react(first.shipment, [bulletin({ id: 'b1', anchored: 20 })], first.reactions, null, now);
