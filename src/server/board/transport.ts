@@ -21,32 +21,41 @@ const itemFrom = (message: RelayMessage): Item | undefined => {
   return disruption ? { disruption } : undefined;
 };
 
+const isAlreadyPosted = (error: unknown): boolean => typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 409;
+/** Relay may keep two copies when a retry races a timeout; a board id is one fact, first copy wins. */
+const distinctById = (messages: readonly BoardMessage[]): readonly BoardMessage[] => messages.filter((message, index) => messages.findIndex(other => other.id === message.id) === index);
 const unavailable = (message: string): RelayOutcome<never> => ({ status: 'unavailable', message });
 
 export const boardTransport = (clientOf: (identity: RelayIdentity) => Promise<Client>) => ({
-  /** Idempotent: Relay dedupes on idempotencyKey = message.id, so a retried post never doubles. Returns the Relay message id. */
+  /** Idempotent: Relay dedupes on idempotencyKey = message.id (an identical retry returns the original), so a post never doubles. Returns the Relay message id, or the board id when Relay reports the key already used. */
   postBoard: async (identity: RelayIdentity, message: BoardMessage): Promise<RelayOutcome<string>> => {
     const valid = parseBoardMessage(message);
     if (!valid) return unavailable('Board message is malformed and was not posted.');
     return attemptRelay(async () => {
-      const sent = await (await clientOf(identity)).sendMessage({
-        to: `#${identity.channel}`, text: valid.summary, idempotencyKey: valid.id,
-        metadata: { kind: boardMetadataKind, message: valid },
-      });
-      return sent.messageId;
+      const client = await clientOf(identity);
+      try {
+        return (await client.sendMessage({
+          to: `#${identity.channel}`, text: valid.summary, idempotencyKey: valid.id,
+          metadata: { kind: boardMetadataKind, message: valid },
+        })).messageId;
+      } catch (error) {
+        // Relay answers 409 when the key was used with a different payload: the id is already on the board, and posting it again can never succeed.
+        if (isAlreadyPosted(error)) return valid.id;
+        throw error;
+      }
     }, 'Agent Relay board is unavailable. Post again on the next check.');
   },
   /** Bounded: only messages past the actor's persisted cursor, oldest first. An unavailable read leaves the cursor untouched. */
   readBoard: (identity: RelayIdentity, cursor: RelayCursor): Promise<RelayOutcome<BoardRead>> => attemptRelay(async () => {
     const client = await clientOf(identity);
     const poll = await pollSince(request => client.messages.list(identity.channel, request), cursor, boardFrom);
-    return { messages: poll.items, cursor: poll.cursor };
+    return { messages: distinctById(poll.items), cursor: poll.cursor };
   }, 'Agent Relay board is unavailable. Reading will retry without changing state.'),
   readChannel: (identity: RelayIdentity, cursor: RelayCursor): Promise<RelayOutcome<ChannelRead>> => attemptRelay(async () => {
     const client = await clientOf(identity);
     const poll = await pollSince(request => client.messages.list(identity.channel, request), cursor, itemFrom);
     return {
-      board: poll.items.flatMap(item => 'board' in item ? [item.board] : []),
+      board: distinctById(poll.items.flatMap(item => 'board' in item ? [item.board] : [])),
       disruptions: poll.items.flatMap(item => 'disruption' in item ? [item.disruption] : []),
       cursor: poll.cursor,
     };

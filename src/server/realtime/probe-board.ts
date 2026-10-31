@@ -1,0 +1,33 @@
+import { AgentRelay } from '@agent-relay/sdk';
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { boardTransport } from '../board/transport';
+import { recentBoard } from '../board/model';
+import { participant } from '../relay';
+import { startRelayLive } from '../realtime/live';
+
+const workspaceKey = /^RELAY_WORKSPACE_KEY=(.+)$/m.exec(await readFile('.env', 'utf8'))?.[1]?.trim();
+if (!workspaceKey) throw new Error('missing key');
+const channel = `gazetteer-lane-probe-${randomUUID().slice(0, 8)}`;
+const relay = new AgentRelay({ workspaceKey });
+const reg = await relay.agents.register({ name: `probe-board-${randomUUID().slice(0, 6)}`, type: 'agent' });
+const identity = { token: reg.token, channel };
+const client = await participant(identity);
+await client.channels.create({ name: channel, topic: 'lane probe' });
+const heard: Array<{ id: unknown; ms: number }> = [];
+let posted = 0;
+const live = await startRelayLive({ workspaceKey, onMessage: ({ channel: name, message }) => { if (name === channel) heard.push({ id: (message.metadata?.message as { id?: string } | undefined)?.id, ms: Date.now() - posted }); } });
+if (live.status !== 'ok') throw new Error(live.message);
+await new Promise(done => setTimeout(done, 1500));
+const transport = boardTransport(participant);
+const eta = (n: number) => ({ kind: 'ship.eta' as const, id: `probe-eta-${n}`, author: { role: 'ship' as const, id: 's-1', vessel: 'V' }, at: new Date().toISOString(), summary: `ETA ${n}`, shipmentId: 's-1', portId: 'singapore' as const, eta: '2026-11-03T00:00:00.000Z', previousEta: '2026-11-01T00:00:00.000Z' });
+for (const n of [1, 2, 3]) { const r = await transport.postBoard(identity, eta(n)); posted = Date.now(); console.log('post', n, r.status); }
+const msg3 = eta(3); const first3 = await transport.postBoard(identity, msg3); const same3 = await transport.postBoard(identity, msg3); const changed3 = await transport.postBoard(identity, { ...msg3, at: '2026-12-01T00:00:00.000Z' }); console.log('same payload', JSON.stringify([first3, same3]), 'changed payload', JSON.stringify(changed3));
+await new Promise(done => setTimeout(done, 5000));
+console.log('heard', JSON.stringify(heard));
+const viaWorkspaceKey = await recentBoard(request => relay.messages.list(channel, request));
+console.log('workspace-key recentBoard', viaWorkspaceKey.map(m => m.id).join(','));
+const read = await transport.readBoard(identity, null);
+console.log('readBoard', read.status === 'ok' ? read.value.messages.map(m => m.id).join(',') : read.message);
+await live.value.close();
+process.exit(0);

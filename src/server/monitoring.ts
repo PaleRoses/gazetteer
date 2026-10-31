@@ -1,3 +1,4 @@
+import { AgentRelay } from '@agent-relay/sdk';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { chmod, mkdir } from 'node:fs/promises';
@@ -6,10 +7,12 @@ import { createActorStub, createActorTransport, type ActorRpcMethod } from 'dura
 import { demoShipments, ports } from '../domain';
 import { relaySuccess, type Comment, type Dashboard, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import type { PortAgent, ShipmentAgent } from './actors';
+import { createBoardModel, recentBoard } from './board/model';
+import { boardFrom } from './board/transport';
 import { createCoalescer } from './realtime/coalesce';
 import { fileSeqStore, startRelayLive } from './realtime/live';
 import { createHub, type Subscribe } from './realtime/sse';
-import { disruptionFrom, workspaceOfChannel } from './relay';
+import { disruptionFrom, relayChannel, workspaceOfChannel } from './relay';
 
 type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume'>;
 type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume'>;
@@ -74,14 +77,17 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     return initialized.status === 'unavailable' ? initialized : relaySuccess(seeds);
   };
   const hub = createHub();
+  const relay = new AgentRelay({ workspaceKey });
+  const board = createBoardModel(workspaceId => recentBoard(request => relay.messages.list(relayChannel(workspaceId), request)));
   const dashboard = async (workspaceId: string): Promise<RelayOutcome<Dashboard>> => {
     const initialized = await initialize(workspaceId);
     if (initialized.status === 'unavailable') return initialized;
     const snapshots = await Promise.all(initialized.value.map(value => shipment(workspaceId, value.id).snapshot()));
     const retained = snapshots.filter((value): value is Shipment => value !== null);
     if (retained.length !== initialized.value.length) return { status: 'unavailable', message: 'A durable shipment is missing after initialization.' };
+    const posts = await board.board(workspaceId);
     const built: Dashboard = {
-      shipments: retained, ports,
+      shipments: retained, ports, ...(posts ? { board: posts } : {}),
       updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
       runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
     };
@@ -96,6 +102,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     await sequenceRelay(initialized.value.map(value => () => shipment(workspaceId, value.id).check()));
     await dashboard(workspaceId);
   }, error => console.error('Realtime refresh failed:', error instanceof Error ? error.message : 'unknown error'));
+  const announce = createCoalescer(async workspaceId => { await dashboard(workspaceId); }, error => console.error('Board announcement failed:', error instanceof Error ? error.message : 'unknown error'));
   const hasWorkspace = options.hasWorkspace ?? (workspaceId => options.workspaceIds.includes(workspaceId));
   const seq = fileSeqStore(resolve(dataDir, '..', 'relay-seq'));
   const live = await startRelayLive({
@@ -103,7 +110,10 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     onError: error => console.error('Relay live stream:', error instanceof Error ? error.message : 'unknown error'),
     onMessage: ({ channel, message }) => {
       const workspaceId = workspaceOfChannel(channel);
-      if (workspaceId && hasWorkspace(workspaceId) && disruptionFrom(message)) void refresh(workspaceId);
+      if (!workspaceId || !hasWorkspace(workspaceId)) return;
+      const post = boardFrom(message);
+      if (post && board.ingest(workspaceId, [post]) && hub.subscribers(workspaceId) > 0) void announce(workspaceId);
+      if (disruptionFrom(message)) void refresh(workspaceId);
     },
   });
   if (live.status === 'unavailable') console.warn(live.message);

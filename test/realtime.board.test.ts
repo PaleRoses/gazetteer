@@ -75,6 +75,21 @@ describe('board transport', () => {
     expect(idle).toEqual({ status: 'ok', value: { messages: [], cursor: second.value.cursor } });
   });
 
+  test('a Relay duplicate of one board id surfaces once, in its first position', async () => {
+    const channel = fakeChannel();
+    const transport = boardTransport(async () => channel.client);
+    await channel.raw.sendMessage({ text: 'a', metadata: { kind: boardMetadataKind, message: bulletin('b-1') } });
+    await channel.raw.sendMessage({ text: 'e', metadata: { kind: boardMetadataKind, message: eta('e-1') } });
+    await channel.raw.sendMessage({ text: 'a again', metadata: { kind: boardMetadataKind, message: bulletin('b-1') } });
+    const read = await transport.readBoard(identity, null);
+    expect(read.status === 'ok' && read.value.messages.map(message => message.id)).toEqual(['b-1', 'e-1']);
+  });
+
+  test('a key reused with a changed payload counts as already posted, not as an outage that would retry forever', async () => {
+    const conflict = { sendMessage: async () => { throw Object.assign(new Error('Idempotency-Key was reused with a different request payload'), { statusCode: 409 }); }, messages: { list: async () => [] } };
+    expect(await boardTransport(async () => conflict as never).postBoard(identity, bulletin('b-1'))).toEqual({ status: 'ok', value: 'b-1' });
+  });
+
   test('a provider failure is data and the caller keeps its cursor', async () => {
     const down = boardTransport(async () => { throw new Error('relay down'); });
     expect((await down.readBoard(identity, null)).status).toBe('unavailable');
