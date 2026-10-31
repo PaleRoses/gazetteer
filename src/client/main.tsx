@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, type JSX } from 'solid-js';
 import { render, Portal } from 'solid-js/web';
-import { Dialog, Tabs } from '@ark-ui/solid';
+import { Dialog, Menu, Tabs } from '@ark-ui/solid';
 import { Anchor, ArrowDownRight, ArrowRight, Check, ChevronDown, Compass, FlaskConical, Layers3, LogOut, MapPin, MessageSquare, Plus, Radio, Search, Send, Ship, TriangleAlert, Users, X } from 'lucide-solid';
 import { z } from 'zod';
 import type { Comment, Dashboard, Shipment, Workspace } from '../shared';
@@ -17,6 +17,7 @@ const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'CONNECTING'
 const riskLabel = { 'on-track': 'On schedule', watch: 'Watch', delayed: 'Delayed' };
 const textField = (data: FormData, key: string): string => { const value = data.get(key); return typeof value === 'string' ? value : ''; };
 const DECLINED_DEMO = 'gazetteer.demo.declined';
+const DEMO_EMAIL = 'demo@gazetteer.local';
 /** Resolves to an error message, or undefined once the session is set. */
 async function enterDemo(onSession: (session: Session) => void): Promise<string | undefined> {
   const result = await request('/api/demo-session', sessionSchema, {});
@@ -45,10 +46,9 @@ function Authentication(props: Readonly<{ onSession: (session: Session) => void;
     if (result.ok) props.onSession(result.value); else setError(result.error);
   }
   return <main class="auth-shell"><section class="auth-story"><Brand /><div class="auth-map"><MapBackdrop /></div><div class="auth-copy"><span class="eyebrow"><Radio size={14} /> A SHARED VIEW OF WHAT'S NEXT</span><h1>Cargo moves.<br />Stay ahead.</h1><p>Your shipments, their arrival times, and the changes that matter. All in one shared workspace.</p><div class="auth-features"><span><MapPin size={16} />Follow every shipment</span><span><TriangleAlert size={16} />See what needs attention</span><span><Users size={16} />Make the next call together</span></div></div><div class="auth-foot"><span>GAZETTEER / OPERATIONS</span><span>Clarity from origin to destination.</span></div></section>
-    <section class="auth-panel"><div class="auth-form-wrap"><span class="demo-tag"><FlaskConical size={13} /> SYNTHETIC DEMO</span><h2>{invited ? 'Join your team.' : signup() ? 'Your next clear view.' : 'Welcome back.'}</h2><p>{invited ? 'Sign in with your invited email, then accept your workspace invitation.' : signup() ? 'Create an account to explore your shared shipment workspace.' : 'Sign in to pick up where your team left off.'}</p>
+    <section class="auth-panel"><div class="auth-form-wrap"><Show when={props.demo}><button type="button" class="demo-skip" disabled={busy()} onClick={() => { void enterDemo(props.onSession).then(failed => { if (failed) setError(failed); }); }}><span class="demo-skip-label"><FlaskConical size={20} />Skip — open the demo workspace</span><small>No account needed. Simulated fleet, live map.</small><ArrowRight size={22} /></button><p class="demo-or"><span>or sign in with your account</span></p></Show><span class="demo-tag"><FlaskConical size={13} /> SYNTHETIC DEMO</span><h2>{invited ? 'Join your team.' : signup() ? 'Your next clear view.' : 'Welcome back.'}</h2><p>{invited ? 'Sign in with your invited email, then accept your workspace invitation.' : signup() ? 'Create an account to explore your shared shipment workspace.' : 'Sign in to pick up where your team left off.'}</p>
       <Tabs.Root value={mode()} onValueChange={details => { setMode(details.value === 'login' ? 'login' : 'signup'); setError(null); }}><Tabs.List class="auth-tabs"><Tabs.Trigger value="signup">Create account</Tabs.Trigger><Tabs.Trigger value="login">Sign in</Tabs.Trigger></Tabs.List></Tabs.Root>
       <form onSubmit={submit}><Show when={signup()}><label>Your name<input name="name" autocomplete="name" maxLength={80} required placeholder="Alex Morgan" /></label></Show><label>Email<input name="email" type="email" autocomplete="email" required placeholder="you@company.com" /></label><label>Password<input name="password" type="password" autocomplete={signup() ? 'new-password' : 'current-password'} minLength={12} required placeholder="At least 12 characters" /></label><Show when={signup()}><label>Workspace name <span class="optional">optional</span><input name="workspaceName" maxLength={100} placeholder="Your logistics team" /></label></Show><Show when={error()}>{message => <ErrorNote message={message()} />}</Show><button class="primary full" disabled={busy()}>{busy() ? 'Connecting…' : signup() ? 'Create workspace' : 'Sign in'}<ArrowRight size={16} /></button></form>
-      <Show when={props.demo}><button type="button" class="demo-enter" disabled={busy()} onClick={() => { void enterDemo(props.onSession).then(failed => { if (failed) setError(failed); }); }}><FlaskConical size={16} />Continue to demo workspace<ArrowRight size={16} /></button></Show>
       <p class="auth-disclaimer">Demo shipments and disruptions are simulated. No live vessel positions or carrier feeds are connected.</p></div></section></main>;
 }
 
@@ -157,7 +157,7 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
   </>;
 }
 
-function WorkspaceScreen(props: Readonly<{ session: Session; onSession: (session: Session) => void; onLogout: () => void }>) {
+function WorkspaceScreen(props: Readonly<{ session: Session; demo: boolean; onOpenDemo: () => void; onLogout: () => void; onSession: (session: Session) => void }>) {
   const [workspaceId, setWorkspaceId] = createSignal(props.session.workspaces[0]?.id ?? '');
   const [teamOpen, setTeamOpen] = createSignal(false);
   const [accepting, setAccepting] = createSignal(false);
@@ -174,7 +174,7 @@ function WorkspaceScreen(props: Readonly<{ session: Session; onSession: (session
     setAccepting(false);
     if (result.ok) { props.onSession({ ...props.session, workspaces: [...props.session.workspaces.filter(item => item.id !== result.value.id), result.value] }); setWorkspaceId(result.value.id); setTeamOpen(false); clearInvitation(); } else setError(result.error);
   }
-  return <div class="workspace-shell"><header class="topbar"><Brand /><div class="workspace-picker"><Layers3 size={15} /><label class="sr-only" for="workspace">Workspace</label><select id="workspace" value={workspaceId()} onChange={event => { setWorkspaceId(event.currentTarget.value); setTeamOpen(false); }}><For each={props.session.workspaces}>{item => <option value={item.id}>{item.name}</option>}</For></select><ChevronDown size={13} /></div><div class="topbar-right"><span class="demo-tag"><FlaskConical size={12} /> DEMO WORKSPACE</span><button class="team-button" onClick={() => setTeamOpen(true)} disabled={!workspace()}><Users size={15} />Team</button><span class="avatar" title={props.session.user.email}>{props.session.user.name.slice(0, 1).toUpperCase()}</span><button class="icon-button" onClick={props.onLogout} aria-label="Sign out"><LogOut size={16} /></button></div></header>
+  return <div class="workspace-shell"><header class="topbar"><Brand /><div class="workspace-picker"><Layers3 size={15} /><label class="sr-only" for="workspace">Workspace</label><select id="workspace" value={workspaceId()} onChange={event => { setWorkspaceId(event.currentTarget.value); setTeamOpen(false); }}><For each={props.session.workspaces}>{item => <option value={item.id}>{item.name}</option>}</For></select><ChevronDown size={13} /></div><div class="topbar-right"><span class="demo-tag"><FlaskConical size={12} /> DEMO WORKSPACE</span><button class="team-button" onClick={() => setTeamOpen(true)} disabled={!workspace()}><Users size={15} />Team</button><Menu.Root positioning={{ placement: 'bottom-end' }} onSelect={details => { if (details.value === 'demo') props.onOpenDemo(); }}><Menu.Trigger class="avatar avatar-menu" title={props.session.user.email} aria-label={`Account menu for ${props.session.user.email}`}>{props.session.user.name.slice(0, 1).toUpperCase()}</Menu.Trigger><Portal><Menu.Positioner><Menu.Content class="account-menu"><div class="account-menu-who"><strong>{props.session.user.name}</strong><small>{props.session.user.email}</small></div><Show when={props.demo && props.session.user.email !== DEMO_EMAIL}><Menu.Item value="demo" class="account-menu-item"><FlaskConical size={15} />Open demo workspace</Menu.Item></Show><Menu.Item value="signout" class="account-menu-item" onSelect={props.onLogout}><LogOut size={15} />Sign out</Menu.Item></Menu.Content></Menu.Positioner></Portal></Menu.Root><button class="icon-button" onClick={props.onLogout} aria-label="Sign out"><LogOut size={16} /></button></div></header>
     <div class="simulation-banner"><span><span class="simulation-light" />Synthetic data<span class="banner-separator">/</span>Not live vessel tracking. Test a disruption to see its impact.</span><span class="banner-scope">ALL TIMES UTC</span></div>
     <Show when={inviteToken()}><div class="invite-banner"><span><Users size={16} />You have a workspace invitation. Signed in as {props.session.user.email}.</span><div class="invite-actions"><button disabled={accepting()} onClick={() => { void acceptInvitation(); }}>{accepting() ? 'Joining…' : 'Accept invitation'}<ArrowRight size={14} /></button><button disabled={accepting()} onClick={clearInvitation}>Use my workspace instead</button></div></div></Show>
     <Show when={error()}>{message => <div class="global-error"><ErrorNote message={message()} /></div>}</Show>
@@ -189,17 +189,40 @@ function App() {
   const [demo, setDemo] = createSignal(false);
   const controller = new AbortController();
   onCleanup(() => controller.abort());
-  void request('/api/session', sessionSchema, undefined, controller.signal).then(result => { if (!controller.signal.aborted) { if (result.ok) setSession(result.value); else if (result.status !== 401) setInitialError(result.error); } }).then(async () => {
-    if (controller.signal.aborted || session() !== null || initialError() !== null) { setLoading(false); return; }
+  const demoPath = window.location.pathname.replace(/\/+$/, '') === '/demo';
+  void (async () => {
+    const found = await request('/api/session', sessionSchema, undefined, controller.signal);
+    if (controller.signal.aborted) return;
+    if (!found.ok && found.status !== 401) { setInitialError(found.error); setLoading(false); return; }
     const offer = await request('/api/demo-session', z.object({ available: z.boolean() }), undefined, controller.signal);
+    if (controller.signal.aborted) return;
     const available = offer.ok && offer.value.available;
     setDemo(available);
-    if (available && !window.sessionStorage.getItem(DECLINED_DEMO)) { const failed = await enterDemo(setSession); if (failed) setInitialError(failed); }
-    if (!controller.signal.aborted) setLoading(false);
-  });
+    let current = found.ok ? found.value : null;
+    if (demoPath) {
+      window.history.replaceState(null, '', '/');
+      if (!available) setInitialError('The demo workspace is not available on this server.');
+      else {
+        if (current && current.user.email !== DEMO_EMAIL) { await request('/api/logout', z.unknown(), {}); current = null; }
+        const failed = await enterDemo(next => { current = next; });
+        if (failed) setInitialError(failed);
+      }
+    } else if (!current && available && !window.sessionStorage.getItem(DECLINED_DEMO)) {
+      const failed = await enterDemo(next => { current = next; });
+      if (failed) setInitialError(failed);
+    }
+    if (controller.signal.aborted) return;
+    setSession(current);
+    setLoading(false);
+  })();
+  async function openDemo() {
+    await request('/api/logout', z.unknown(), {});
+    const failed = await enterDemo(setSession);
+    if (failed) { setSession(null); setInitialError(failed); }
+  }
   async function logout() { const result = await request('/api/logout', z.unknown(), {}); if (result.ok) { window.sessionStorage.setItem(DECLINED_DEMO, '1'); setSession(null); } else window.alert(result.error); }
   return <Show when={!loading()} fallback={<div class="loading-screen"><Brand /><span>Opening your workspace…</span></div>}>
-    <Show when={session()} fallback={<><Show when={initialError()}>{message => <div class="initial-error"><ErrorNote message={message()} /></div>}</Show><Authentication onSession={setSession} demo={demo()} /></>}>{current => <WorkspaceScreen session={current()} onSession={setSession} onLogout={() => { void logout(); }} />}</Show>
+    <Show when={session()?.user.id} keyed fallback={<><Show when={initialError()}>{message => <div class="initial-error"><ErrorNote message={message()} /></div>}</Show><Authentication onSession={setSession} demo={demo()} /></>}>{userId => <Show when={session()}>{current => <WorkspaceScreen session={current()} demo={demo()} onOpenDemo={() => { void openDemo(); }} onSession={setSession} onLogout={() => { void logout(); }} />}</Show>}</Show>
   </Show>;
 }
 
