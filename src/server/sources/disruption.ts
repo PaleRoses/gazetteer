@@ -19,15 +19,15 @@ export const circleOf = (notice: Notice): Circle | undefined => {
   }
 };
 
-/** A live notice as a Disruption. The delay is null on purpose: no feed states one, and inventing it is the assessor's job, never ours. */
-export const toDisruption = ({ notice, hit }: PortNotice): Disruption => {
+/** A live notice as a Disruption. A lane-only notice has one id whichever port reports it, so the relay and the shipments dedupe it even if the nearest port changes. The delay is null on purpose: no feed states one, and inventing it is the assessor's job, never ours. */
+export const toDisruption = ({ notice, hit, lanes }: PortNotice): Disruption => {
   const name = places.find(place => place.id === hit.portId)?.name ?? hit.portId;
   const geometry = circleOf(notice);
   return {
-    id: `${notice.id}@${hit.portId}`, portId: hit.portId, delayHours: null,
+    id: `${notice.id}@${hit.basis === 'nearest-to-lane' ? 'lane' : hit.portId}`, portId: hit.portId, delayHours: null,
     evidence: {
       id: notice.id, source: 'live', provider: notice.provider, url: notice.url, title: notice.title,
-      detail: `${notice.detail} ${evidenceLine(hit, name)}`.trim(), observedAt: notice.observedAt,
+      detail: `${notice.detail} ${evidenceLine(hit, name, lanes)}`.trim(), observedAt: notice.observedAt,
     },
     ...(geometry === undefined ? {} : { geometry }),
   };

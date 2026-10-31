@@ -14,7 +14,7 @@ export const relevanceHours: Readonly<Record<NoticeKind, number>> = {
 
 export type Place = Readonly<{ id: PortId; name: string; coordinates: LonLat }>;
 export type Lane = Readonly<{ id: string; path: readonly LonLat[] }>;
-export type PortHit = Readonly<{ portId: PortId; distanceKm: number; radiusKm: number; basis: 'distance' | 'declared-zone' }>;
+export type PortHit = Readonly<{ portId: PortId; distanceKm: number; radiusKm: number; basis: 'distance' | 'declared-zone' | 'nearest-to-lane' }>;
 export type LaneHit = Readonly<{ laneId: string; segment: number; distanceKm: number; radiusKm: number }>;
 export type Exposure = Readonly<{ ports: readonly PortHit[]; lanes: readonly LaneHit[] }>;
 
@@ -47,7 +47,17 @@ export const exposure = (notice: Notice, places: readonly Place[], lanes: readon
   lanes: notice.geometry.kind === 'zone' ? [] : lanes.map(lane => laneHit(notice, lane)).filter(present),
 });
 
-export const evidenceLine = (hit: PortHit, name: string): string =>
-  hit.basis === 'declared-zone'
-    ? `${name} lies inside the notice's declared forecast zone.`
-    : `${Math.round(hit.distanceKm)} km from ${name} (reach ${hit.radiusKm} km).`;
+/** The port closest to a located notice; zone notices name their ports and have no position. */
+export const nearestPort = (notice: Notice, places: readonly Place[]): Readonly<{ place: Place; distanceKm: number }> | null =>
+  places
+    .flatMap(place => { const distance = distanceToGeometryKm(notice.geometry, place.coordinates); return distance === null ? [] : [{ place, distanceKm: distance }]; })
+    .reduce<Readonly<{ place: Place; distanceKm: number }> | null>((best, candidate) => best === null || candidate.distanceKm < best.distanceKm ? candidate : best, null);
+
+export const evidenceLine = (hit: PortHit, name: string, lanes: readonly LaneHit[] = []): string => {
+  const lane = lanes.map(found => `${found.laneId} (${Math.round(found.distanceKm)} km off the track)`).join(', ');
+  switch (hit.basis) {
+    case 'declared-zone': return `${name} lies inside the notice's declared forecast zone.`;
+    case 'distance': return `${Math.round(hit.distanceKm)} km from ${name} (reach ${hit.radiusKm} km).`;
+    case 'nearest-to-lane': return `Reaches no port; it crosses the sea lane of ${lane}. ${name} is the nearest port, ${Math.round(hit.distanceKm)} km away, and reports it.`;
+  }
+};
