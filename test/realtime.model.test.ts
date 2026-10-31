@@ -52,14 +52,32 @@ describe('createBoardModel', () => {
     expect(model.ingest('w', [eta(2)])).toBe(true);
     expect(model.ingest('other', [eta(1)])).toBe(true);
   });
-  test('absence is not emptiness: a failed hydration stays undefined and is retried, a later success merges with live messages', async () => {
-    let attempts = 0;
-    const model = createBoardModel(async () => { attempts += 1; if (attempts === 1) throw new Error('relay down'); return [eta(1), eta(2)]; });
+  test('reading never blocks: the board is undefined until the background read lands, which then announces itself and merges with live messages', async () => {
+    let release: (messages: readonly BoardMessage[]) => void = () => undefined;
+    const announced: string[] = [];
+    const model = createBoardModel(() => new Promise(done => { release = done; }), { onHydrated: id => announced.push(id) });
     model.ingest('w', [eta(3)]);
-    expect(await model.board('w')).toBeUndefined();
-    expect((await model.board('w'))?.map(message => message.id)).toEqual(['eta-0001', 'eta-0002', 'eta-0003']);
-    await model.board('w');
+    expect(model.board('w')).toBeUndefined();
+    expect(model.board('w')).toBeUndefined();
+    release([eta(1), eta(2)]);
+    await new Promise(done => setTimeout(done, 5));
+    expect(model.board('w')?.map(message => message.id)).toEqual(['eta-0001', 'eta-0002', 'eta-0003']);
+    expect(announced).toEqual(['w']);
+  });
+  test('a failed read is retried only after the cool-down, never in a tight loop, and one read is in flight at a time', async () => {
+    let attempts = 0;
+    let clock = 0;
+    const model = createBoardModel(async () => { attempts += 1; if (attempts === 1) throw new Error('relay down'); return [eta(1)]; }, { retryAfterMs: 1000, now: () => clock });
+    model.board('w'); model.board('w');
+    await new Promise(done => setTimeout(done, 5));
+    expect(attempts).toBe(1);
+    clock = 500; model.board('w');
+    await new Promise(done => setTimeout(done, 5));
+    expect(attempts).toBe(1);
+    clock = 1500; model.board('w');
+    await new Promise(done => setTimeout(done, 5));
     expect(attempts).toBe(2);
+    expect(model.board('w')?.map(message => message.id)).toEqual(['eta-0001']);
   });
 });
 

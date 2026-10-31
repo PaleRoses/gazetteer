@@ -25,10 +25,19 @@ export async function recentBoard(list: ListPage<RelayMessage>, capacity = board
   return walk(undefined, [], 0);
 }
 
-/** Per-workspace read model behind Dashboard.board. `hydrate` runs once per workspace until it succeeds. */
-export function createBoardModel(hydrate: (workspaceId: string) => Promise<readonly BoardMessage[]>) {
+export type BoardModelOptions = Readonly<{
+  /** Called once a workspace's history has been read, so a pushed dashboard can gain its board. */
+  onHydrated?: (workspaceId: string) => void;
+  retryAfterMs?: number;
+  now?: () => number;
+}>;
+
+/** Per-workspace read model behind Dashboard.board. History is read in the background, once per workspace, and never blocks a caller. */
+export function createBoardModel(hydrate: (workspaceId: string) => Promise<readonly BoardMessage[]>, { onHydrated = () => undefined, retryAfterMs = 5000, now = Date.now }: BoardModelOptions = {}) {
   const boards = new Map<string, readonly BoardMessage[]>();
   const hydrated = new Set<string>();
+  const inflight = new Set<string>();
+  const failedAt = new Map<string, number>();
   const ingest = (workspaceId: string, incoming: readonly BoardMessage[]): boolean => {
     const current = boards.get(workspaceId) ?? [];
     const next = mergeBoard(current, incoming);
@@ -36,14 +45,22 @@ export function createBoardModel(hydrate: (workspaceId: string) => Promise<reado
     boards.set(workspaceId, next);
     return changed;
   };
+  const warm = (workspaceId: string): void => {
+    const failed = failedAt.get(workspaceId);
+    if (hydrated.has(workspaceId) || inflight.has(workspaceId) || (failed !== undefined && now() - failed < retryAfterMs)) return;
+    inflight.add(workspaceId);
+    void hydrate(workspaceId).then(history => {
+      ingest(workspaceId, history);
+      hydrated.add(workspaceId);
+      failedAt.delete(workspaceId);
+      onHydrated(workspaceId);
+    }, () => { failedAt.set(workspaceId, now()); }).finally(() => { inflight.delete(workspaceId); });
+  };
   return {
     ingest,
-    /** Undefined until the workspace has been read once: absence must not read as "the board is empty". */
-    board: async (workspaceId: string): Promise<readonly BoardMessage[] | undefined> => {
-      if (!hydrated.has(workspaceId)) {
-        const history = await hydrate(workspaceId).then(messages => messages, () => undefined);
-        if (history) { ingest(workspaceId, history); hydrated.add(workspaceId); }
-      }
+    /** Undefined until the workspace has been read once: absence must not read as "the board is empty". Starts the read when needed. */
+    board: (workspaceId: string): readonly BoardMessage[] | undefined => {
+      warm(workspaceId);
       return hydrated.has(workspaceId) ? boards.get(workspaceId) ?? [] : undefined;
     },
   };

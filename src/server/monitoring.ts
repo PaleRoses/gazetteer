@@ -64,7 +64,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
 
   const hub = createHub();
   const relay = new AgentRelay({ workspaceKey });
-  const board = createBoardModel(workspaceId => recentBoard(request => relay.messages.list(relayChannel(workspaceId), request)));
+  const board = createBoardModel(workspaceId => recentBoard(request => relay.messages.list(relayChannel(workspaceId), request)), { onHydrated: workspaceId => { if (hub.subscribers(workspaceId) > 0) void announce(workspaceId); } });
   /** Relay is rate limited and slow: every Relay-touching actor call from here shares three slots. */
   const relayLimit = createLimiter(3);
 
@@ -94,7 +94,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     try {
       const retained = await Promise.all(seedsOf(workspaceId).map(async seed =>
         (startup.isReady(workspaceId, shipKey(seed.id)) ? await shipment(workspaceId, seed.id).snapshot().catch(() => null) : null) ?? seed));
-      const posts = await board.board(workspaceId);
+      const posts = board.board(workspaceId);
       const waiting = queuedFor(workspaceId).length;
       const built: Dashboard = {
         shipments: retained, ports, ...(posts ? { board: posts, portStatus: portStatuses(ports, retained, posts) } : {}),
