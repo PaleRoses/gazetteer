@@ -5,7 +5,6 @@ import { render, Portal } from 'solid-js/web';
 import { Dialog, Menu, Tabs } from '@ark-ui/solid';
 import { ArrowDownRight, ArrowRight, Bell, Check, ChevronDown, FlaskConical, Layers3, LogOut, MapPin, MessageSquare, Plus, Radio, Search, Send, Ship, TriangleAlert, Users, X } from 'lucide-solid';
 import { z } from 'zod';
-import { portIds } from '../core/ports';
 import type { Comment, Dashboard, Diversion, Shipment, Workspace } from '../core/types';
 import { commentsSchema, dashboardSchema, invitationSchema, membersSchema, request, sessionSchema, workspaceSchema, type Invitation, type Session } from './api';
 import { MapBackdrop, ShipmentMap } from './Map';
@@ -15,6 +14,8 @@ import { ActorLine, PixelShip } from './ActorLine';
 import { SocietyPanel } from './SocietyPanel';
 import { date, EvidenceCard, portName, RiskBadge, time } from './presentation';
 import { AgentBoard } from './AgentBoard';
+import { SimulationPage } from './SimulationPage';
+import type { SimulationResult } from '../core/simulation';
 import { NewsPage } from './NewsPage';
 import './feed-pages.css';
 import { RouteCard, RouteDetails, routeName } from './Routes';
@@ -135,11 +136,11 @@ function ShipmentCard(props: Readonly<{ shipment: Shipment; selected: boolean; o
 }
 
 function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
-  const [simulating, setSimulating] = createSignal(false);
+  const [simulation, setSimulation] = createSignal<SimulationResult | null>(null);
   const [editing, setEditing] = createSignal<Shipment | 'new' | null>(null);
   const [operating, setOperating] = createSignal(false);
   const [operationError, setOperationError] = createSignal<string | null>(null);
-  const feed = createWorkspaceFeed(props.workspaceId, simulating);
+  const feed = createWorkspaceFeed(props.workspaceId, () => false);
   const dashboard = feed.dashboard;
   const [view, setView] = createSignal<View>(readView(window.location.hash, props.workspaceId));
   const [selectedId, setSelectedId] = createSignal<string | null>(null, { equals: false });
@@ -166,7 +167,7 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
   window.addEventListener('keydown', escape); onCleanup(() => window.removeEventListener('keydown', escape));
   const route = createMemo(() => { const current = view(); return current.kind === 'route' ? dashboard()?.routes?.find(r => r.id === current.id) : undefined; });
   const detail = () => view().kind === 'route' || view().kind === 'voyage';
-  const feedPage = () => view().kind === 'news' || view().kind === 'activity' || view().kind === 'alerts';
+  const feedPage = () => view().kind === 'news' || view().kind === 'activity' || view().kind === 'alerts' || view().kind === 'simulation';
   const routesMode = () => view().kind === 'routes' || view().kind === 'route';
   const routes = createMemo(() => dashboard()?.routes?.filter(r => routeName(r, dashboard()!).toLowerCase().includes(query().trim().toLowerCase())).toSorted((left, right) => right.attention - left.attention) ?? []);
   const riskOrder: Readonly<Record<Shipment['risk'], number>> = { delayed: 0, watch: 1, 'on-track': 2 };
@@ -188,21 +189,12 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
     if (operation.action === 'remove') { setSelectedId(null); navigate({ kind: 'shipments' }); }
     return true;
   }
-  async function simulate(event: SubmitEvent & { currentTarget: HTMLFormElement }) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const portId = portIds.find(id => id === textField(data, 'portId'));
-    const delayHours = Number(textField(data, 'delayHours'));
-    if (!portId || !Number.isInteger(delayHours) || delayHours < 1 || delayHours > 168) { setError('Choose a city and a delay between 1 and 168 hours.'); return; }
-    setSimulating(true); setError(null);
-    const result = await request(`/api/workspaces/${props.workspaceId}/disruptions`, dashboardSchema, { portId, delayHours }); setSimulating(false);
-    if (result.ok) feed.accept(result.value); else setError(result.error);
-  }
   return <>
     <div class="simulation-banner"><span><span class="simulation-light" />{dashboard()?.mode === 'simulation' ? 'Simulated sources' : dashboard() ? 'Mixed-source workspace' : 'Connecting to workspace'}<span class="banner-separator">/</span>{dashboard()?.mode === 'simulation' ? 'Current notices are simulated. No live tracking is implied.' : 'Source provenance is shown on each evidence item.'}</span><span class="banner-scope">ALL TIMES UTC</span></div>
     <Show when={failure()}>{message => <div class="global-error"><ErrorNote message={message()} /><button type="button" class="retry-button" onClick={() => { setError(null); feed.retry(); }}>Retry</button></div>}</Show>
     <Show when={editing()} keyed>{item => <Show when={dashboard()}>{current => <VesselEditor shipment={item === 'new' ? undefined : item} dashboard={current()} busy={operating()} error={operationError()} execute={operate} close={() => setEditing(null)} />}</Show>}</Show>
     <Show when={view().kind === 'alerts'}><AlertsPage dashboard={dashboard()} busy={operating()} error={operationError()} execute={operate} openVoyage={openVoyage} notifications={notifications} /></Show>
+    <Show when={view().kind === 'simulation'}><SimulationPage dashboard={dashboard()} result={simulation()} onResult={setSimulation} /></Show>
     <Show when={view().kind === 'news'}><NewsPage dashboard={dashboard()} onInspect={option => { openVoyage(option.shipmentId); setInspected(option); }} /></Show>
     <Show when={view().kind === 'activity'}><div class="activity-page"><details class="activity-evidence"><summary>Port risk & attributed evidence chains</summary><Show when={dashboard()}>{current => <SocietyPanel dashboard={current()} onSelectShip={openVoyage} threadId={threadId()} onOpenMessage={setThreadId} />}</Show></details><AgentBoard dashboard={dashboard()} connection={feed.mode()} /></div></Show>
     <Show when={!feedPage()}>
@@ -220,7 +212,6 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
         <Show when={detail() && !(route() || selected())}><aside class="detail-panel"><h2>Briefing unavailable</h2><p>This item is not in this workspace.</p><button onClick={closeDetail}>Return to monitoring</button></aside></Show>
       </>}</Show>
     </main>
-    <section class="simulation-section" id="simulation" aria-labelledby="simulation-title"><span class="section-kicker">SIMULATION</span><h2 id="simulation-title">Test a city disruption</h2><p>Synthetic inputs only. This publishes a port-delay scenario to the shared actor board; it is not a real port event.</p><form onSubmit={simulate}><label>City<select name="portId"><For each={dashboard()?.ports ?? []}>{port => <option value={port.id} selected={port.id === 'singapore'}>{port.name}</option>}</For></select></label><label>Congestion delay (hours)<input name="delayHours" type="number" min="1" max="168" step="1" value="36" required /></label><button class="primary" disabled={simulating() || !dashboard()}>{simulating() ? 'Publishing scenario…' : 'Simulate port delay'}</button></form><p class="muted">Storm simulation is unavailable: the current endpoint supports port-delay scenarios only.</p></section>
     <Show when={dashboard()}>{current => <SocietyPanel dashboard={current()} onSelectShip={setSelectedId} threadId={threadId()} onOpenMessage={setThreadId} />}</Show>
     </Show>
   </>;
@@ -243,7 +234,7 @@ function WorkspaceScreen(props: Readonly<{ session: Session; demo: boolean; onOp
     setAccepting(false);
     if (result.ok) { props.onSession({ ...props.session, workspaces: [...props.session.workspaces.filter(item => item.id !== result.value.id), result.value] }); setWorkspaceId(result.value.id); setTeamOpen(false); clearInvitation(); } else setError(result.error);
   }
-  return <div class="workspace-shell"><header class="topbar"><Brand /><nav class="primary-nav" aria-label="Primary"><a href="#world">World</a><a href={viewHash({ kind: 'routes' }, workspaceId())}>Routes</a><a href={viewHash({ kind: 'news' }, workspaceId())}>Intelligence</a><a href={viewHash({ kind: 'activity' }, workspaceId())}>Agents</a><a href={viewHash({ kind: 'alerts' }, workspaceId())}>Alerts</a><a href="#actor-board">Relay</a><a href="#simulation">Simulation</a></nav><div class="workspace-picker"><Layers3 size={15} /><label class="sr-only" for="workspace">Workspace</label><select id="workspace" value={workspaceId()} onChange={event => { setWorkspaceId(event.currentTarget.value); setTeamOpen(false); }}><For each={props.session.workspaces}>{item => <option value={item.id}>{item.name}</option>}</For></select><ChevronDown size={13} /></div><div class="topbar-right"><span class="demo-tag"><Users size={12} /> SHARED WORKSPACE</span><button class="team-button" onClick={() => setTeamOpen(true)} disabled={!workspace()}><Users size={15} />Team</button><Menu.Root positioning={{ placement: 'bottom-end' }} onSelect={details => { if (details.value === 'demo') props.onOpenDemo(); }}><Menu.Trigger class="avatar avatar-menu" title={props.session.user.email} aria-label={`Account menu for ${props.session.user.email}`}>{props.session.user.name.slice(0, 1).toUpperCase()}</Menu.Trigger><Portal><Menu.Positioner><Menu.Content class="account-menu"><div class="account-menu-who"><strong>{props.session.user.name}</strong><small>{props.session.user.email}</small></div><Show when={props.demo && props.session.user.email !== DEMO_EMAIL}><Menu.Item value="demo" class="account-menu-item"><FlaskConical size={15} />Open demo workspace</Menu.Item></Show><Menu.Item value="signout" class="account-menu-item" onSelect={props.onLogout}><LogOut size={15} />Sign out</Menu.Item></Menu.Content></Menu.Positioner></Portal></Menu.Root><button class="icon-button" onClick={props.onLogout} aria-label="Sign out"><LogOut size={16} /></button></div></header>
+  return <div class="workspace-shell"><header class="topbar"><Brand /><nav class="primary-nav" aria-label="Primary"><a href="#world">World</a><a href={viewHash({ kind: 'routes' }, workspaceId())}>Routes</a><a href={viewHash({ kind: 'news' }, workspaceId())}>Intelligence</a><a href={viewHash({ kind: 'activity' }, workspaceId())}>Agents</a><a href={viewHash({ kind: 'alerts' }, workspaceId())}>Alerts</a><a href="#actor-board">Relay</a><a href={viewHash({ kind: 'simulation' }, workspaceId())}>Simulation</a></nav><div class="workspace-picker"><Layers3 size={15} /><label class="sr-only" for="workspace">Workspace</label><select id="workspace" value={workspaceId()} onChange={event => { setWorkspaceId(event.currentTarget.value); setTeamOpen(false); }}><For each={props.session.workspaces}>{item => <option value={item.id}>{item.name}</option>}</For></select><ChevronDown size={13} /></div><div class="topbar-right"><span class="demo-tag"><Users size={12} /> SHARED WORKSPACE</span><button class="team-button" onClick={() => setTeamOpen(true)} disabled={!workspace()}><Users size={15} />Team</button><Menu.Root positioning={{ placement: 'bottom-end' }} onSelect={details => { if (details.value === 'demo') props.onOpenDemo(); }}><Menu.Trigger class="avatar avatar-menu" title={props.session.user.email} aria-label={`Account menu for ${props.session.user.email}`}>{props.session.user.name.slice(0, 1).toUpperCase()}</Menu.Trigger><Portal><Menu.Positioner><Menu.Content class="account-menu"><div class="account-menu-who"><strong>{props.session.user.name}</strong><small>{props.session.user.email}</small></div><Show when={props.demo && props.session.user.email !== DEMO_EMAIL}><Menu.Item value="demo" class="account-menu-item"><FlaskConical size={15} />Open demo workspace</Menu.Item></Show><Menu.Item value="signout" class="account-menu-item" onSelect={props.onLogout}><LogOut size={15} />Sign out</Menu.Item></Menu.Content></Menu.Positioner></Portal></Menu.Root><button class="icon-button" onClick={props.onLogout} aria-label="Sign out"><LogOut size={16} /></button></div></header>
     <Show when={inviteToken()}><div class="invite-banner"><span><Users size={16} />You have a workspace invitation. Signed in as {props.session.user.email}.</span><div class="invite-actions"><button disabled={accepting()} onClick={() => { void acceptInvitation(); }}>{accepting() ? 'Joining…' : 'Accept invitation'}<ArrowRight size={14} /></button><button disabled={accepting()} onClick={clearInvitation}>Use my workspace instead</button></div></div></Show>
     <Show when={error()}>{message => <div class="global-error"><ErrorNote message={message()} /></div>}</Show>
     <Show when={!inviteToken() ? workspace()?.id : undefined} keyed>{id => <WorkspaceOperations workspaceId={id} />}</Show>
