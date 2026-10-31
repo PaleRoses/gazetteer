@@ -4,6 +4,7 @@ import { demoShipments } from '../../../src/core/demo';
 import { ports } from '../../../src/core/ports';
 import { relaySuccess, type Dashboard } from '../../../src/core/types';
 import { createAccess } from '../../../src/server/access/access';
+import { createBookings } from '../../../src/server/booking/ledger';
 import { createApi } from '../../../src/server/http/api';
 import type { Monitoring } from '../../../src/server/runtime/monitoring';
 
@@ -216,4 +217,86 @@ test('fleet mutations require workspace membership, same origin and valid fields
     expect((await api(request(path, owner.cookie, operation))).status).toBe(200);
     expect(calls).toEqual([`${workspace}:fleetowner`]);
   } finally { access.close(); }
+});
+
+describe('bookings', () => {
+  test('are readable by a member of their workspace only, scoped to it, and other methods are refused', async () => {
+    const access = createAccess(':memory:');
+    const ledger = createBookings(':memory:');
+    const api = createApi({ access, monitoring: monitoringFixture, origin, bookings: ledger });
+    const owner = await signup(api, 'owner');
+    const other = await signup(api, 'other');
+    const mine = owner.workspaces[0];
+    const theirs = other.workspaces[0];
+    if (!mine || !theirs) throw new Error('Workspaces missing');
+    const future = (hours: number): string => new Date(Date.now() + hours * 3_600_000).toISOString();
+    const held = ledger.hold({ key: 'k1', workspaceId: mine.id, caseId: 'case-1', resource: 'rotterdam:reefer-12', start: future(2), end: future(6), priceEur: 180, expiresAt: future(1), heldBy: 'cargo:meridian-star' });
+    ledger.hold({ key: 'k2', workspaceId: theirs.id, caseId: 'case-9', resource: 'rotterdam:reefer-13', start: future(2), end: future(6), priceEur: 90, expiresAt: future(1), heldBy: 'cargo:other' });
+    if (!held.ok) throw new Error(held.error);
+    const path = `/api/workspaces/${mine.id}/bookings`;
+    expect((await api(request(path))).status).toBe(401);
+    expect((await api(request(path, other.cookie))).status).toBe(403);
+    const reply = await api(request(path, owner.cookie));
+    expect(reply.status).toBe(200);
+    expect(await reply.json()).toEqual({ bookings: [held.value] });
+    expect((await api(request(path, owner.cookie, {}))).status).toBe(405);
+    access.close();
+    ledger.close();
+  });
+});
+
+describe('the act 2 demo controls', () => {
+  test('are POST-only, for a member of the workspace, and answer with the dashboard the control produced', async () => {
+    const access = createAccess(':memory:');
+    const called: string[] = [];
+    const monitoring = {
+      ...monitoringFixture,
+      delayMeridianStar: async (workspaceId: string) => { called.push(`delay:${workspaceId}`); return relaySuccess(dashboard); },
+      withdrawTruck: async (workspaceId: string) => { called.push(`withdraw:${workspaceId}`); return relaySuccess(dashboard); },
+      restartCargo: async (workspaceId: string) => { called.push(`restart:${workspaceId}`); return { status: 'unavailable' as const, message: 'The cargo agent is not ready yet.' }; },
+    };
+    const api = createApi({ access, monitoring, origin });
+    const owner = await signup(api, 'owner');
+    const other = await signup(api, 'other');
+    const mine = owner.workspaces[0];
+    if (!mine) throw new Error('Workspace missing');
+    const delay = `/api/workspaces/${mine.id}/delay-meridian-star`;
+    const withdraw = `/api/workspaces/${mine.id}/withdraw-truck`;
+    const restart = `/api/workspaces/${mine.id}/restart-cargo`;
+    expect((await api(request(withdraw, undefined, {}))).status).toBe(401);
+    expect((await api(request(withdraw, other.cookie, {}))).status).toBe(403);
+    expect((await api(request(delay, other.cookie, {}))).status).toBe(403);
+    expect((await api(request(delay, owner.cookie))).status).toBe(405);
+    expect(called).toEqual([]);
+    expect((await api(request(delay, owner.cookie, {}))).status).toBe(200);
+    const done = await api(request(withdraw, owner.cookie, {}));
+    expect(done.status).toBe(200);
+    expect((await done.json() as Dashboard).updatedAt).toBe(dashboard.updatedAt);
+    const refused = await api(request(restart, owner.cookie, {}));
+    expect(refused.status).toBe(503);
+    expect(called).toEqual([`delay:${mine.id}`, `withdraw:${mine.id}`, `restart:${mine.id}`]);
+    expect((await api(request(withdraw, owner.cookie))).status).toBe(405);
+    expect((await api(request(restart, owner.cookie))).status).toBe(405);
+    access.close();
+  });
+});
+
+describe('demo access', () => {
+  const available = async (demo: 'off' | 'loopback' | 'public', at: string): Promise<unknown> =>
+    (await (await createApi({ access: createAccess(':memory:'), monitoring: monitoringFixture, origin: at, demo })(new Request(`${at}/api/demo-session`))).json());
+  test('the waive-through opens on a public origin only when it is set to public, and never when off', async () => {
+    expect(await available('loopback', 'https://gazetteer.example')).toEqual({ available: false });
+    expect(await available('public', 'https://gazetteer.example')).toEqual({ available: true });
+    expect(await available('loopback', 'http://localhost:4310')).toEqual({ available: true });
+    expect(await available('off', 'http://localhost:4310')).toEqual({ available: false });
+  });
+});
+
+describe('origin check', () => {
+  test('a POST is accepted from the configured origin and from this machine, and refused from anywhere else', async () => {
+    const post = async (from: string): Promise<number> => (await createApi({ access: createAccess(':memory:'), monitoring: monitoringFixture, origin, demo: 'public' })(new Request(`${origin}/api/demo-session`, { method: 'POST', headers: { Origin: from, 'Content-Type': 'application/json' }, body: '{}' }))).status;
+    expect(await post(origin)).not.toBe(403);
+    expect(await post('http://localhost:4310')).not.toBe(403);
+    expect(await post('https://elsewhere.example')).toBe(403);
+  });
 });

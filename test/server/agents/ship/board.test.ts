@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseBoardMessage, type BoardMessage, type PortBulletin, type ShipObservation } from '../../../../src/core/board';
+import { parseBoardMessage, type BoardMessage, type TrafficReport, type ShipObservation } from '../../../../src/core/board';
 import { demoShipments } from '../../../../src/core/demo';
 import { positionAlong, voyageRoute } from '../../../../src/core/routes';
 import type { RelayOutcome } from '../../../../src/core/types';
@@ -91,7 +91,7 @@ describe('deciding', () => {
 });
 
 describe('board evidence for the assessment', () => {
-  const bulletin = (id: string, portId: PortBulletin['portId'], at = now): PortBulletin => ({ id, kind: 'port.bulletin', author: { role: 'port', id: portId }, at, summary: `${portId} elevated`, portId, risk: 'elevated', anchored: 3, arrivals48h: 7, evidenceIds: [] });
+  const bulletin = (id: string, city: TrafficReport['author']['city'], at = now): TrafficReport => ({ id, kind: 'city.traffic', author: { role: 'city', city, element: 'traffic' }, at, summary: `${city} elevated`, risk: 'elevated', anchored: 3, arrivals48h: 7, evidenceIds: [], basis: { perHour: 0.8, provenance: 'assumed', basis: 'declared' } });
   const peer = (id: string, shipmentId: string, position: readonly [number, number], at = now): ShipObservation => ({
     id, kind: 'ship.observation', author: { role: 'ship', id: shipmentId, vessel: 'Peer' }, at, summary: 'Peer stopped', shipmentId, signals: ['stationary-outside-port'], position: [position[0], position[1]], nearPort: null, provider: 'digitraffic', observedAt: at,
   });
@@ -125,7 +125,7 @@ describe('board evidence for the assessment', () => {
 });
 
 describe('remembering the board', () => {
-  const message = (id: string, at: string): BoardMessage => ({ id, kind: 'port.bulletin', author: { role: 'port', id: 'singapore' }, at, summary: id, portId: 'singapore', risk: 'normal', anchored: 0, arrivals48h: 0, evidenceIds: [] });
+  const message = (id: string, at: string): BoardMessage => ({ id, kind: 'city.traffic', author: { role: 'city', city: 'singapore', element: 'traffic' }, at, summary: id, risk: 'normal', anchored: 0, arrivals48h: 0, evidenceIds: [], basis: { perHour: 0.8, provenance: 'assumed', basis: 'declared' } });
   test('deduplicates by id, drops what is past the horizon, and stays bounded', () => {
     const kept = rememberBoard([message('a', '2026-10-31T10:00:00.000Z'), message('old', '2026-10-29T10:00:00.000Z')], [message('a', '2026-10-31T10:00:00.000Z'), message('b', '2026-10-31T11:00:00.000Z')], now);
     expect(kept.map(item => item.id)).toEqual(['a', 'b']);

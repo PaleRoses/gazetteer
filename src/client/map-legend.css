@@ -16,3 +16,8 @@
 @media(max-width:650px){.map-layer-legend{left:12px;bottom:42px;width:165px}.map-layer-legend label{min-height:32px}}
 .map-layer-legend[open] ~ .alternative-map-caption{bottom:330px}
 @media(max-width:650px){.map-panel:has(.selected-voyage-link) .map-layer-legend{bottom:90px}.map-panel:has(.selected-voyage-link) .map-layer-legend[open] ~ .alternative-map-caption{bottom:380px}}
+.gz-map .map-layer-legend{background:var(--gz-black);color:var(--gz-white)}
+.gz-map .legend-routes{color:var(--gz-mint)}
+.gz-map .legend-risk-key .legend-normal{background:var(--gz-white)}
+.gz-map .legend-risk-key .legend-watch{background:var(--gz-amber)}
+.gz-map .legend-risk-key .legend-high{background:var(--gz-red)}

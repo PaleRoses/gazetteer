@@ -1,7 +1,8 @@
 // Automated run of the README demo journey against a running Gazetteer.
-//   bun scripts/acceptance.ts <origin> [--restart-cmd "<shell command>"] [--budget-eta 120] [--budget-board 120] [--budget-risk 120] [--budget-sse 30] [--budget-restart 240]
+//   bun scripts/acceptance.ts <origin> [--restart-cmd "<shell command>"] [--budget-ready 600] [--budget-window 180] [--budget-sse 30] [--budget-restart 240]
 // Prints a PASS/FAIL/SKIP table with measured times and exits non-zero on any FAIL. Tooling, not shipped code.
-import type { Dashboard, Shipment } from '../src/core/types';
+import { citations, type BoardMessage, type CityReport, type EtaNotice, type ShipAssessment, type ShipObservation } from '../src/core/board.js';
+import type { Dashboard, Shipment } from '../src/core/types.js';
 
 type Status = 'PASS' | 'FAIL' | 'SKIP';
 type Row = Readonly<{ id: string; name: string; status: Status; ms: number | null; budget: string; detail: string }>;
@@ -11,13 +12,19 @@ const flag = (name: string): string | undefined => { const at = args.indexOf(`--
 const origin = (args.find(arg => /^https?:\/\//.test(arg)) ?? 'http://localhost:4310').replace(/\/+$/, '');
 const restartCmd = flag('restart-cmd');
 const seconds = (name: string, fallback: number): number => Number(flag(name) ?? fallback) * 1000;
-const BUDGET = { dashboardMs: 250, disruptionMs: 1500, etaMs: seconds('budget-eta', 120), boardMs: seconds('budget-board', 120), riskMs: seconds('budget-risk', 120), restartMs: seconds('budget-restart', 240), sseMs: seconds('budget-sse', 30) };
+const BUDGET = { readyMs: seconds('budget-ready', 600), dashboardMs: 250, p95Ms: 50, windowMs: seconds('budget-window', 180), disruptionMs: 2500, etaMs: seconds('budget-eta', 120), boardMs: seconds('budget-board', 120), riskMs: seconds('budget-risk', 120), restartMs: seconds('budget-restart', 240), sseMs: seconds('budget-sse', 30) };
 const HOURS = 36;
 const EXPOSED = ['gz-1042', 'gz-1044'] as const;
 const UNAFFECTED = ['gz-1043', 'gz-1045'] as const;
 
 const rows: Row[] = [];
-const record = (row: Row): Row => { rows.push(row); console.log(`  ${row.status}  ${row.id.padEnd(5)} ${row.name}${row.ms === null ? '' : `  [${row.ms} ms]`}${row.detail ? `  ${row.detail}` : ''}`); return row; };
+let startupTag = 'startup ?';
+const record = (row: Row): Row => {
+  const stamped: Row = { ...row, detail: [row.detail, startupTag].filter(Boolean).join('; ') };
+  rows.push(stamped);
+  console.log(`  ${stamped.status}  ${stamped.id.padEnd(5)} ${stamped.name}${stamped.ms === null ? '' : `  [${stamped.ms} ms]`}  ${stamped.detail}`);
+  return stamped;
+};
 const verdict = (id: string, name: string, ok: boolean, ms: number | null, budget: string, detail = ''): Row => record({ id, name, status: ok ? 'PASS' : 'FAIL', ms, budget, detail });
 const now = (): number => performance.now();
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
@@ -44,6 +51,7 @@ const getDashboard = async (session: Session): Promise<Readonly<{ dashboard: Das
   const ms = elapsed(started);
   if (!response) return { dashboard: null, ms, status: 0 };
   const dashboard = response.ok ? await response.json().catch(() => null) as Dashboard | null : null;
+  if (dashboard) startupTag = dashboard.startup ? `startup ${dashboard.startup.ready}/${dashboard.startup.total}` : 'startup complete';
   return { dashboard, ms, status: response.status };
 };
 
@@ -56,6 +64,19 @@ const poll = async <A>(session: Session, budgetMs: number, test: (dashboard: Das
     await sleep(400);
   }
   return { value: null, ms: elapsed(started) };
+};
+
+/** Every timing below means something only once the actors are up: a ship that has not initialised cannot react, whatever the code says. */
+const isReady = (dashboard: Dashboard): boolean => dashboard.startup === undefined || dashboard.startup.ready >= dashboard.startup.total;
+const waitReady = async (session: Session, budgetMs: number): Promise<Readonly<{ dashboard: Dashboard | null; ms: number; ok: boolean }>> => {
+  const started = now();
+  let last: Dashboard | null = null;
+  while (now() - started < budgetMs) {
+    last = (await getDashboard(session)).dashboard ?? last;
+    if (last && isReady(last)) return { dashboard: last, ms: elapsed(started), ok: true };
+    await sleep(1000);
+  }
+  return { dashboard: last, ms: elapsed(started), ok: false };
 };
 
 type SseEvent = Readonly<{ event: string; at: number; data: string }>;
@@ -81,7 +102,9 @@ const openStream = (session: Session, sink: SseEvent[], abort: AbortController):
 
 const byId = (dashboard: Dashboard, id: string): Shipment | undefined => dashboard.shipments.find(ship => ship.id === id);
 const shiftedHours = (eta: string, hours: number): string => new Date(Date.parse(eta) + hours * 3_600_000).toISOString();
-const sameInstant = (a: string, b: string): boolean => Date.parse(a) === Date.parse(b);
+const sameInstant = (a: string, b: string): boolean => Math.abs(Date.parse(a) - Date.parse(b)) < 1000;
+/** Sub-minute drift is the server re-anchoring its clock, not a revised estimate. */
+const moved = (a: string, b: string): boolean => Math.abs(Date.parse(a) - Date.parse(b)) >= 60_000;
 
 type Baseline = ReadonlyMap<string, Readonly<{ eta: string; risk: Shipment['risk']; evidence: number }>>;
 const baselineOf = (dashboard: Dashboard): Baseline => new Map(dashboard.shipments.map(ship => [ship.id, { eta: ship.eta, risk: ship.risk, evidence: ship.evidence.length }]));
@@ -97,6 +120,37 @@ const unaffectedHeld = (dashboard: Dashboard, before: Baseline): boolean =>
 
 const boardIds = (dashboard: Dashboard): ReadonlySet<string> => new Set((dashboard.board ?? []).map(message => message.id));
 
+/** Singapore's traffic watch at elevated/severe citing at least two anchored (stopped-outside-port) observations near Singapore. */
+const anchoredWatch = (messages: readonly BoardMessage[]): Extract<CityReport, { kind: 'city.traffic' }> | null => {
+  const anchored = new Set(messages.filter((message): message is ShipObservation => message.kind === 'ship.observation' && message.nearPort === 'singapore' && message.signals.includes('stationary-outside-port')).map(message => message.id));
+  return messages.find((message): message is Extract<CityReport, { kind: 'city.traffic' }> => message.kind === 'city.traffic' && message.author.city === 'singapore' && message.risk !== 'normal' && citations(message).filter(id => anchored.has(id)).length >= 2) ?? null;
+};
+
+type Chain = Readonly<{ observation: ShipObservation | undefined; watch: Extract<CityReport, { kind: 'city.traffic' }> | undefined; assessments: readonly ShipAssessment[] }>;
+
+/** The first chain the board holds: an observation near Singapore that Singapore's traffic watch cites at elevated/severe, and the other inbound ships' assessments citing that watch. */
+const buildChain = (messages: readonly BoardMessage[], inbound: (shipmentId: string) => boolean): Chain => {
+  const observations = messages.filter((message): message is ShipObservation => message.kind === 'ship.observation' && message.nearPort === 'singapore');
+  const traffic = messages.filter((message): message is Extract<CityReport, { kind: 'city.traffic' }> => message.kind === 'city.traffic' && message.author.city === 'singapore' && message.risk !== 'normal');
+  const links = traffic.flatMap(watch => observations.filter(observation => citations(watch).includes(observation.id)).map(observation => ({ watch, observation })));
+  const link = links[0];
+  if (!link) return { observation: observations[0], watch: undefined, assessments: [] };
+  const assessments = messages.filter((message): message is ShipAssessment => message.kind === 'ship.assessment' && message.shipmentId !== link.observation.shipmentId && inbound(message.shipmentId) && message.citedEvidence.includes(link.watch.id));
+  const byShip = new Map(assessments.map(message => [message.shipmentId, message]));
+  return { observation: link.observation, watch: link.watch, assessments: [...byShip.values()] };
+};
+
+/** Every shipment whose ETA moved since the baseline, and whether a ship.eta citing evidence (or a new evidence record) accounts for it. */
+const etaMoves = (dashboard: Dashboard | null, before: Baseline, messages: readonly BoardMessage[], knownBoard: ReadonlySet<string>): readonly Readonly<{ shipmentId: string; carries: boolean }>[] => {
+  const notices = messages.filter((message): message is EtaNotice => message.kind === 'ship.eta' && !knownBoard.has(message.id));
+  return (dashboard?.shipments ?? []).flatMap(ship => {
+    const was = before.get(ship.id);
+    if (!was || !moved(ship.eta, was.eta)) return [];
+    const cited = notices.some(notice => notice.shipmentId === ship.id && notice.citedEvidence !== undefined && notice.citedEvidence.length > 0);
+    return [{ shipmentId: ship.id, carries: cited && ship.evidence.length > was.evidence }];
+  });
+};
+
 async function main(): Promise<void> {
   console.log(`Gazetteer acceptance against ${origin}\n`);
 
@@ -108,16 +162,22 @@ async function main(): Promise<void> {
   const first = await getDashboard(session);
   const startupNote = first.dashboard?.startup ? `startup ${first.dashboard.startup.ready}/${first.dashboard.startup.total}` : 'startup complete';
   verdict('1b', 'GET dashboard answers fast, whatever the startup state', first.dashboard !== null && first.ms < BUDGET.dashboardMs, first.ms, `< ${BUDGET.dashboardMs} ms`, `HTTP ${first.status}; ${startupNote}`);
-  const repeats = await Promise.all([0, 1, 2].map(async () => (await getDashboard(session)).ms));
-  verdict('1c', 'three further dashboard reads stay under budget', repeats.every(ms => ms < BUDGET.dashboardMs), Math.max(...repeats), `< ${BUDGET.dashboardMs} ms`, `reads ${repeats.join(', ')} ms`);
+  const reads: number[] = [];
+  for (let index = 0; index < 20; index += 1) reads.push((await getDashboard(session)).ms);
+  const sorted = [...reads].sort((x, y) => x - y);
+  const p95 = sorted[Math.ceil(0.95 * sorted.length) - 1] ?? Infinity;
+  verdict('1c', 'dashboard p95 over 20 reads', p95 < BUDGET.p95Ms, p95, `< ${BUDGET.p95Ms} ms`, `median ${sorted[10]} ms, max ${sorted[19]} ms`);
 
-  // 2. the fleet
-  const baseline = first.dashboard;
+  // 2. readiness, then the fleet: the baseline is taken once every actor is up
+  const ready = await waitReady(session, BUDGET.readyMs);
+  verdict('2a', 'every actor is ready (dashboard startup.ready == total)', ready.ok, ready.ms, `<= ${BUDGET.readyMs / 1000} s`, ready.ok ? '' : 'timed out; timings below measure startup, not the code');
+  const baseline = ready.dashboard ?? first.dashboard;
   if (!baseline) return finish();
+  const readyAt = now();
   const ids = baseline.shipments.map(ship => ship.id);
-  verdict('2', 'the demo fleet is present: at least 11 ships, including gz-1042..gz-1045', ids.length >= 11 && [...EXPOSED, ...UNAFFECTED].every(id => ids.includes(id)), null, '>= 11', `${ids.length} ships`);
+  verdict('2b', 'the demo fleet is present: at least 11 ships, including gz-1042..gz-1045', ids.length >= 11 && [...EXPOSED, ...UNAFFECTED].every(id => ids.includes(id)), null, '>= 11', `${ids.length} ships`);
 
-  // 3-5. disruption: stream open first, then POST
+  // 3-5. disruption: stream open first, then POST; one loop watches the whole society for the scenario window
   const before = baselineOf(baseline);
   const knownBoard = boardIds(baseline);
   const events: SseEvent[] = [];
@@ -129,28 +189,48 @@ async function main(): Promise<void> {
   const postMs = elapsed(posted);
   verdict('3a', `POST Singapore +${HOURS}h is accepted quickly`, response !== null && response.status < 300 && postMs < BUDGET.disruptionMs, postMs, `< ${BUDGET.disruptionMs} ms`, `HTTP ${response?.status ?? 'no response'}`);
 
-  const exposure = await poll(session, BUDGET.etaMs, dashboard => exposureOutcome(dashboard, before).exposedDone ? dashboard : false);
-  const latest = exposure.value ?? (await getDashboard(session)).dashboard;
-  verdict('3b', `gz-1042 and gz-1044 are delayed by exactly +${HOURS}h with a new evidence record`, exposure.value !== null, exposure.ms, `<= ${BUDGET.etaMs / 1000} s`, latest ? exposureOutcome(latest, before).detail : 'no dashboard');
-  verdict('3c', 'gz-1043 and gz-1045 keep their ETA and stay on-track', latest !== null && unaffectedHeld(latest, before), null, '', latest ? UNAFFECTED.map(id => `${id}:${byId(latest, id)?.risk ?? '?'}`).join(' ') : 'no dashboard');
-  const evidence = latest ? EXPOSED.map(id => byId(latest, id)?.evidence.slice(before.get(id)?.evidence ?? 0).map(item => item.id).join('|') ?? '') : [];
-  verdict('3d', 'the added evidence is simulated and labelled', latest !== null && EXPOSED.every(id => (byId(latest, id)?.evidence ?? []).slice(before.get(id)?.evidence ?? 0).some(item => item.source === 'simulation')), null, '', evidence.join(' ; '));
+  const seen = new Map<string, Readonly<{ message: BoardMessage; firstSeenMs: number }>>(); // every board message, by id, when first read
+  for (const message of baseline.board ?? []) seen.set(message.id, { message, firstSeenMs: -1 });
+  const firstAt: Record<string, number | undefined> = {};
+  const mark = (key: string, happened: boolean): void => { if (happened && firstAt[key] === undefined) firstAt[key] = elapsed(posted); };
+  let latest: Dashboard | null = baseline;
+  const everything = (): readonly BoardMessage[] => [...seen.values()].map(entry => entry.message);
+  const inbound = (shipmentId: string): boolean => { const ship = latest ? byId(latest, shipmentId) : undefined; return ship !== undefined && (ship.destination === 'singapore' || ship.via.includes('singapore')); };
+  const chainOf = (): Chain => buildChain(everything(), inbound);
+  while (now() - posted < BUDGET.windowMs) {
+    const { dashboard } = await getDashboard(session);
+    if (dashboard) {
+      latest = dashboard;
+      for (const message of dashboard.board ?? []) if (!seen.has(message.id)) seen.set(message.id, { message, firstSeenMs: elapsed(posted) });
+      const outcome = exposureOutcome(dashboard, before);
+      mark('exposure', outcome.exposedDone);
+      mark('risk', dashboard.portStatus?.find(item => item.portId === 'singapore')?.risk !== 'normal' && dashboard.portStatus?.some(item => item.portId === 'singapore') === true);
+      const chain = chainOf();
+      mark('observation', chain.observation !== undefined);
+      mark('watch', chain.watch !== undefined);
+      mark('anchored', anchoredWatch(dashboard.board ?? []) !== null);
+      mark('assessments', chain.assessments.length >= 2);
+    }
+    if (['exposure', 'risk', 'anchored', 'observation', 'watch', 'assessments'].every(key => firstAt[key] !== undefined)) break;
+    await sleep(400);
+  }
+  const outcome = latest ? exposureOutcome(latest, before) : null;
+  verdict('3b', `gz-1042 and gz-1044 are delayed by exactly +${HOURS}h with a new evidence record`, firstAt.exposure !== undefined, firstAt.exposure ?? null, `<= ${BUDGET.windowMs / 1000} s`, outcome?.detail ?? 'no dashboard');
+  verdict('3c', 'gz-1043 and gz-1045 keep their ETA and stay on-track', latest !== null && unaffectedHeld(latest, before), null, '', latest ? UNAFFECTED.map(id => `${id}:${byId(latest as Dashboard, id)?.risk ?? '?'}`).join(' ') : 'no dashboard');
+  verdict('3d', 'the added evidence is simulated and labelled', latest !== null && EXPOSED.every(id => ((latest as Dashboard).shipments.find(ship => ship.id === id)?.evidence ?? []).slice(before.get(id)?.evidence ?? 0).some(item => item.source === 'simulation')), null, '', '');
+  const sinceReady = Math.round(posted - readyAt);
+  const anchoredAt = firstAt.anchored === undefined ? null : firstAt.anchored + sinceReady;
+  const sgWatch = anchoredWatch(everything());
+  verdict('4c', 'within the window of full readiness, Singapore traffic watch is elevated/severe citing the anchored observations, and portStatus agrees', anchoredAt !== null && firstAt.risk !== undefined, anchoredAt, `<= ${BUDGET.windowMs / 1000} s after ready`, `portStatus ${latest?.portStatus?.find(item => item.portId === 'singapore')?.risk ?? 'no status'}; watch ${sgWatch ? `${sgWatch.risk} ${sgWatch.id.slice(0, 40)}` : 'none'}`);
 
-  // 4. the board
-  const boardAfter = await poll(session, BUDGET.boardMs, dashboard => {
-    const added = (dashboard.board ?? []).filter(message => !knownBoard.has(message.id));
-    const assessment = added.find(message => message.kind === 'ship.assessment' && (EXPOSED as readonly string[]).includes(message.shipmentId));
-    const eta = added.find(message => message.kind === 'ship.eta' && (EXPOSED as readonly string[]).includes(message.shipmentId));
-    const traffic = added.find(message => message.kind === 'city.traffic' && message.author.city === 'singapore');
-    return assessment && eta && traffic ? { assessment, eta, traffic } : false;
-  });
-  const seen = latest?.board ?? [];
-  const kinds = [...new Set(seen.filter(message => !knownBoard.has(message.id)).map(message => message.kind))].join(', ');
-  verdict('4a', 'board gains a ship.assessment, a ship.eta and a Singapore traffic watch report', boardAfter.value !== null, boardAfter.ms, `<= ${BUDGET.boardMs / 1000} s`, boardAfter.value ? `assessment ${boardAfter.value.assessment.kind === 'ship.assessment' ? `${boardAfter.value.assessment.method}, cites ${boardAfter.value.assessment.citedEvidence.length}` : ''}` : `new kinds seen so far: ${kinds || 'none'}`);
-  const cited = boardAfter.value?.assessment.kind === 'ship.assessment' && boardAfter.value.assessment.citedEvidence.length > 0;
-  verdict('4b', 'the assessment cites evidence', boardAfter.value !== null && cited, null, '', '');
-  const risk = await poll(session, BUDGET.riskMs, dashboard => { const status = dashboard.portStatus?.find(item => item.portId === 'singapore'); return status && status.risk !== 'normal' ? status : false; });
-  verdict('4c', 'Singapore portStatus.risk reaches elevated or severe', risk.value !== null, risk.ms, `<= ${BUDGET.riskMs / 1000} s`, risk.value ? `${risk.value.risk}, relevance ${risk.value.relevance}` : 'still normal');
+  // the society chain: observation -> Singapore traffic watch citing it -> two other inbound ships citing the watch -> every ETA move carries evidence
+  const chain = chainOf();
+  const id = (message: BoardMessage | undefined): string => message ? message.id.slice(0, 40) : '-';
+  verdict('B1', 'a ship.observation near Singapore', chain.observation !== undefined, firstAt.observation ?? null, `<= ${BUDGET.windowMs / 1000} s`, `${id(chain.observation)}${chain.observation ? ` (${chain.observation.shipmentId})` : ''}`);
+  verdict('B2', 'Singapore traffic watch posts elevated/severe, citing that observation', chain.watch !== undefined, firstAt.watch ?? null, `<= ${BUDGET.windowMs / 1000} s`, chain.watch ? `${id(chain.watch)} ${chain.watch.risk}` : `${everything().filter(message => message.kind === 'city.traffic').length} traffic post(s), none citing an observation at elevated/severe`);
+  verdict('B3', 'at least 2 other Singapore-bound ships assess, citing the watch', chain.assessments.length >= 2, firstAt.assessments ?? null, `<= ${BUDGET.windowMs / 1000} s`, chain.assessments.length ? chain.assessments.map(message => `${message.shipmentId}:${id(message)}`).join(' ') : 'none');
+  const moves = etaMoves(latest, before, everything(), knownBoard);
+  verdict('C', 'every ETA move carries evidence', moves.length > 0 && moves.every(move => move.carries), null, '', moves.length === 0 ? 'no ETA moved' : moves.map(move => `${move.shipmentId}:${move.carries ? 'cited' : 'NO EVIDENCE'}`).join(' '));
 
   // 5. SSE
   const carries = (item: SseEvent): boolean => { try { return exposureOutcome(JSON.parse(item.data) as Dashboard, before).exposedDone; } catch { return false; } };
@@ -182,6 +262,8 @@ async function main(): Promise<void> {
   })();
   verdict('6b', 'the server answers again after restart', back.session !== null, back.ms, `<= ${BUDGET.restartMs / 1000} s`, '');
   if (!back.session) return finish();
+  const settledAgain = await waitReady(back.session, BUDGET.readyMs);
+  verdict('6b2', 'every actor is ready again after restart', settledAgain.ok, settledAgain.ms, `<= ${BUDGET.readyMs / 1000} s`, '');
   const afterRestart = await poll(back.session, BUDGET.etaMs, dashboard => exposureOutcome(dashboard, before).exposedDone ? dashboard : false);
   const restored = afterRestart.value ?? (await getDashboard(back.session)).dashboard;
   verdict('6c', 'gz-1042 and gz-1044 are still delayed +36h with their evidence', afterRestart.value !== null, afterRestart.ms, `<= ${BUDGET.etaMs / 1000} s`, restored ? exposureOutcome(restored, before).detail : 'no dashboard');

@@ -145,11 +145,11 @@ const drain = async (stream: AsyncIterator<unknown>, read: readonly unknown[]): 
   }
 };
 
-const readStream = (context: MindContext, { messages, error, timedOut }: Drained) => {
+const readStream = (shownBy: (name: string, input: unknown) => readonly string[], { messages, error, timedOut }: Drained) => {
   const parsed = messages.flatMap((message): StreamMessage[] => { const value = streamMessage.safeParse(message); return value.success ? [value.data] : []; });
   const session = parsed.find(message => message.type === 'system')?.session_id ?? parsed.at(-1)?.session_id ?? null;
   const shown = [...new Set(parsed.flatMap(message => message.type === 'assistant'
-    ? message.message.content.flatMap(item => item.type === 'tool_use' && item.name ? answerTool(context, item.name, item.input).ids : [])
+    ? message.message.content.flatMap(item => item.type === 'tool_use' && item.name ? shownBy(item.name, item.input) : [])
     : []))];
   const found = parsed.find(message => message.type === 'result');
   const result = found?.type === 'result' ? found : null;
@@ -161,7 +161,7 @@ const readStream = (context: MindContext, { messages, error, timedOut }: Drained
 
 /** Pure: the mind's stream becomes the model contract plus the session to resume and the ids its tools showed. */
 export function settleMind(context: MindContext, drained: Drained): ModelResult {
-  const { session, shown, result, reason } = readStream(context, drained);
+  const { session, shown, result, reason } = readStream((name, input) => answerTool(context, name, input).ids, drained);
   return result?.structured_output !== undefined ? { status: 'ok', output: result.structured_output, session, shown } : { status: 'failed', message: reason, session };
 }
 
@@ -172,7 +172,7 @@ export type Asker = (question: string, session: string | null, context: MindCont
 
 /** Pure: an answer cites only ids its tools showed it and that its text names. */
 export function settleAnswer(context: MindContext, drained: Drained, asked: string | null): AskResult {
-  const { session, shown, result, reason } = readStream(context, drained);
+  const { session, shown, result, reason } = readStream((name, input) => answerTool(context, name, input).ids, drained);
   const answer = result?.result?.trim() ?? '';
   return answer ? { status: 'answered', answer, cited: shown.filter(id => answer.includes(id)), session } : { status: 'unavailable', message: reason, session: session ?? asked };
 }
@@ -235,4 +235,38 @@ export const shipAskerFromEnv = (env: Readonly<Record<string, string | undefined
     return async (_question, session) => ({ status: 'unavailable', message, session });
   }
   return askMind(run, { apiKey, workspaceId: workspace.data, model: env.GAZETTEER_ASSESSMENT_MODEL || assessmentModel, mindsDir: mindsDirOf(env), executable: claudeExecutableOf(env), path: env.PATH ?? '', timeoutMs: askWindowMs });
+};
+
+/** A mind that words a decision already made: no tools at all, one structured sentence back, through the same pool and the same isolation. */
+export type Phrase = (request: Readonly<{ system: string; prompt: string; session: string | null }>) => Promise<
+  Readonly<{ status: 'ok'; text: string; session: string | null }> | Readonly<{ status: 'failed'; message: string; session: string | null }>>;
+const words = z.object({ summary: z.string().trim().min(1).max(280) });
+const wordsSchema = z.toJSONSchema(words, { target: 'draft-7' }) as Record<string, unknown>;
+const phraseWindowMs = 30_000;
+
+export const phraseMind = (run: MindQuery, config: MindConfig, pool: Pool = mindPool): Phrase => async ({ system, prompt, session }) => {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), config.timeoutMs);
+  const options: Options = {
+    model: config.model, systemPrompt: system, tools: [], allowedTools: [], disallowedTools: [...builtinTools], canUseTool: denyForeign,
+    settingSources: [], strictMcpConfig: true, maxTurns: 2, persistSession: true, cwd: config.mindsDir, env: { ...mindEnv(config) },
+    abortController: abort, pathToClaudeCodeExecutable: config.executable, outputFormat: { type: 'json_schema', schema: wordsSchema },
+    ...(session ? { resume: session } : {}),
+  };
+  const drained = await pool(abort.signal, () => mkdir(config.mindsDir, { recursive: true, mode: 0o700 })
+    .then(() => drain(run({ prompt, options })[Symbol.asyncIterator](), []))
+    .catch((error: unknown) => ({ messages: [], error: messageOf(error) })));
+  clearTimeout(timer);
+  if (!drained) return { status: 'failed', message: 'The mind is busy; the rule-based words stand.', session };
+  const read = readStream(() => [], { ...drained, timedOut: abort.signal.aborted });
+  const parsed = words.safeParse(read.result?.structured_output);
+  return parsed.success ? { status: 'ok', text: parsed.data.summary, session: read.session } : { status: 'failed', message: read.reason, session: read.session ?? session };
+};
+
+/** Thin env edge: without the key and its workspace id there is no mind, and the caller's rule-based words stand. */
+export const phraseFromEnv = (env: Readonly<Record<string, string | undefined>>, run: MindQuery): Phrase => {
+  const apiKey = env.ANTHROPIC_API_KEY;
+  const workspace = workspaceIdSchema.safeParse(env.ANTHROPIC_WORKSPACE_ID);
+  if (!apiKey || !workspace.success) return async ({ session }) => ({ status: 'failed', message: 'no mind: ANTHROPIC_API_KEY and ANTHROPIC_WORKSPACE_ID are needed', session });
+  return phraseMind(run, { apiKey, workspaceId: workspace.data, model: env.GAZETTEER_ASSESSMENT_MODEL || assessmentModel, mindsDir: mindsDirOf(env), executable: claudeExecutableOf(env), path: env.PATH ?? '', timeoutMs: phraseWindowMs });
 };

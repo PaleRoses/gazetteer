@@ -1,16 +1,22 @@
-import { AlertsPage, VesselEditor, VoyageFacts, createAlertNotifications } from './FleetOperations';
 import type { Operation } from '../core/operations';
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, type JSX } from 'solid-js';
 import { render, Portal } from 'solid-js/web';
 import { Dialog, Menu, Tabs } from '@ark-ui/solid';
-import { ArrowDownRight, ArrowRight, Bell, Check, ChevronDown, FlaskConical, Layers3, LogOut, MapPin, MessageSquare, Plus, Radio, Search, Send, Ship, TriangleAlert, Users, X } from 'lucide-solid';
+import { ArrowDownRight, ArrowRight, Bell, Check, FlaskConical, Layers3, LogOut, MapPin, MessageSquare, Plus, Radio, Search, Send, Ship, TriangleAlert, Users, X } from 'lucide-solid';
 import { z } from 'zod';
+import { portIds } from '../core/ports';
 import type { Comment, Dashboard, Diversion, Shipment, Workspace } from '../core/types';
+import '@fontsource-variable/jost';
+import './styles.css';
+import './sharp-ui.css';
+import './styles/shell.css';
+import { AlertsPage, VesselEditor, VoyageFacts, createAlertNotifications } from './FleetOperations';
 import { commentsSchema, dashboardSchema, invitationSchema, membersSchema, request, sessionSchema, workspaceSchema, type Invitation, type Session } from './api';
 import { MapBackdrop, ShipmentMap } from './Map';
 import { mergeComment, type CommentEvent } from './feed';
 import { createChangeFlash, createWorkspaceFeed, type FeedMode } from './live';
 import { ActorLine, PixelShip } from './ActorLine';
+import { RiskMark } from './sprites';
 import { SocietyPanel } from './SocietyPanel';
 import { date, EvidenceCard, portName, RiskBadge, time } from './presentation';
 import { AgentBoard } from './AgentBoard';
@@ -21,11 +27,9 @@ import './feed-pages.css';
 import { RouteCard, RouteDetails, routeName } from './Routes';
 import { readView, viewHash, type View } from './navigation';
 import { shipmentBrief, assessmentFor } from './brief';
-import './styles.css';
-import './sharp-ui.css';
 
 const minute = (eta: string | undefined): string => (eta ?? '').slice(0, 16);
-const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'CONNECTING', live: 'STREAMING', polling: 'POLLING · 5 S' };
+const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'Connecting', live: 'Streaming', polling: 'Polling every 5 s' };
 const textField = (data: FormData, key: string): string => { const value = data.get(key); return typeof value === 'string' ? value : ''; };
 const DECLINED_DEMO = 'gazetteer.demo.declined';
 const DEMO_EMAIL = 'demo@gazetteer.local';
@@ -131,9 +135,17 @@ function ShipmentDetails(props: Readonly<{ shipmentId: string; dashboard: Dashbo
   </aside>; }}</Show>;
 }
 
+const fleetStatus = (shipment: Shipment): string => {
+  switch (shipment.risk) {
+    case 'delayed': return shipment.delayHours > 0 ? `Delayed · +${shipment.delayHours} h` : 'Delayed';
+    case 'watch': return 'Watch';
+    case 'on-track': return 'On track';
+  }
+};
+
 function ShipmentCard(props: Readonly<{ shipment: Shipment; selected: boolean; onSelect: (id: string) => void }>) {
   const flash = createChangeFlash(() => minute(props.shipment.eta));
-  return <button class="shipment-card" classList={{ selected: props.selected, flash: flash() }} onClick={() => props.onSelect(props.shipment.id)} aria-pressed={props.selected}><span class={`fleet-pixel ${props.shipment.risk}`}><PixelShip /></span><span class="fleet-identity"><strong>{props.shipment.vessel}</strong><span class="fleet-risk-line"><RiskBadge risk={props.shipment.risk} /><Show when={props.shipment.delayHours > 0}><span class="delay">· +{props.shipment.delayHours}h</span></Show></span></span><Show when={props.shipment.risk !== 'on-track'}><span class={`fleet-alert ${props.shipment.risk}`} aria-hidden="true">{props.shipment.risk === 'watch' ? '△' : '!'}</span></Show></button>;
+  return <button class={`fleet-row ${props.shipment.risk}`} classList={{ selected: props.selected, flash: flash() }} onClick={() => props.onSelect(props.shipment.id)} aria-pressed={props.selected}><span class="fleet-sprite"><PixelShip /></span><span class="fleet-identity"><strong>{props.shipment.vessel}</strong><span class="fleet-status">{fleetStatus(props.shipment)}</span></span><RiskMark risk={props.shipment.risk} /></button>;
 }
 
 function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
@@ -141,7 +153,8 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
   const [editing, setEditing] = createSignal<Shipment | 'new' | null>(null);
   const [operating, setOperating] = createSignal(false);
   const [operationError, setOperationError] = createSignal<string | null>(null);
-  const feed = createWorkspaceFeed(props.workspaceId, () => false);
+  const [simulating, setSimulating] = createSignal(false);
+  const feed = createWorkspaceFeed(props.workspaceId, simulating);
   const dashboard = feed.dashboard;
   const [view, setView] = createSignal<View>(readView(window.location.hash, props.workspaceId));
   const [selectedId, setSelectedId] = createSignal<string | null>(null, { equals: false });
@@ -172,7 +185,7 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
   const routesMode = () => view().kind === 'routes' || view().kind === 'route';
   const routes = createMemo(() => dashboard()?.routes?.filter(r => routeName(r, dashboard()!).toLowerCase().includes(query().trim().toLowerCase())).toSorted((left, right) => right.attention - left.attention) ?? []);
   const riskOrder: Readonly<Record<Shipment['risk'], number>> = { delayed: 0, watch: 1, 'on-track': 2 };
-  const fleet = createMemo(() => dashboard()?.shipments.toSorted((left, right) => riskOrder[left.risk] - riskOrder[right.risk] || left.vessel.localeCompare(right.vessel)) ?? []);
+  const fleet = createMemo(() => dashboard()?.shipments.toSorted((left, right) => riskOrder[left.risk] - riskOrder[right.risk] || right.delayHours - left.delayHours || left.vessel.localeCompare(right.vessel)) ?? []);
   const selected = createMemo(() => { const current = view(); return dashboard()?.shipments.find(shipment => shipment.id === (current.kind === 'voyage' ? current.id : selectedId())); });
   const shipments = createMemo(() => fleet().filter(s => `${s.vessel} ${s.identity?.imo ?? ''} ${s.identity?.mmsi ?? ''} ${s.reference} ${s.cargo} ${dashboard()?.ports.find(p => p.id === s.origin)?.name} ${dashboard()?.ports.find(p => p.id === s.destination)?.name}`.toLowerCase().includes(query().trim().toLowerCase())));
   const counts = createMemo(() => ({ delayed: fleet().filter(ship => ship.risk === 'delayed').length, watch: fleet().filter(ship => ship.risk === 'watch').length, onTrack: fleet().filter(ship => ship.risk === 'on-track').length }));
@@ -180,6 +193,16 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
   const mapDashboard = createMemo(() => { const current = dashboard(); const focused = route(); return current && focused ? { ...current, shipments: current.shipments.filter(s => focused.shipmentIds.includes(s.id)), ports: current.ports.filter(p => focused.endpoints.includes(p.id)), intelligence: focused.intelligence } : current; });
   function selectShip(id: string) { setSelectedId(id); setInspected(null); if (view().kind === 'voyage') openVoyage(id); }
   function clearSelection() { setSelectedId(null); setInspected(null); if (view().kind === 'voyage') closeDetail(); }
+  async function simulate(event: SubmitEvent & { currentTarget: HTMLFormElement }) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const portId = portIds.find(id => id === textField(data, 'portId'));
+    const delayHours = Number(textField(data, 'delayHours'));
+    if (!portId || !Number.isInteger(delayHours) || delayHours < 1 || delayHours > 168) { setError('Choose a city and a delay between 1 and 168 hours.'); return; }
+    setSimulating(true); setError(null);
+    const result = await request(`/api/workspaces/${props.workspaceId}/disruptions`, dashboardSchema, { portId, delayHours }); setSimulating(false);
+    if (result.ok) feed.accept(result.value); else setError(result.error);
+  }
   const notifications = createAlertNotifications(props.workspaceId, dashboard, openVoyage);
   function edit(ship: Shipment | 'new') { setOperationError(null); setEditing(ship); }
   async function operate(operation: Operation): Promise<boolean> {
@@ -192,28 +215,28 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
     return true;
   }
   return <>
-    <div class="simulation-banner"><span><span class="simulation-light" />{dashboard()?.mode === 'simulation' ? 'Simulated sources' : dashboard() ? 'Mixed-source workspace' : 'Connecting to workspace'}<span class="banner-separator">/</span>{dashboard()?.mode === 'simulation' ? 'Current notices are simulated. No live tracking is implied.' : 'Source provenance is shown on each evidence item.'}</span><span class="banner-scope">ALL TIMES UTC</span></div>
     <Show when={failure()}>{message => <div class="global-error"><ErrorNote message={message()} /><button type="button" class="retry-button" onClick={() => { setError(null); feed.retry(); }}>Retry</button></div>}</Show>
     <Show when={editing()} keyed>{item => <Show when={dashboard()}>{current => <VesselEditor shipment={item === 'new' ? undefined : item} dashboard={current()} busy={operating()} error={operationError()} execute={operate} close={() => setEditing(null)} />}</Show>}</Show>
     <Show when={view().kind === 'alerts'}><AlertsPage dashboard={dashboard()} busy={operating()} error={operationError()} execute={operate} openVoyage={openVoyage} notifications={notifications} /></Show>
-    <Show when={view().kind === 'simulation'}><SimulationPage dashboard={dashboard()} result={simulation()} onResult={setSimulation} /></Show>
+    <Show when={view().kind === 'simulation'}><SimulationPage dashboard={dashboard()} result={simulation()} onResult={setSimulation} /><section class="simulation-section" id="simulation" aria-labelledby="simulation-title"><span class="section-kicker">SIMULATION</span><h2 id="simulation-title">Test a city disruption</h2><p>Synthetic inputs only. This publishes a port-delay scenario to the shared actor board; it is not a real port event.</p><form onSubmit={simulate}><label>City<select name="portId"><For each={dashboard()?.ports ?? []}>{port => <option value={port.id} selected={port.id === 'singapore'}>{port.name}</option>}</For></select></label><label>Congestion delay (hours)<input name="delayHours" type="number" min="1" max="168" step="1" value="36" required /></label><button class="primary" disabled={simulating() || !dashboard()}>{simulating() ? 'Publishing scenario…' : 'Simulate port delay'}</button></form><p class="muted">Storm simulation is unavailable: the current endpoint supports port-delay scenarios only.</p></section></Show>
     <Show when={view().kind === 'news'}><NewsPage dashboard={dashboard()} onInspect={option => { openVoyage(option.shipmentId); setInspected(option); }} /></Show>
     <Show when={view().kind === 'activity'}><div class="activity-page"><details class="activity-evidence"><summary>Port risk & attributed evidence chains</summary><Show when={dashboard()}>{current => <SocietyPanel dashboard={current()} onSelectShip={openVoyage} threadId={threadId()} onOpenMessage={setThreadId} />}</Show></details><AgentBoard dashboard={dashboard()} connection={feed.mode()} /></div></Show>
     <Show when={!feedPage()}>
     <Show when={detail()}><header class="voyage-header"><button class="back-overview" onClick={closeDetail}>← {view().kind === 'route' ? 'All routes' : returnRoute() ? 'Back to route' : 'All shipments'}</button><div><h1 ref={detailHeading} tabIndex={-1}>{route() && dashboard() ? routeName(route()!, dashboard()!) : selected()?.vessel ?? 'Loading briefing…'}</h1><p>{view().kind === 'route' ? 'Route monitoring · approximate port-to-port corridor' : `${selected()?.reference ?? ''} · Voyage briefing`}</p></div><Show when={route()?.risk ?? selected()?.risk}>{risk => <RiskBadge risk={risk()} />}</Show></header></Show>
-    <main class={`operations-layout${detail() ? ' drilldown-layout' : ''}`}><Show when={!detail()}><aside class="shipments-panel" id="workspace-shipments"><div class="shipments-heading"><span class="section-kicker">YOUR OPERATIONS</span><h1>{routesMode() ? 'Routes' : 'Fleet'}<span>{routesMode() ? dashboard()?.routes?.length ?? '—' : dashboard()?.shipments.length ?? '—'}</span></h1><p>{routesMode() ? 'Watch shared exposure across voyages.' : 'Risk first. Every voyage in view.'}</p><Show when={!routesMode()}><button type="button" class="fleet-add" onClick={() => edit('new')} disabled={!dashboard()}><Plus size={14} />Add vessel</button></Show><nav class="workspace-jump" aria-label="Workspace sections"><a href="#workspace-ports">Ports</a><a href="#actor-board">Actor board</a></nav></div><div class="shipment-search"><Search size={15} /><label class="sr-only" for="search">{routesMode() ? 'Search routes' : 'Search ships'}</label><input id="search" value={query()} onInput={event => setQuery(event.currentTarget.value)} placeholder={routesMode() ? 'Search by port' : 'Find a ship, port or IMO'} /></div>
-      <Show when={!routesMode()}><div class="fleet-scope"><Show when={dashboard()} fallback={<span>Connecting to fleet</span>}><span>{counts().delayed} delayed · {counts().watch} watch · {counts().onTrack} on track</span></Show><Show when={query()}><button type="button" onClick={() => setQuery('')}>Show all {fleet().length} ships</button></Show></div></Show>
-      <div class="shipment-list"><Show when={!dashboard()}><div class="empty-state"><Radio size={22} /><p>{failure() ? 'Ship updates unavailable.' : 'Loading your ships…'}</p></div></Show><Show when={dashboard() && !(routesMode() ? routes().length : shipments().length)}><div class="empty-state"><Check size={22} /><p>No matches for your search.</p></div></Show><Show when={routesMode()} fallback={<For each={shipments()}>{shipment => <ShipmentCard shipment={shipment} selected={selected()?.id === shipment.id} onSelect={selectShip} />}</For>}><For each={routes()}>{r => <RouteCard route={r} dashboard={dashboard()!} onOpen={openRoute} />}</For></Show></div>
-      <footer class="list-footer"><span class={`status-dot ${feed.mode()}`} /><span>{dashboard() ? `Updated ${time(dashboard()?.updatedAt ?? '')} UTC` : 'Connecting to workspace'}</span><span class={`feed-mode ${feed.mode()}`}>{feedLabel[feed.mode()]}</span></footer></aside></Show>
-      <section class="world-panel" id="world" aria-label="World"><div class="world-health"><Show when={dashboard()?.operations?.alerts.filter(alert => !alert.acknowledgedAt).length}>{unread => <a class="alert-count" href={viewHash({ kind: 'alerts' }, props.workspaceId)}><Bell size={12} />{unread()} unread {unread() === 1 ? 'alert' : 'alerts'}</a>}</Show><Show when={dashboard()?.relayHealth}>{health => <span class={`relay-health ${health().state}`}>Relay {health().state}<Show when={health().since}>{since => <> since {time(since())} UTC</>}</Show></span>}</Show><Show when={dashboard()?.startup && dashboard()?.startup?.ready !== dashboard()?.startup?.total}><span>Agents joining · {dashboard()?.startup?.ready}/{dashboard()?.startup?.total}</span></Show></div><section class="map-panel" aria-label={routesMode() ? 'Route overview map' : 'Ship overview map'}><ShipmentMap dashboard={mapDashboard()} selected={selected()} focusId={view().kind === 'voyage' ? selected()?.id ?? null : selectedId()} onSelect={selectShip} onOpen={() => { const ship = selected(); if (ship) openVoyage(ship.id); }} onDismiss={() => setSelectedId(null)} onClear={clearSelection} inspected={inspected()} corridor={route()} routeMode={routesMode()} onRoute={openRoute} showPopup={Boolean(selectedId()) && view().kind !== 'voyage' && !inspected()} /><Show when={selected() && view().kind !== 'voyage'}><button type="button" class="selected-voyage-link" onClick={() => { const ship = selected(); if (ship) openVoyage(ship.id); }}>Open {selected()?.vessel} briefing<ArrowRight size={14} /></button></Show></section></section>
-      <Show when={!detail() && dashboard()}>{_ => <ActorLine dashboard={dashboard()!} onOpenMessage={setThreadId} />}</Show>
+    <main class={`operations-layout${detail() ? ' drilldown-layout' : ''}`} id="world"><Show when={!detail()}><aside class="fleet-rail" id="workspace-shipments" aria-labelledby="fleet-title"><div class="fleet-head"><h1 id="fleet-title">{routesMode() ? 'Routes' : 'Fleet'}</h1><span class="fleet-count">{routesMode() ? dashboard()?.routes?.length ?? '—' : dashboard()?.shipments.length ?? '—'}</span></div>
+      <Show when={!routesMode()} fallback={<p class="fleet-summary"><span>Shared exposure across voyages, most attention first.</span></p>}><p class="fleet-summary"><Show when={dashboard()} fallback={<span>Connecting to fleet</span>}><span>{counts().delayed} delayed · {counts().watch} watch · {counts().onTrack} on track</span></Show><Show when={query()}><button type="button" onClick={() => setQuery('')}>Show all</button></Show></p><button type="button" class="fleet-add" onClick={() => edit('new')} disabled={!dashboard()}><Plus size={14} />Add vessel</button></Show>
+      <div class="fleet-search"><Search size={18} stroke-width={1.6} /><label class="sr-only" for="search">{routesMode() ? 'Search routes' : 'Search ships'}</label><input id="search" value={query()} onInput={event => setQuery(event.currentTarget.value)} placeholder={routesMode() ? 'Search by port' : 'Find a ship, port or IMO'} /></div>
+      <div class="fleet-list"><Show when={!dashboard()}><div class="empty-state"><Radio size={22} /><p>{failure() ? 'Ship updates unavailable.' : 'Loading your ships…'}</p></div></Show><Show when={dashboard() && !(routesMode() ? routes().length : shipments().length)}><div class="empty-state"><Check size={22} /><p>No matches for your search.</p></div></Show><Show when={routesMode()} fallback={<For each={shipments()}>{shipment => <ShipmentCard shipment={shipment} selected={selected()?.id === shipment.id} onSelect={selectShip} />}</For>}><For each={routes()}>{r => <RouteCard route={r} dashboard={dashboard()!} onOpen={openRoute} />}</For></Show></div></aside></Show>
+      <section class="world-panel" aria-label="World"><section class="map-panel" aria-label={routesMode() ? 'Route overview map' : 'Ship overview map'}><ShipmentMap dashboard={mapDashboard()} selected={selected()} focusId={view().kind === 'voyage' ? selected()?.id ?? null : selectedId()} onSelect={selectShip} onOpen={() => { const ship = selected(); if (ship) openVoyage(ship.id); }} onDismiss={() => setSelectedId(null)} onClear={clearSelection} inspected={inspected()} corridor={route()} routeMode={routesMode()} onRoute={openRoute} showPopup={Boolean(selectedId()) && view().kind !== 'voyage' && !inspected()} /><Show when={selected() && view().kind !== 'voyage'}><button type="button" class="selected-voyage-link" onClick={() => { const ship = selected(); if (ship) openVoyage(ship.id); }}>Open {selected()?.vessel} briefing<ArrowRight size={14} /></button></Show></section></section>
+      <Show when={!detail()}><div class="ticker-slot"><Show when={dashboard()}>{current => <ActorLine dashboard={current()} onOpenMessage={setThreadId} />}</Show></div></Show>
       <Show when={dashboard()}>{current => <>
-        <Show when={!detail() && selected()?.id} keyed>{id => <ShipmentDetails shipmentId={id} dashboard={current()} workspaceId={props.workspaceId} live={feed.mode() === 'live'} incoming={feed.comments()} />}</Show>
         <Show when={view().kind === 'voyage' && selected()?.id} keyed>{id => <div class="voyage-detail-column"><Show when={selected()}>{ship => <VoyageFacts shipment={ship()} dashboard={current()} edit={() => edit(ship())} />}</Show><div class="voyage-route-links"><span class="section-kicker">MONITORED ROUTE LEGS</span><For each={current().routes?.filter(r => r.shipmentIds.includes(id))}>{r => <button onClick={() => openRoute(r.id)}>{routeName(r, current())}<ArrowRight size={13} /></button>}</For></div><ShipmentDetails shipmentId={id} dashboard={current()} workspaceId={props.workspaceId} live={feed.mode() === 'live'} incoming={feed.comments()} /></div>}</Show>
         <Show when={route()}>{r => <RouteDetails route={r()} dashboard={current()} onVoyage={openVoyage} />}</Show>
         <Show when={detail() && !(route() || selected())}><aside class="detail-panel"><h2>Briefing unavailable</h2><p>This item is not in this workspace.</p><button onClick={closeDetail}>Return to monitoring</button></aside></Show>
       </>}</Show>
     </main>
+    <p class="workspace-status"><Show when={dashboard()?.operations?.alerts.filter(alert => !alert.acknowledgedAt).length}>{unread => <a class="alert-count" href={viewHash({ kind: 'alerts' }, props.workspaceId)}><Bell size={12} />{unread()} unread {unread() === 1 ? 'alert' : 'alerts'}</a>}</Show><span class={`status-dot ${feed.mode()}`} /><span>{feedLabel[feed.mode()]}</span><Show when={dashboard()}>{current => <span>Updated {time(current().updatedAt)} UTC</span>}</Show><span>{dashboard()?.mode === 'simulation' ? 'Simulated sources. No live tracking is implied.' : dashboard() ? 'Mixed sources. Provenance is shown on each evidence item.' : 'Connecting to workspace'}</span><Show when={dashboard()?.relayHealth}>{health => <span class={`relay-health ${health().state}`}>Relay {health().state}<Show when={health().since}>{since => <> since {time(since())} UTC</>}</Show></span>}</Show><Show when={dashboard()?.startup && dashboard()?.startup?.ready !== dashboard()?.startup?.total}><span>Agents joining · {dashboard()?.startup?.ready}/{dashboard()?.startup?.total}</span></Show><span>All times UTC</span></p>
+    <Show when={dashboard()}>{current => <Show when={detail() ? undefined : selected()?.id} keyed>{id => <ShipmentDetails shipmentId={id} dashboard={current()} workspaceId={props.workspaceId} live={feed.mode() === 'live'} incoming={feed.comments()} />}</Show>}</Show>
     <Show when={dashboard()}>{current => <SocietyPanel dashboard={current()} onSelectShip={setSelectedId} threadId={threadId()} onOpenMessage={setThreadId} />}</Show>
     </Show>
   </>;
@@ -236,7 +259,13 @@ function WorkspaceScreen(props: Readonly<{ session: Session; demo: boolean; onOp
     setAccepting(false);
     if (result.ok) { props.onSession({ ...props.session, workspaces: [...props.session.workspaces.filter(item => item.id !== result.value.id), result.value] }); setWorkspaceId(result.value.id); setTeamOpen(false); clearInvitation(); } else setError(result.error);
   }
-  return <div class="workspace-shell"><header class="topbar"><Brand /><nav class="primary-nav" aria-label="Primary"><a href="#world">World</a><a href={viewHash({ kind: 'routes' }, workspaceId())}>Routes</a><a href={viewHash({ kind: 'news' }, workspaceId())}>Intelligence</a><a href={viewHash({ kind: 'activity' }, workspaceId())}>Agents</a><a href={viewHash({ kind: 'alerts' }, workspaceId())}>Alerts</a><a href="#actor-board">Relay</a><a href={viewHash({ kind: 'simulation' }, workspaceId())}>Simulation</a></nav><div class="workspace-picker"><Layers3 size={15} /><label class="sr-only" for="workspace">Workspace</label><select id="workspace" value={workspaceId()} onChange={event => { setWorkspaceId(event.currentTarget.value); setTeamOpen(false); }}><For each={props.session.workspaces}>{item => <option value={item.id}>{item.name}</option>}</For></select><ChevronDown size={13} /></div><div class="topbar-right"><span class="demo-tag"><Users size={12} /> SHARED WORKSPACE</span><button class="team-button" onClick={() => setTeamOpen(true)} disabled={!workspace()}><Users size={15} />Team</button><Menu.Root positioning={{ placement: 'bottom-end' }} onSelect={details => { if (details.value === 'demo') props.onOpenDemo(); }}><Menu.Trigger class="avatar avatar-menu" title={props.session.user.email} aria-label={`Account menu for ${props.session.user.email}`}>{props.session.user.name.slice(0, 1).toUpperCase()}</Menu.Trigger><Portal><Menu.Positioner><Menu.Content class="account-menu"><div class="account-menu-who"><strong>{props.session.user.name}</strong><small>{props.session.user.email}</small></div><Show when={props.demo && props.session.user.email !== DEMO_EMAIL}><Menu.Item value="demo" class="account-menu-item"><FlaskConical size={15} />Open demo workspace</Menu.Item></Show><Menu.Item value="signout" class="account-menu-item" onSelect={props.onLogout}><LogOut size={15} />Sign out</Menu.Item></Menu.Content></Menu.Positioner></Portal></Menu.Root><button class="icon-button" onClick={props.onLogout} aria-label="Sign out"><LogOut size={16} /></button></div></header>
+  const [hash, setHash] = createSignal(window.location.hash);
+  const followHash = () => setHash(window.location.hash);
+  window.addEventListener('hashchange', followHash);
+  onCleanup(() => window.removeEventListener('hashchange', followHash));
+  const section = createMemo((): 'world' | 'relay' | 'simulation' | 'routes' | 'news' | 'activity' | 'alerts' => { const view = readView(hash(), workspaceId()); return view.kind === 'route' || view.kind === 'routes' ? 'routes' : view.kind === 'news' || view.kind === 'activity' || view.kind === 'alerts' || view.kind === 'simulation' ? view.kind : hash() === '#actor-board' || hash() === '#workspace-ports' || hash().startsWith('#actor-message-') ? 'relay' : 'world'; });
+  const current = (name: ReturnType<typeof section>): 'page' | undefined => section() === name ? 'page' : undefined;
+  return <div class="workspace-shell"><header class="topbar"><Brand /><nav class="primary-nav" aria-label="Primary"><a href="#world" aria-current={current('world')}>World</a><a href={viewHash({ kind: 'routes' }, workspaceId())} aria-current={current('routes')}>Routes</a><a href={viewHash({ kind: 'news' }, workspaceId())} aria-current={current('news')}>Intelligence</a><a href={viewHash({ kind: 'activity' }, workspaceId())} aria-current={current('activity')}>Agents</a><a href={viewHash({ kind: 'alerts' }, workspaceId())} aria-current={current('alerts')}>Alerts</a><a href="#actor-board" aria-current={current('relay')}>Relay</a><a href={viewHash({ kind: 'simulation' }, workspaceId())} aria-current={current('simulation')}>Simulation</a></nav><div class="topbar-account"><Show when={props.session.workspaces.length > 1}><div class="workspace-picker"><Layers3 size={15} /><label class="sr-only" for="workspace">Workspace</label><select id="workspace" value={workspaceId()} onChange={event => { setWorkspaceId(event.currentTarget.value); setTeamOpen(false); }}><For each={props.session.workspaces}>{item => <option value={item.id}>{item.name}</option>}</For></select></div></Show><Menu.Root positioning={{ placement: 'bottom-end' }} onSelect={details => { if (details.value === 'demo') props.onOpenDemo(); else if (details.value === 'team') setTeamOpen(true); }}><Menu.Trigger class="avatar avatar-menu" title={props.session.user.email} aria-label={`Account menu for ${props.session.user.email}`}>{props.session.user.name.slice(0, 1).toUpperCase()}</Menu.Trigger><Portal><Menu.Positioner><Menu.Content class="account-menu"><div class="account-menu-who"><strong>{props.session.user.name}</strong><small>{props.session.user.email}</small><Show when={workspace()}>{item => <small>{item().name}</small>}</Show></div><Menu.Item value="team" class="account-menu-item" disabled={!workspace()}><Users size={15} />Team</Menu.Item><Show when={props.demo && props.session.user.email !== DEMO_EMAIL}><Menu.Item value="demo" class="account-menu-item"><FlaskConical size={15} />Open demo workspace</Menu.Item></Show><Menu.Item value="signout" class="account-menu-item" onSelect={props.onLogout}><LogOut size={15} />Sign out</Menu.Item></Menu.Content></Menu.Positioner></Portal></Menu.Root></div></header>
     <Show when={inviteToken()}><div class="invite-banner"><span><Users size={16} />You have a workspace invitation. Signed in as {props.session.user.email}.</span><div class="invite-actions"><button disabled={accepting()} onClick={() => { void acceptInvitation(); }}>{accepting() ? 'Joining…' : 'Accept invitation'}<ArrowRight size={14} /></button><button disabled={accepting()} onClick={clearInvitation}>Use my workspace instead</button></div></div></Show>
     <Show when={error()}>{message => <div class="global-error"><ErrorNote message={message()} /></div>}</Show>
     <Show when={!inviteToken() ? workspace()?.id : undefined} keyed>{id => <WorkspaceOperations workspaceId={id} />}</Show>

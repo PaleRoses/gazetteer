@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0e0f0f" />
+    <meta name="description" content="Gazetteer: ship actors that watch every crossing and talk to each other over Relay." />
+    <title>Gazetteer</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:title" content="Gazetteer" />
+    <meta property="og:description" content="Ship actors that watch every crossing and talk to each other over Relay." />
+  </head>
+  <body>
+    <header class="top">
+      <a class="wordmark" href="./">gazetteer</a>
+      <nav class="nav" aria-label="Primary">
+        <a data-app="/demo" href="/demo">World</a>
+        <a data-app="/demo#actor-board" href="/demo#actor-board">Relay</a>
+      </nav>
+    </header>
+    <main class="stage">
+      <div class="globe" id="globe">
+        <canvas id="dots" tabindex="0" role="img" aria-label="A dot-matrix globe over the Atlantic. The cargo ship Meridian Star crosses from the Caribbean to the Strait of Gibraltar."></canvas>
+        <div class="layer" id="layer" aria-hidden="true"></div>
+      </div>
+      <p class="hint">Drag to rotate</p>
+      <div class="watch">
+        <span class="robot" id="robot" aria-hidden="true"></span>
+        <p class="watch-line">I'm watching this crossing.</p>
+        <a class="ask" data-app="/demo" href="/demo">Ask the operational leader <span aria-hidden="true">→</span></a>
+      </div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

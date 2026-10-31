@@ -5,7 +5,7 @@ import { startLocalActors } from 'durable-actors/dev';
 import { createActorStub, createActorTransport } from 'durable-actors/backend';
 import { demoShipments } from '../../../src/core/demo';
 import type { Disruption, RelayOutcome, Shipment } from '../../../src/core/types';
-import type { PortAgent } from '../../../src/server/agents/port/agent';
+import type { HazardWatch } from '../../../src/server/agents/city/hazard-watch';
 import type { ShipmentAgent } from '../../../src/server/agents/ship/agent';
 import { attemptRelay } from '../../../src/server/relay/client';
 import { createMonitoring } from '../../../src/server/runtime/monitoring';
@@ -14,7 +14,7 @@ test('provider failures are explicit results without leaking credentials', async
   expect(await attemptRelay(() => Promise.reject(new Error('secret-provider-detail')), 'Relay unavailable')).toEqual({ status: 'unavailable', message: 'Relay unavailable' });
 });
 
-type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check'>;
+type PortClient = Pick<HazardWatch, 'initialize' | 'simulate' | 'check'>;
 type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check'>;
 type Actors = Readonly<{ port: PortClient; shipments: readonly ShipmentClient[] }>;
 const workspaceId = process.env.GAZETTEER_RUNTIME_WORKSPACE ?? 'runtime-check-2';
@@ -35,7 +35,7 @@ async function withActors<A>(operation: (actors: Actors) => Promise<A>): Promise
     apiKey: runtime.connection.apiKey, homeRegion: runtime.connection.storageRegion,
   });
   return await operation({
-    port: createActorStub<PortClient>('PortAgent', `${workspaceId}-port-singapore`, [
+    port: createActorStub<PortClient>('HazardWatch', `${workspaceId}-city-singapore-hazards`, [
       { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' },
     ], transport),
     shipments: demoShipments().map(value => createActorStub<ShipmentClient>('ShipmentAgent', `${workspaceId}-shipment-${value.id}`, [

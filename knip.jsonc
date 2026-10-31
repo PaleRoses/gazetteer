@@ -6,6 +6,8 @@
   "ignoreIssues": {
     // board protocol schemas the port and ship agents are still wiring
     "src/core/board.ts": ["exports", "types"],
+    // the act-2 recovery protocol and solver that the board union, CargoAgent, terminal and haulier are wiring
+    "src/core/recovery.ts": ["exports", "types"],
     // decision modules whose exports the actors adopt as the board wiring lands
     "src/server/agents/**": ["exports", "types"],
     // board transport, inbox and outbox surface whose callers are still being wired

@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { createAccess } from './access/access';
+import { createBookings } from './booking/ledger';
 import { createApi } from './http/api';
 import { startIngest } from './runtime/ingest';
 import { createMonitoring } from './runtime/monitoring';
@@ -23,7 +24,8 @@ const access = createAccess(resolve(dataDir, 'access.sqlite'));
 const monitoring = await createMonitoring({ dataDir: resolve(dataDir, 'actors'), workspaceIds: access.workspaceIds(), hasWorkspace: workspaceId => access.workspaceIds().includes(workspaceId) });
 /** The live AIS firehose: one reader for the whole process. GAZETTEER_INGEST=off turns it off. */
 const ingest = process.env.GAZETTEER_INGEST === 'off' ? undefined : startIngest();
-const api = createApi({ access, monitoring, origin, ingest, mail: mail.kind === 'resend' ? mail : undefined });
+const bookings = createBookings(resolve(dataDir, 'bookings.sqlite'));
+const api = createApi({ access, monitoring, origin, ingest, bookings, mail: mail.kind === 'resend' ? mail : undefined });
 
 const server = Bun.serve({
   port, hostname, maxRequestBodySize: 16384, idleTimeout: 120,
@@ -44,6 +46,6 @@ const server = Bun.serve({
 });
 console.info(`Gazetteer: ${origin} (synthetic demo data)`);
 console.info(mail.kind === 'manual' ? 'Invitations: manual share links; email is not configured.' : 'Invitations: email provider configured; delivery requires a provider receipt.');
-const close = async (): Promise<void> => { await server.stop(true); access.close(); await monitoring.close(); await ingest?.close(); process.exit(0); };
+const close = async (): Promise<void> => { await server.stop(true); access.close(); bookings.close(); await monitoring.close(); await ingest?.close(); process.exit(0); };
 process.once('SIGINT', close);
 process.once('SIGTERM', close);

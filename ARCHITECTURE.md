@@ -23,7 +23,7 @@ src/
     agents/
       index.ts             the Terse entrypoint: exports the actor classes and nothing else
       alarm.ts             the one alarm interval both actors share
-      port/                PortAgent and its pure decisions (risk, bulletin, status)
+      city/                the agents stationed at each city, one per element (TrafficWatch, HazardWatch), and their pure decisions
       ship/                ShipmentAgent and its pure decisions (what to post, what to assess)
     relay/                 Agent Relay client, bounded cursor, live follower, board transport, board read model
       connect.ts           the join-the-channel step both actors share

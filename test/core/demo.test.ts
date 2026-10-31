@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { activePorts, assessDisruption, demoShipments } from '../../src/core/demo';
 import { portById, ports } from '../../src/core/ports';
 import { distanceKm, positionAlong, progressAt, routeLengthKm, sharedLengthKm, voyageRoute, type LngLat } from '../../src/core/routes';
-import { relevance } from '../../src/server/agents/port/status';
+import { relevance } from '../../src/core/city';
 import type { Disruption, Shipment } from '../../src/core/types';
 
 const at = '2026-10-31T12:00:00.000Z';

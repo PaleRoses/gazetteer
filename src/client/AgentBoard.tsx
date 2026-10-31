@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import { Activity, Anchor, ArrowRight, Radio, Ship } from 'lucide-solid';
 import type { BoardMessage } from '../core/board';
 import type { Dashboard, Port } from '../core/types';
-import { boardAuthor, boardExplanation, boardKinds, boardPort, boardRisk, boardTime, filterBoard, readableBoardSummary } from './board-view';
+import { actorName, boardExplanation, boardKinds, boardPort, boardRisk, boardTime, filterBoard, readableBoardSummary } from './board-view';
 import './agent-board.css';
 
 function MessageCard(props: Readonly<{ message: BoardMessage; ports: readonly Port[] }>) {
@@ -16,7 +16,7 @@ function MessageCard(props: Readonly<{ message: BoardMessage; ports: readonly Po
     return 'Agent report';
   };
   return <li class="agent-message"><div class={`agent-message-icon ${tone()}`}><Show when={message().author.role === 'port'} fallback={<Ship size={18} />}><Anchor size={18} /></Show></div><article>
-    <header><div><strong>{boardAuthor(message(), props.ports)}</strong><span>{message().author.role === 'port' ? 'Port agent' : 'Ship agent'} · {boardKinds[message().kind]}</span></div><time dateTime={message().at}>{boardTime(message().at)}</time></header>
+    <header><div><strong>{actorName(message().author, { ports: props.ports })}</strong><span>{message().author.role === 'port' ? 'Port agent' : 'Ship agent'} · {boardKinds[message().kind]}</span></div><time dateTime={message().at}>{boardTime(message().at)}</time></header>
     <span class={`agent-message-tag ${tone()}`}>{tag()}</span>
     <p class="agent-message-explanation">{boardExplanation(message(), props.ports)}</p>
     <Show when={message().kind === 'ship.assessment' || message().kind === 'port.bulletin'}><p class="agent-message-summary">{readableBoardSummary(message(), props.ports)}</p></Show>

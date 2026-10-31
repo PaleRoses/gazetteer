@@ -6,6 +6,7 @@ import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { createEventsHandler } from './events';
 import { createIngestHandler, createVesselsHandler, type IngestFeed } from './ingest';
+import type { Bookings } from '../booking/ledger';
 import type { Access, AccessError, Result, Session } from '../access/access';
 import type { Monitoring } from '../runtime/monitoring';
 import { portIds } from '../../core/ports';
@@ -14,7 +15,7 @@ type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask' | 'operate'>>; origin: string; ingest?: IngestFeed; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask' | 'operate' | 'delayMeridianStar' | 'withdrawTruck' | 'restartCargo'>>; origin: string; ingest?: IngestFeed; bookings?: Pick<Bookings, 'list'>; demo?: DemoAccess; mail?: Mail; mailTransport?: MailTransport }>;
 type App = Readonly<{ Bindings: Readonly<{ clientKey: string }>; Variables: Readonly<{ user: User; token: string | undefined; membership: Workspace }> }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
@@ -42,15 +43,17 @@ const jsonOnly: MiddlewareHandler<App> = (c, next) =>
 const body = <S extends z.ZodType>(schema: S) => zValidator('json', schema, result => result.success ? undefined : json({ error: 'Invalid request fields' }, 400));
 
 const loopbackHosts: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+type DemoAccess = 'off' | 'loopback' | 'public';
+const demoAccess = (setting: string | undefined): DemoAccess => setting === 'off' || setting === 'public' ? setting : 'loopback';
 const demoOperator = { email: 'demo@gazetteer.local', name: 'Demo operator', workspaceName: 'Demo fleet' } as const;
 const tooMany = (): Response => json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
-const workspaceResources = ['operations', 'dashboard', 'events', 'disruptions', 'members', 'invitations'] as const;
+const workspaceResources = ['operations', 'dashboard', 'events', 'disruptions', 'members', 'invitations', 'bookings', 'delay-meridian-star', 'withdraw-truck', 'restart-cargo'] as const;
 /** Ids are matched as written in the URL, never percent-decoded: `gz%2D1042` is not `gz-1042`. Segments: '', api, workspaces, <workspace>, shipments, <shipment>, comments. */
 const segment = (c: Context, index: number): string => new URL(c.req.url).pathname.split('/')[index] ?? '';
 const workspaceOf = (c: Context): string => segment(c, 3);
 const shipmentOf = (c: Context): string => segment(c, 5);
 
-export function createApi({ access, monitoring, origin, ingest, demo = process.env.GAZETTEER_DEMO !== 'off', mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
+export function createApi({ access, monitoring, origin, ingest, bookings, demo = demoAccess(process.env.GAZETTEER_DEMO), mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
   const cookie = (token: string, maxAge = 604800): string => `gazetteer_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${origin.startsWith('https:') ? '; Secure' : ''}`;
   const authenticated = (result: Result<Session>): Response => {
     if (!result.ok) return respond(result);
@@ -58,8 +61,10 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
     return workspaces.ok ? json({ user: result.value.user, workspaces: workspaces.value }, 200, { 'Set-Cookie': cookie(result.value.token) }) : respond(workspaces);
   };
 
-  /** Waive-through sign-in exists only for a loopback origin and never when GAZETTEER_DEMO=off. */
-  const demoAvailable = demo && loopbackHosts.has(new URL(origin).hostname);
+  /** Waive-through sign-in: on a loopback origin by default, on any origin only when GAZETTEER_DEMO=public, never when GAZETTEER_DEMO=off. */
+  const demoAvailable = demo === 'public' || (demo === 'loopback' && loopbackHosts.has(new URL(origin).hostname));
+  /** A POST comes from the configured origin, or from this machine itself (the server is also reached on localhost behind a public tunnel). */
+  const allowedOrigin = (from: string | undefined): boolean => from === origin || (from !== undefined && URL.canParse(from) && loopbackHosts.has(new URL(from).hostname));
 
   const events = monitoring.subscribe && createEventsHandler({
     subscribe: monitoring.subscribe,
@@ -90,7 +95,7 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
 
   const app = new Hono<App>()
     // Order is the contract: origin, then the public routes, then a session, then membership per route.
-    .use('*', (c, next) => c.req.method === 'POST' && c.req.header('Origin') !== origin ? Promise.resolve(json({ error: 'Origin not allowed' }, 403)) : next())
+    .use('*', (c, next) => c.req.method === 'POST' && !allowedOrigin(c.req.header('Origin')) ? Promise.resolve(json({ error: 'Origin not allowed' }, 403)) : next())
     .get('/api/demo-session', () => json({ available: demoAvailable }))
     .post('/api/demo-session', async c => {
       if (!demoAvailable) return json({ error: 'Demo access is not enabled here.' }, 403);
@@ -111,6 +116,7 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
     .post('/api/workspaces/:workspaceId/operations', member, jsonOnly, body(operationSchema), async c => monitoring.operate ? monitoringResponse(await monitoring.operate(workspaceOf(c), c.req.valid('json'), c.get('user').name)) : json({ error: 'Fleet editing is unavailable.' }, 503))
     .get('/api/workspaces/:workspaceId/dashboard', member, async c => monitoringResponse(await monitoring.dashboard(workspaceOf(c))))
     .get('/api/workspaces/:workspaceId/events', member, c => events ? events(c.req.raw, workspaceOf(c)) : json({ error: 'Not found' }, 404))
+    .get('/api/workspaces/:workspaceId/bookings', member, c => json({ bookings: bookings?.list(workspaceOf(c)) ?? [] }))
     .get('/api/workspaces/:workspaceId/members', member, c => respond(access.members(c.get('user').id, workspaceOf(c)), members => ({ members })))
     .post('/api/workspaces/:workspaceId/shipments/:shipmentId/ask', member, inFleet('Ship not found'), jsonOnly, body(z.object({ question: z.string().trim().min(1).max(500) })), async c => {
       if (!monitoring.ask) return json({ error: 'The ship mind is unavailable.' }, 503);
@@ -121,6 +127,9 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
       const input = c.req.valid('json');
       return monitoringResponse(await monitoring.simulate(workspaceOf(c), input.portId, input.delayHours));
     })
+    .post('/api/workspaces/:workspaceId/delay-meridian-star', member, async c => monitoring.delayMeridianStar ? monitoringResponse(await monitoring.delayMeridianStar(workspaceOf(c))) : json({ error: 'Not found' }, 404))
+    .post('/api/workspaces/:workspaceId/withdraw-truck', member, async c => monitoring.withdrawTruck ? monitoringResponse(await monitoring.withdrawTruck(workspaceOf(c))) : json({ error: 'Not found' }, 404))
+    .post('/api/workspaces/:workspaceId/restart-cargo', member, async c => monitoring.restartCargo ? monitoringResponse(await monitoring.restartCargo(workspaceOf(c))) : json({ error: 'Not found' }, 404))
     .post('/api/workspaces/:workspaceId/invitations', member, jsonOnly, body(z.object({ email })), async c => {
       const user = c.get('user');
       const invitation = access.invite(user.id, workspaceOf(c), c.req.valid('json').email);

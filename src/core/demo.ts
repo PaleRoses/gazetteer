@@ -43,6 +43,7 @@ const voyages: readonly Voyage[] = [
   { id: 'gz-1070', vessel: 'Hellenic Star', cargo: 'Marble & stone', containers: 12, origin: 'piraeus', destination: 'new-york-new-jersey', knots: 16, place: { progress: 0.6 } },
   { id: 'gz-1071', vessel: 'Paulista Grace', cargo: 'Coffee', containers: 30, origin: 'santos', destination: 'rotterdam', knots: 16, place: { progress: 0.5 } },
   { id: 'gz-1073', vessel: 'Haeundae Breeze', cargo: 'Electronic displays', containers: 20, origin: 'busan', destination: 'singapore', knots: 18, place: { arrivalHours: 2 } },
+  { id: 'gz-1074', vessel: 'Zhoushan Patience', cargo: 'Garments', containers: 26, origin: 'ningbo-zhoushan', destination: 'singapore', knots: 17, place: { arrivalHours: -15 } },
   { id: 'gz-1072', vessel: 'Liberty Southern', cargo: 'Agricultural machinery', containers: 14, origin: 'new-york-new-jersey', destination: 'santos', knots: 16, place: { progress: 0.7 } },
 ];
 

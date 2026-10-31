@@ -13,7 +13,7 @@ type Baseline = { eta: string; status?: string; stale: boolean; stopped: boolean
 const hours = (later: string, earlier: string) => (Date.parse(later) - Date.parse(earlier)) / 3_600_000;
 
 /** Workspace fleet membership and alert receipts survive both browser and actor restarts. */
-export function createOperations(path: string) {
+export function createOperations(path: string, scenarioNow: Date = new Date()) {
   const db = new Database(path, { create: true });
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
     CREATE TABLE IF NOT EXISTS fleet_workspaces (id TEXT PRIMARY KEY, preferences TEXT NOT NULL);
@@ -23,7 +23,7 @@ export function createOperations(path: string) {
   const ensure = db.transaction((workspace: string) => {
     if (db.query('SELECT id FROM fleet_workspaces WHERE id=?').get(workspace)) return;
     db.query('INSERT INTO fleet_workspaces VALUES (?,?)').run(workspace, JSON.stringify(defaultAlertPreferences));
-    for (const ship of demoShipments()) db.query('INSERT INTO fleet(workspace,id,body) VALUES (?,?,?)').run(workspace, ship.id, JSON.stringify(ship));
+    for (const ship of demoShipments(scenarioNow)) db.query('INSERT INTO fleet(workspace,id,body) VALUES (?,?,?)').run(workspace, ship.id, JSON.stringify(ship));
   });
   const fleet = (workspace: string): Shipment[] => {
     ensure(workspace);

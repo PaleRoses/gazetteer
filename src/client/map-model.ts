@@ -5,7 +5,7 @@ import type { Dashboard, Shipment } from '../core/types';
 import { positionAlong, progressAt, splitAt, unwrap, voyageRoute, type LngLat, type Route } from '../core/routes';
 
 export type VesselView = Readonly<{
-  id: string; vessel: string; risk: Shipment['risk']; position: LngLat; progress: number; route: Route; laneSource: 'sea-lane' | 'supplied';
+  id: string; vessel: string; risk: Shipment['risk']; delayHours: number; position: LngLat; progress: number; route: Route; laneSource: 'sea-lane' | 'supplied';
 }>;
 
 const departure = (shipment: Shipment): string | undefined => shipment.milestones[0]?.at;
@@ -17,7 +17,7 @@ export const vesselView = (shipment: Shipment, now: number): VesselView => {
   const at = shipment.voyage?.status === 'stopped' ? Date.parse(shipment.voyage.statusSince) : now;
   const progress = shipment.voyage?.status === 'planned' ? 0 : shipment.voyage?.status === 'arrived' ? 1 : departed === undefined ? 0 : progressAt(departed, shipment.eta, at);
   return {
-    id: shipment.id, vessel: shipment.vessel, risk: shipment.risk, route, progress,
+    id: shipment.id, vessel: shipment.vessel, risk: shipment.risk, delayHours: shipment.delayHours, route, progress,
     laneSource: lane ? 'sea-lane' : 'supplied',
     position: (departed === undefined ? undefined : positionAlong(route, progress)) ?? shipment.coordinates,
   };
@@ -49,18 +49,36 @@ export const portFeatures = (ports: Dashboard['ports'], statuses?: Dashboard['po
 const line = (id: string, coordinates: Route, risk?: Shipment['risk']): Feature<LineString> => ({ type: 'Feature', properties: { id, ...(risk === undefined ? {} : { risk }) }, geometry: { type: 'LineString', coordinates: coordinates.map(point => [...point]) } });
 const collection = (features: readonly Feature<LineString>[]): FeatureCollection<LineString> => ({ type: 'FeatureCollection', features: [...features] });
 
-export type RouteLayers = Readonly<{ lanes: FeatureCollection<LineString>; sailed: FeatureCollection<LineString>; ahead: FeatureCollection<LineString> }>;
+export type RouteLayers = Readonly<{ sailed: FeatureCollection<LineString>; ahead: FeatureCollection<LineString> }>;
 
-/** Every voyage remains visible; the selected voyage additionally gets a sailed/ahead overlay. */
+/** Only the selected voyage is drawn, split at the ship into the sailed and the remaining legs. */
 export const routeLayers = (views: readonly VesselView[], selectedId: string | undefined): RouteLayers => {
   const selected = views.find(view => view.id === selectedId);
   const split = selected && splitAt(selected.route, selected.progress);
   return {
-    lanes: collection(views.map(view => line(view.id, view.route, view.risk))),
     sailed: collection(selected && split ? [line(selected.id, split.sailed, selected.risk)] : []),
     ahead: collection(selected && split ? [line(selected.id, split.ahead, selected.risk)] : []),
   };
 };
+
+/** The cities a voyage of the fleet touches: origin, calls, destination. */
+export const fleetPorts = <G extends Point, P extends Readonly<{ id: PortId }>>(features: FeatureCollection<G, P>, shipments: readonly Shipment[]): FeatureCollection<G, P> => {
+  const touched = new Set(shipments.flatMap(shipment => [shipment.origin, ...shipment.via, shipment.destination]));
+  return { ...features, features: features.features.filter(feature => touched.has(feature.properties.id)) };
+};
+
+const riskWord: Readonly<Record<Shipment['risk'], string>> = { delayed: 'Delayed', watch: 'Watch', 'on-track': 'On track' };
+
+export const statusLine = (shipment: Pick<Shipment, 'risk' | 'delayHours'>): string =>
+  shipment.risk !== 'on-track' && shipment.delayHours > 0 ? `${riskWord[shipment.risk]} · +${shipment.delayHours} h` : riskWord[shipment.risk];
+
+export type Region = Readonly<{ id: string; label: string; bounds: Bounds }>;
+export const regions: readonly Region[] = [
+  { id: 'world', label: 'Whole world', bounds: [-180, -56, 180, 76] },
+  { id: 'europe', label: 'Europe', bounds: [-25, 34, 45, 66] },
+  { id: 'asia', label: 'Asia', bounds: [60, -12, 150, 50] },
+  { id: 'americas', label: 'Americas', bounds: [-130, -56, -30, 60] },
+];
 
 export type Bounds = readonly [west: number, south: number, east: number, north: number];
 
@@ -71,9 +89,23 @@ export const boundsOf = (route: Route): Bounds | undefined => {
   return [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
 };
 
-const range = (from: number, to: number, step: number): readonly number[] => Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, index) => from + index * step);
 
-export const graticule = (step: number): FeatureCollection<LineString> => collection([
-  ...range(-180, 180, step).map(lon => line(`lon${lon}`, range(-80, 80, 10).map((lat): LngLat => [lon, lat]))),
-  ...range(-60, 60, step).map(lat => line(`lat${lat}`, range(-180, 180, 10).map((lon): LngLat => [lon, lat]))),
-]);
+const TILE = 512;
+const mercatorY = (lat: number): number => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
+const latitudeOf = (y: number): number => Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180 / Math.PI;
+
+type Camera = Readonly<{ center: LngLat; zoom: number }>;
+
+/** The largest web-mercator zoom at which the bounds fit the viewport inside the padding, centred on them. */
+export const cameraFor = (bounds: Bounds, width: number, height: number, padding: number): Camera => {
+  const [west, south, east, north] = bounds;
+  const top = mercatorY(north);
+  const bottom = mercatorY(south);
+  const across = Math.max((east - west) / 360, 1e-9) * TILE;
+  const down = Math.max(bottom - top, 1e-9) * TILE;
+  const zoom = Math.log2(Math.max(Math.min((width - 2 * padding) / across, (height - 2 * padding) / down), 1e-9));
+  return { center: [(west + east) / 2, latitudeOf((top + bottom) / 2)], zoom };
+};
+
+/** The zoom at which the globe's disc spans the viewport's shorter side inside the padding. */
+export const globeZoom = (width: number, height: number, padding: number): number => Math.log2(Math.max((Math.min(width, height) - 2 * padding) * Math.PI / TILE, 1e-9));
