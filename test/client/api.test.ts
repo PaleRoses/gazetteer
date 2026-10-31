@@ -31,13 +31,15 @@ test('relay health survives GET and SSE without inventing a missing transport st
   expect(dashboardSchema.parse(societyDashboard).relayHealth).toBeUndefined();
 });
 
-test('the canonical assessment method governs null confidence in GET and SSE', () => {
-  const ruleWithInventedConfidence = { ...societyDashboard, board: [{ ...fixtureAssessment, confidence: 0 }] };
-  const aiWithoutConfidence = { ...societyDashboard, board: [{ ...fixtureAssessment, method: 'ai-assessed', confidence: null }] };
-  expect(dashboardSchema.safeParse(ruleWithInventedConfidence).success).toBe(false);
-  expect(parseDashboardEvent(JSON.stringify(ruleWithInventedConfidence))).toBeUndefined();
-  expect(dashboardSchema.safeParse(aiWithoutConfidence).success).toBe(false);
-  expect(parseDashboardEvent(JSON.stringify(aiWithoutConfidence))).toBeUndefined();
+test('a post that breaks the assessment law is dropped in GET and SSE; the fleet and the other posts stay', () => {
+  const others = societyDashboard.board ?? [];
+  const ruleWithInventedConfidence = { ...societyDashboard, board: [...others, { ...fixtureAssessment, id: 'bad:rule', confidence: 0 }] };
+  const fallbackWithoutConfidence = { ...societyDashboard, board: [{ ...fixtureAssessment, id: 'bad:fallback', method: 'deterministic-fallback', confidence: null }, ...others] };
+  [ruleWithInventedConfidence, fallbackWithoutConfidence].forEach(snapshot => {
+    expect(dashboardSchema.parse(snapshot).board).toEqual(others);
+    expect(dashboardSchema.parse(snapshot).shipments).toEqual(societyDashboard.shipments);
+    expect(parseDashboardEvent(JSON.stringify(snapshot))?.board).toEqual(others);
+  });
 });
 
 test('invitation receipts cannot fabricate email delivery', () => {
