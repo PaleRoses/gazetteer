@@ -15,6 +15,7 @@ test('with Agent Relay off no key is needed, every actor is ready within seconds
     const started = Date.now();
     const first = await monitoring.dashboard('w');
     expect(first.status).toBe('ok');
+    if (first.status === 'ok') expect(first.value.relayMembership).toBeUndefined();
     const ready = async (): Promise<boolean> => { const outcome = await monitoring.dashboard('w'); return outcome.status === 'ok' && outcome.value.startup === undefined; };
     while (!await ready() && Date.now() - started < 30_000) await pause(200);
     expect(Date.now() - started).toBeLessThan(30_000);

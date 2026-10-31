@@ -223,7 +223,7 @@ export async function createMonitoring(options: Readonly<{ relay?: 'off' | 'mirr
       relayHealth: mirror ? { state: relayHealth.failingSince ? 'reconnecting' : 'live', since: relayHealth.failingSince, lastPostAt: relayHealth.lastPostAt } : { state: 'off', since: null, lastPostAt: null },
       ...(recovery.view(workspaceId) ? { recovery: recovery.view(workspaceId) } : {}),
       ...(status.complete ? {} : { startup: { ready: status.ready, total: status.total, ...(queued > 0 ? { queued } : {}) } }),
-      ...(status.joined === status.total ? {} : { relayMembership: { joined: status.joined, total: status.total } }),
+      ...(!mirror || status.joined === status.total ? {} : { relayMembership: { joined: status.joined, total: status.total } }),
     };
     hub.publishDashboard(workspaceId, built);
     return relaySuccess(built);
