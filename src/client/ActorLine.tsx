@@ -1,18 +1,58 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, Show } from 'solid-js';
+import { ArrowRight } from 'lucide-solid';
+import { createEffect, createMemo, createSignal, Match, on, onCleanup, Show, Switch } from 'solid-js';
 import type { BoardAuthor, BoardMessage } from '../core/board';
-import type { Dashboard } from '../core/types';
-import { time } from './presentation';
+import type { Dashboard, Shipment } from '../core/types';
+import { portName, time } from './presentation';
 import { actorName } from './board-view';
+import { PixelCrane, PixelShip, PixelTruck, RiskMark } from './sprites';
+import './styles/ticker.css';
+
+export { PixelShip } from './sprites';
 
 export const boardAnchor = (id: string): string => `actor-message-${id}`;
 
-export function PixelShip() {
-  return <svg class="pixel-ship-glyph" viewBox="0 0 24 24" aria-hidden="true" shape-rendering="crispEdges"><path fill="currentColor" d="M11 3h2v5h5v4h4v5h-2v3H4v-3H2v-5h4V8h5z"/><path fill="var(--field)" d="M8 10h3v2H8zM13 10h3v2h-3z"/></svg>;
-}
+type Sprite = 'crane' | 'ship' | 'truck';
 
-function ActorSprite(props: Readonly<{ author: BoardAuthor; label: string }>) {
-  const hazards = () => props.author.role === 'city' && props.author.element === 'hazards';
-  return <span class="actor-sprite" role="img" aria-label={`${props.label} · actor role symbol`}><Show when={props.author.role === 'ship'} fallback={<svg viewBox="0 0 28 26" aria-hidden="true" shape-rendering="crispEdges"><Show when={hazards()} fallback={<path fill="currentColor" d="M3 3h2v20H3zM5 3h19v2H5zM7 5h2v3H7zM11 5h2v6h-2zM15 5h2v9h-2zM19 5h2v12h-2zM21 5h2v13h-2zM17 18h10v7H17zM0 23h12v2H0z"/>}><path fill="currentColor" d="M5 3h14v2h4v7h-7l-3 6H9l2-6H3V5h2zM0 19h6v2H0zM7 21h7v2H7zM15 19h6v2h-6zM22 21h6v2h-6z"/></Show></svg>}><PixelShip /></Show></span>;
+const spriteOf = (author: BoardAuthor): Sprite => {
+  switch (author.role) {
+    case 'ship': case 'cargo': return 'ship';
+    case 'haulier': return 'truck';
+    case 'port': case 'city': return 'crane';
+  }
+  const unhandled: never = author;
+  return unhandled;
+};
+
+const placeOf = (author: BoardAuthor, dashboard: Dashboard): string => {
+  switch (author.role) {
+    case 'ship': case 'cargo': return author.vessel;
+    case 'port': return portName(dashboard.ports, author.id);
+    case 'city': case 'haulier': return portName(dashboard.ports, author.city);
+  }
+  const unhandled: never = author;
+  return unhandled;
+};
+
+const riskOf = (author: BoardAuthor, dashboard: Dashboard): Shipment['risk'] | undefined => {
+  switch (author.role) {
+    case 'ship': return dashboard.shipments.find(shipment => shipment.id === author.id)?.risk;
+    case 'cargo': return dashboard.shipments.find(shipment => shipment.vessel === author.vessel)?.risk;
+    case 'port': case 'city': case 'haulier': return undefined;
+  }
+  const unhandled: never = author;
+  return unhandled;
+};
+
+function ActorSprite(props: Readonly<{ author: BoardAuthor; dashboard: Dashboard; label: string }>) {
+  const sprite = () => spriteOf(props.author);
+  const risk = () => riskOf(props.author, props.dashboard) ?? 'on-track';
+  return <span class={sprite() === 'ship' ? `actor-sprite ship ${risk()}` : `actor-sprite ${sprite()}`} role="img" aria-label={`${props.label} · actor role symbol`}>
+    <Switch>
+      <Match when={sprite() === 'crane'}><PixelCrane /></Match>
+      <Match when={sprite() === 'truck'}><PixelTruck /></Match>
+      <Match when={sprite() === 'ship'}><PixelShip /><RiskMark risk={risk()} /></Match>
+    </Switch>
+  </span>;
 }
 
 export function ActorLine(props: Readonly<{ dashboard: Dashboard; onOpenMessage: (id: string) => void }>) {
@@ -30,5 +70,10 @@ export function ActorLine(props: Readonly<{ dashboard: Dashboard; onOpenMessage:
     onCleanup(() => window.clearTimeout(timer));
   });
   const current = createMemo(() => posts()[index() % (count() || 1)]);
-  return <div class="actor-line"><Show when={current()} fallback={<p class="actor-waiting">{props.dashboard.board === undefined ? 'Actor messages have not been reported.' : 'No actor messages are available in this snapshot.'}</p>}>{message => <><ActorSprite author={message().author} label={actorName(message().author, props.dashboard)} /><a class="actor-dispatch" href={`#${encodeURIComponent(boardAnchor(message().id))}`} onClick={() => props.onOpenMessage(message().id)}><span class="actor-byline">{actorName(message().author, props.dashboard)}<time dateTime={message().at}>{time(message().at)} UTC</time></span><span class="actor-summary">{message().summary}</span></a><a class="ticker-thread" href={`#${encodeURIComponent(boardAnchor(message().id))}`} onClick={() => props.onOpenMessage(message().id)}>View thread →</a><Show when={count() > 1}><button class="ticker-pause" type="button" aria-label={paused() ? 'Resume actor ticker' : 'Pause actor ticker'} aria-pressed={paused()} onClick={() => setPaused(value => !value)}>{paused() ? '▶' : 'Ⅱ'}</button></Show></>}</Show></div>;
+  return <div class="actor-line"><Show when={current()} fallback={<p class="actor-waiting">{props.dashboard.board === undefined ? 'Actor messages have not been reported.' : 'No actor messages are available in this snapshot.'}</p>}>{message => <>
+    <ActorSprite author={message().author} dashboard={props.dashboard} label={actorName(message().author, props.dashboard)} />
+    <a class="actor-dispatch" href={`#${encodeURIComponent(boardAnchor(message().id))}`} onClick={() => props.onOpenMessage(message().id)}><span class="actor-byline">{placeOf(message().author, props.dashboard)} · <time dateTime={message().at}>{time(message().at)} UTC</time></span><span class="actor-summary">{message().summary}</span></a>
+    <a class="ticker-thread" href={`#${encodeURIComponent(boardAnchor(message().id))}`} onClick={() => props.onOpenMessage(message().id)}>View thread <ArrowRight size={20} stroke-width={1.75} aria-hidden="true" /></a>
+    <Show when={count() > 1}><span class="ticker-divider" aria-hidden="true" /><button class="ticker-pause" type="button" aria-label="Pause actor ticker" aria-pressed={paused()} onClick={() => setPaused(value => !value)}><span /><span /></button></Show>
+  </>}</Show></div>;
 }
