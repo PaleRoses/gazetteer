@@ -5,7 +5,7 @@ import { simulateDisruption } from '../../src/core/simulation';
 const now = new Date('2026-10-31T12:00:00Z');
 const fleet = demoShipments(now);
 const ship = { ...fleet[0]!, destination: 'singapore' as const };
-const input = { scenario: 'closure' as const, portId: 'singapore' as const, delayHours: 36 };
+const input = { scenario: 'Dockworkers’ strike', portId: 'singapore' as const, delayHours: 36 };
 
 test('scenario output is detached and repeated runs do not accumulate or mutate fleet data', () => {
   const ships = [structuredClone(ship)];

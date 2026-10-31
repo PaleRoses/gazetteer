@@ -116,4 +116,4 @@ Run `npm run verify` before pushing directly to `main`; fetch and integrate upst
 
 ### What-if simulation
 
-The Simulation tab offers berth congestion, severe weather and terminal closure presets, a destination port picker, and a 1–168 hour delay assumption. Each run captures the current fleet and compares future destination ETAs with the assumed delay added once. Results stay in the browser, persist while switching workspace tabs, and never write to durable actors, Relay, the main map, fleet or alerts. This is a labelled rule-based planning estimate; transit calls, route changes and congestion propagation are outside its scope.
+The Simulation tab accepts a free-text disruption description, a destination port, and a 1–168 hour delay assumption. Each run captures the current fleet and compares future destination ETAs with the assumed delay added once. Results stay in the browser, persist while switching workspace tabs, and never write to durable actors, Relay, the main map, fleet or alerts. This is a labelled rule-based planning estimate; transit calls, route changes and congestion propagation are outside its scope.
