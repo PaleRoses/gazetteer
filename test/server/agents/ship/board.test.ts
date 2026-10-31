@@ -43,7 +43,10 @@ describe('ship board decisions', () => {
     expect(decideBoard(remembered, { shipment: watched, situation, now })).toEqual([]);
     const widened: Situation = { ...situation, id: 'telemetry:gz-1042:ais-dark+stationary-outside-port:t2', kinds: ['ais-dark', 'stationary-outside-port'] };
     expect(kinds(decideBoard(remembered, { shipment: watched, situation: widened, now }))).toEqual(['ship.observation']);
-    expect(decideBoard(remembered, { shipment: watched, situation: null, now })).toEqual([]);
+    const cleared = decideBoard(remembered, { shipment: watched, situation: null, now });
+    expect(cleared.map(item => item.message)).toEqual([expect.objectContaining({ kind: 'ship.observation', id: `obs:cleared:${situation.id}`, signals: [] })]);
+    expect(parseBoardMessage(cleared[0]!.message)).toBeDefined();
+    expect(decideBoard(apply(remembered, cleared), { shipment: watched, situation: null, now })).toEqual([]);
   });
 
   test('a changed risk or ETA posts one assessment and an ETA notice per port ahead, with the right previous ETA', () => {

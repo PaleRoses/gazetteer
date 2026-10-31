@@ -49,19 +49,20 @@ export type Society = Readonly<{ floor: RiskFloor | null; queues: readonly Reado
 export const noSociety: Society = { floor: null, queues: [] };
 export type DecisionInput = Readonly<{ shipment: AssessedShipment; situation: Situation | null; now: string; society?: Society }>;
 
+/** A ship says when its signals begin, once, and says when they clear, once: a port that counted it stops counting it. */
 const observationOf = ({ shipment, situation, now }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] => {
   const telemetry = shipment.telemetry;
-  if (!situation || !telemetry || situation.id === memory.observed) return [];
+  if (!telemetry || situation?.id === memory.observed || (!situation && !memory.observed)) return [];
   const active = shipment.signals?.map(signal => signal.kind) ?? [];
-  const signals = [...new Set(active.length ? active : situation.kinds)];
+  const signals = situation ? [...new Set(active.length ? active : situation.kinds)] : [];
   const measured = Object.assign({}, ...(shipment.signals ?? []).map(signal => signal.measured)) as NonNullable<ShipObservation['measured']>;
   const nearPort = nearestPortId(telemetry.position);
   const message: ShipObservation = {
-    id: `obs:${situation.id}`, kind: 'ship.observation', author: { role: 'ship', id: shipment.id, vessel: shipment.vessel, agent: shipment.agent }, at: now,
-    summary: observationSummary(shipment.agent, shipment.vessel, shipment.signals?.map(signal => signal.title) ?? signals, measured, nearPort),
+    id: situation ? `obs:${situation.id}` : `obs:cleared:${memory.observed}`, kind: 'ship.observation', author: { role: 'ship', id: shipment.id, vessel: shipment.vessel, agent: shipment.agent }, at: now,
+    summary: observationSummary(shipment.agent, shipment.vessel, situation ? shipment.signals?.map(signal => signal.title) ?? signals : ['signals cleared'], measured, nearPort),
     shipmentId: shipment.id, signals, measured, position: [telemetry.position[0], telemetry.position[1]], nearPort, provider: telemetry.provider, observedAt: telemetry.observedAt,
   };
-  return [{ message, remember: current => ({ ...current, observed: situation.id }) }];
+  return [{ message, remember: current => ({ ...current, observed: situation?.id ?? null }) }];
 };
 
 const assessmentOf = ({ shipment, situation, now, society = noSociety }: DecisionInput, memory: ShipBoardMemory): readonly Outbound[] => {

@@ -51,6 +51,17 @@ describe('the society on a fake clock, model off', () => {
     behind.forEach(id => expect(Date.parse(ships.get(id!)!.shipment.eta)).toBeGreaterThan(Date.parse(original.get(id!)!)));
   });
 
+  test('a ship that leaves the queue says so, and the port stops counting it', async () => {
+    const leaves = (cycle: number) => cycle < cycles / 2 ? demoScenarios : { ...demoScenarios, 'gz-1046': underway, 'gz-1047': underway };
+    const { board, ships } = await runSociety(leaves);
+    const singapore = bulletins(board).filter(item => item.portId === 'singapore');
+    expect(Math.max(...singapore.map(item => item.anchored))).toBeGreaterThanOrEqual(2);
+    expect(singapore[singapore.length - 1]!.anchored).toBe(0);
+    expect(board.some(message => message.kind === 'ship.observation' && message.signals.length === 0)).toBe(true);
+    const original = new Map(demoShipments(new Date(start)).map(shipment => [shipment.id, shipment.eta]));
+    expect(ships.get('gz-1047')!.shipment.eta).toBe(original.get('gz-1047')!);
+  });
+
   test('when the signals clear, a ship returns to the risk it was assessed at', async () => {
     const troubled = await runSociety(cycle => cycle < cycles / 2 ? demoScenarios : { ...demoScenarios, 'gz-1051': underway, 'gz-1052': underway });
     const hobbled = await runSociety(() => demoScenarios);

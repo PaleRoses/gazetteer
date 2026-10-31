@@ -30,7 +30,8 @@ export const shipObservation = z.object({
   ...envelope,
   kind: z.literal('ship.observation'),
   shipmentId: z.string().min(1),
-  signals: z.array(signalKind).min(1),
+  /** Empty when the ship's signals have cleared. */
+  signals: z.array(signalKind),
   /** The numbers behind the signals, as the watcher measured them. */
   measured: z.record(z.string(), z.union([z.number(), z.string(), z.null()])).optional(),
   position,
