@@ -1,6 +1,6 @@
 import { applyFallback, applySubject, noticeSubject, type AssessedShipment, type Provenanced, type Subject } from './apply';
 import { isExposed, type AssessableNotice } from './exposure';
-import { buildPrompt, buildTelemetryPrompt, evidenceIds, systemPrompt, telemetryEvidenceIds } from './prompt';
+import { buildPrompt, buildTelemetryPrompt, evidenceIds, systemPrompt, telemetryEvidenceIds, type BoardEvidence } from './prompt';
 import { validateAssessment } from './schema';
 import type { Observation, Situation } from '../telemetry/watcher';
 
@@ -48,25 +48,25 @@ async function assessTrigger(deps: AssessDeps, cache: AssessmentCache, shipment:
   return settle(applySubject(shipment, subject, entry), { status: 'assessed', source: 'model', model: deps.modelId, latencyMs: Date.now() - started }, { ...cache, [key]: entry });
 }
 
-export const assessNotice = (deps: AssessDeps, cache: AssessmentCache, shipment: AssessedShipment, notice: AssessableNotice): Promise<Settled> =>
+export const assessNotice = (deps: AssessDeps, cache: AssessmentCache, shipment: AssessedShipment, notice: AssessableNotice, board: readonly BoardEvidence[] = []): Promise<Settled> =>
   assessTrigger(deps, cache, shipment, {
-    subject: noticeSubject(notice), exposed: isExposed(shipment, notice), allowedEvidence: evidenceIds(shipment, notice),
-    prompt: now => buildPrompt(shipment, notice, now), fallback: (current, reason, now) => applyFallback(current, notice, reason, now),
+    subject: noticeSubject(notice), exposed: isExposed(shipment, notice), allowedEvidence: evidenceIds(shipment, notice, board),
+    prompt: now => buildPrompt(shipment, notice, now, board), fallback: (current, reason, now) => applyFallback(current, notice, reason, now),
   });
 
 /** A telemetry situation is already specific to the ship, so the port pre-filter does not apply. Without a model the ETA stays untouched: telemetry alone never invents a delay. */
-export const assessTelemetry = (deps: AssessDeps, cache: AssessmentCache, shipment: AssessedShipment, situation: Situation, observation: Observation): Promise<Settled> =>
+export const assessTelemetry = (deps: AssessDeps, cache: AssessmentCache, shipment: AssessedShipment, situation: Situation, observation: Observation, board: readonly BoardEvidence[] = []): Promise<Settled> =>
   assessTrigger(deps, cache, shipment, {
     subject: { id: situation.id, basis: 'live-telemetry', label: `Live telemetry (${observation.signals[0]?.provider ?? 'AIS'})`, evidence: [] },
-    exposed: observation.signals.length > 0, allowedEvidence: telemetryEvidenceIds(shipment, observation.signals),
-    prompt: now => buildTelemetryPrompt(shipment, observation, now), fallback: current => current,
+    exposed: observation.signals.length > 0, allowedEvidence: telemetryEvidenceIds(shipment, observation.signals, board),
+    prompt: now => buildTelemetryPrompt(shipment, observation, now, board), fallback: current => current,
   });
 
 export type Batch = Readonly<{ shipment: AssessedShipment; cache: AssessmentCache; outcomes: readonly AssessmentOutcome[] }>;
 
-export const assessNotices = (deps: AssessDeps, cache: AssessmentCache, shipment: AssessedShipment, notices: readonly AssessableNotice[]): Promise<Batch> =>
+export const assessNotices = (deps: AssessDeps, cache: AssessmentCache, shipment: AssessedShipment, notices: readonly AssessableNotice[], board: readonly BoardEvidence[] = []): Promise<Batch> =>
   notices.reduce<Promise<Batch>>(async (previous, notice) => {
     const batch = await previous;
-    const settled = await assessNotice(deps, batch.cache, batch.shipment, notice);
+    const settled = await assessNotice(deps, batch.cache, batch.shipment, notice, board);
     return { shipment: settled.shipment, cache: settled.cache, outcomes: [...batch.outcomes, settled.outcome] };
   }, Promise.resolve({ shipment, cache, outcomes: [] }));
