@@ -120,6 +120,9 @@ export function ShipmentMap(props: Selection) {
         attributionControl: false, dragRotate: false, pitchWithRotate: false,
       });
       created = map;
+      const updatePortLabels = () => host.classList.toggle('port-labels-visible', map.getZoom() >= 4);
+      updatePortLabels();
+      map.on('zoom', updatePortLabels);
       map.touchZoomRotate.disableRotation();
       map.addControl(new lib.AttributionControl({ compact: true, customAttribution: 'Natural Earth · Approximate voyage paths · positions simulated' }), 'bottom-right');
       map.addControl(new lib.NavigationControl({ showCompass: false }), 'top-right');
@@ -169,12 +172,15 @@ export function ShipmentMap(props: Selection) {
       const key = `port:${port.id}`;
       const feature = portData().features.find(item => item.properties.id === port.id);
       const existing = markers.get(key)?.getElement();
-      if (existing) { existing.className = `port-marker ${feature?.properties.risk ?? 'normal'}`; existing.querySelector('.port-label')!.textContent = feature?.properties.label.replace('\n', ' · ') ?? port.name; return; }
+      if (existing) { existing.classList.remove('normal', 'elevated', 'severe', 'unreported'); existing.classList.add(feature?.properties.risk ?? 'unreported'); existing.querySelector('.port-label')!.textContent = port.name; return; }
       const node = element('button', `port-marker ${feature?.properties.risk ?? 'normal'}`);
       node.setAttribute('type', 'button'); node.setAttribute('aria-label', `${port.name} port details`); node.setAttribute('aria-haspopup', 'dialog'); node.dataset.portId = port.id;
-      node.addEventListener('click', event => { event.stopPropagation(); props.onDismiss(); setWarningGroup(null); setWarningId(null); warningTrigger = node; setPortPlace(port); map.panTo([...port.coordinates], { duration: 250 }); });
-      node.append(element('span', 'port-dot'), element('span', 'port-label', feature?.properties.label.replace('\n', ' · ') ?? port.name));
-      markers.set(key, new lib.Marker({ element: node, anchor: 'left', offset: [-4, 0] }).setLngLat([...port.coordinates] as [number, number]).addTo(map));
+      node.addEventListener('click', event => { event.stopPropagation(); props.onDismiss(); setWarningGroup(null); setWarningId(null); warningTrigger = node; setPortPlace(port); map.panTo([...port.coordinates], { duration: 250, offset: [0, map.getContainer().clientHeight / 2 - 32] }); });
+      const icon = element('span', 'port-dot');
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v14M5 12H2a10 10 0 0 0 20 0h-3M2 12l3 3m17-3-3 3"/></svg>';
+      node.append(icon, element('span', 'port-label', port.name));
+      markers.set(key, new lib.Marker({ element: node, anchor: 'center' }).setLngLat([...port.coordinates] as [number, number]).addTo(map));
     });
   });
 
@@ -222,8 +228,8 @@ export function ShipmentMap(props: Selection) {
     for (const option of [...new Map(alternatives.map(d => [d.name, d])).values()]) {
       const node = element('button', 'alternative-port');
       node.setAttribute('type', 'button'); node.setAttribute('aria-label', `${option.name} alternative port details`); node.setAttribute('aria-haspopup', 'dialog'); node.dataset.portId = option.id;
-      node.addEventListener('click', event => { event.stopPropagation(); props.onDismiss(); setWarningGroup(null); setWarningId(null); warningTrigger = node; setPortPlace(option); current.map.panTo([...option.coordinates], { duration: 250 }); });
-      node.append(element('span', 'alternative-dot'), element('span', '', option.name));
+      node.addEventListener('click', event => { event.stopPropagation(); props.onDismiss(); setWarningGroup(null); setWarningId(null); warningTrigger = node; setPortPlace(option); current.map.panTo([...option.coordinates], { duration: 250, offset: [0, current.map.getContainer().clientHeight / 2 - 32] }); });
+      node.append(element('span', 'alternative-dot'), element('span', 'port-label', option.name));
       owned.push(new current.lib.Marker({ element: node }).setLngLat([...option.coordinates]).addTo(current.map));
     }
     const option = props.inspected;
@@ -281,8 +287,8 @@ export function ShipmentMap(props: Selection) {
     const position = detailPosition();
     if (!current || !position) { warningPopup?.remove(); warningPopup = undefined; setWarningHost(undefined); return; }
     const host = document.createElement('div');
-    host.style.setProperty('--warning-max-height', `${Math.max(180, Math.min(330, current.map.getContainer().clientHeight / 2 - 40))}px`);
-    const created = new current.lib.Popup({ closeButton: false, closeOnClick: false, offset: 18, maxWidth: '340px', className: 'warning-popup' })
+    host.style.setProperty('--warning-max-height', `${Math.max(180, portPlace() ? Math.min(330, current.map.getContainer().clientHeight - 80) : Math.min(330, current.map.getContainer().clientHeight / 2 - 40))}px`);
+    const created = new current.lib.Popup({ closeButton: false, closeOnClick: false, offset: 18, ...(portPlace() ? { anchor: 'bottom' as const } : {}), maxWidth: '340px', className: 'warning-popup' })
       .setLngLat([...position]).setDOMContent(host).addTo(current.map);
     warningPopup = created; setWarningHost(host);
     onCleanup(() => created.remove());

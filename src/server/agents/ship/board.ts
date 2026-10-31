@@ -1,3 +1,4 @@
+import { remainingCalls } from '../../../core/port-calls';
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import { lineString, point } from '@turf/helpers';
 import type { BoardMessage, QueueDrainBasis, ShipAssessment, ShipObservation } from '../../../core/board';
@@ -32,17 +33,6 @@ const nearestPortId = (position: LonLat): PortId | null =>
     const km = distanceKm(port.coordinates, position);
     return km <= approachKm && km < best.km ? { id: port.id, km } : best;
   }, { id: null, km: Infinity }).id;
-
-const viaMilestone = (shipment: AssessedShipment) => shipment.milestones.find(milestone => milestone.label === 'Transshipment berth');
-
-/** Ports still ahead, each with this ship's ETA there: via ports read their transshipment milestone, the destination the shipment ETA. */
-export function remainingCalls(shipment: AssessedShipment): readonly Readonly<{ portId: PortId; eta: string }>[] {
-  const via = viaMilestone(shipment);
-  return [
-    ...(via && via.status !== 'complete' ? shipment.via.map(portId => ({ portId, eta: via.at })) : []),
-    { portId: shipment.destination, eta: shipment.eta },
-  ];
-}
 
 /** What the ship concluded from the board this cycle: the rule-based floor, the queue estimates it moved, and every board message it relied on. */
 export type Society = Readonly<{ floor: RiskFloor | null; queues: readonly Readonly<QueueDrainBasis & { bulletinId: string; hours: Readonly<{ low: number; likely: number; high: number }> }>[]}>;
