@@ -6,6 +6,7 @@ import { changesBetween, isCurrent, parseCommentEvent, parseDashboardEvent, type
 export type FeedMode = 'connecting' | 'live' | 'polling';
 const POLL_MS = 5_000;
 const RETRY_STREAM_MS = 30_000;
+const SNAPSHOT_GRACE_MS = 8_000;
 const COMMENT_BACKLOG = 50;
 
 export type Feed = Readonly<{
@@ -13,7 +14,10 @@ export type Feed = Readonly<{
   accept: (incoming: Dashboard) => void;
 }>;
 
-/** Server-sent events when the stream exists, the 5 s poll when it does not (or while it is down). */
+/**
+ * One writer at a time: the stream while it delivers (the server sends a snapshot on connect), the 5 s poll only while
+ * the stream is absent, down, or silent past the snapshot grace period.
+ */
 export function useWorkspaceFeed(workspaceId: string, paused: boolean): Feed {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [mode, setMode] = useState<FeedMode>('connecting');
@@ -37,6 +41,7 @@ export function useWorkspaceFeed(workspaceId: string, paused: boolean): Feed {
     let source: EventSource | undefined;
     let pollTimer: number | undefined;
     let retryTimer: number | undefined;
+    let graceTimer: number | undefined;
     const base = `/api/workspaces/${workspaceId}`;
 
     const fetchOnce = (): Promise<void> => request(`${base}/dashboard`, dashboardSchema, undefined, controller.signal).then(result => {
@@ -51,13 +56,22 @@ export function useWorkspaceFeed(workspaceId: string, paused: boolean): Feed {
       if (controller.signal.aborted) return;
       const stream = new EventSource(`${base}/events`, { withCredentials: true });
       source = stream;
-      stream.addEventListener('open', () => { stopPolling(); setMode('live'); setError(null); void fetchOnce(); });
-      stream.addEventListener('dashboard', event => { const parsed = parseDashboardEvent((event as MessageEvent).data); if (parsed && !pausedRef.current) accept(parsed); });
+      stream.addEventListener('open', () => {
+        stopPolling(); setMode('live'); setError(null);
+        graceTimer = window.setTimeout(startPolling, SNAPSHOT_GRACE_MS);
+      });
+      stream.addEventListener('dashboard', event => {
+        const parsed = parseDashboardEvent((event as MessageEvent).data);
+        if (!parsed) return;
+        window.clearTimeout(graceTimer); stopPolling(); setMode('live'); setError(null);
+        if (!pausedRef.current) accept(parsed);
+      });
       stream.addEventListener('comment', event => {
         const parsed = parseCommentEvent((event as MessageEvent).data);
         if (parsed) setComments(previous => [...previous.slice(-(COMMENT_BACKLOG - 1)), parsed]);
       });
       stream.addEventListener('error', () => {
+        window.clearTimeout(graceTimer);
         startPolling();
         if (stream.readyState === EventSource.CLOSED) { stream.close(); retryTimer = window.setTimeout(connect, RETRY_STREAM_MS); }
       });
@@ -65,7 +79,7 @@ export function useWorkspaceFeed(workspaceId: string, paused: boolean): Feed {
 
     startPolling();
     connect();
-    return () => { controller.abort(); source?.close(); stopPolling(); window.clearTimeout(retryTimer); };
+    return () => { controller.abort(); source?.close(); stopPolling(); window.clearTimeout(retryTimer); window.clearTimeout(graceTimer); };
   }, [workspaceId, accept]);
 
   return { dashboard, mode, error, changes, comments, accept };
