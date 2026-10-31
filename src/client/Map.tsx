@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, Index, onCleanup, onMount, Show
 import { Portal } from 'solid-js/web';
 import { Menu } from '@ark-ui/solid';
 import { ChevronDown } from 'lucide-solid';
-import type { GeoJSONSource, Map as MapLibreMap, Marker, Popup, StyleSpecification } from 'maplibre-gl';
+import type { GeoJSONSource, Map as MapLibreMap, Marker, Popup, PositionAnchor, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type { Dashboard, Diversion, MonitoredRoute, Port, Shipment } from '../core/types';
@@ -24,6 +24,7 @@ type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | un
 type Projection = 'mercator' | 'globe';
 const COLOURS = { ocean: '#0b0b0b', land: '#2a2a2a', coast: '#4a4a4a', corridor: '#d8d8d8', alternative: '#b9a7d6' } as const;
 const FRAME_PADDING = { top: 90, bottom: 75, left: 70, right: 70 } as const;
+const SHIP_POPUP_OFFSET = { center: [0, 0], top: [0, 22], bottom: [0, -64], left: [26, 0], right: [-26, 0], 'top-left': [18, 18], 'top-right': [-18, 18], 'bottom-left': [18, -64], 'bottom-right': [-18, -64] } satisfies Record<PositionAnchor, [number, number]>;
 const WORLD = regions[0];
 const style = (origin: string): StyleSpecification => ({
   version: 8, projection: { type: 'mercator' },
@@ -191,7 +192,7 @@ export function ShipmentMap(props: Selection) {
     const host = document.createElement('div');
     const position = untrack(() => views().find(v => v.id === selected.id)?.position) ?? selected.coordinates;
     popup?.remove();
-    const created = new current.lib.Popup({ closeButton: false, closeOnClick: false, offset: 20, maxWidth: '290px', className: 'shipment-popup' }).setLngLat([...position]).setDOMContent(host).addTo(current.map);
+    const created = new current.lib.Popup({ closeButton: false, closeOnClick: false, offset: SHIP_POPUP_OFFSET, maxWidth: '290px', className: 'shipment-popup' }).setLngLat([...position]).setDOMContent(host).addTo(current.map);
     popup = created; setPopupHost(host);
     onCleanup(() => created.remove());
   });
