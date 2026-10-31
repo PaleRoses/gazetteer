@@ -219,7 +219,11 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string; alertSlot: H
     if (!portId || !Number.isInteger(delayHours) || delayHours < 1 || delayHours > 168) { setError('Choose a city and a delay between 1 and 168 hours.'); return; }
     setSimulating(true); setError(null);
     const result = await request(`/api/workspaces/${props.workspaceId}/disruptions`, dashboardSchema, { portId, delayHours }); setSimulating(false);
-    if (result.ok) feed.accept(result.value); else setError(result.error);
+    if (!result.ok) { setError(result.error); return; }
+    feed.accept(result.value);
+    navigate({ kind: 'shipments' });
+    const bound = result.value.shipments.find(ship => ship.destination === portId);
+    if (bound) setSelectedId(bound.id);
   }
   const notifications = createAlertNotifications(props.workspaceId, dashboard, openVoyage);
   function edit(ship: Shipment | 'new') { setOperationError(null); setEditing(ship); }
