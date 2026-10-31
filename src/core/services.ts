@@ -48,6 +48,9 @@ const rotterdamHaulier: Haulier = {
 };
 const hauliers: Partial<Record<PortId, Haulier>> = { rotterdam: rotterdamHaulier };
 
+/** The sandbox agents stationed at a city, read off the desk and haulier tables: Rotterdam has both, every other city none. */
+export const servicesAt = (city: PortId): readonly ('terminal' | 'haulier')[] => [...(terminalDesks[city] ? ['terminal' as const] : []), ...(hauliers[city] ? ['haulier' as const] : [])];
+
 /** Meridian Star's original arrival at Rotterdam on the scenario clock, on the hour: every act 2 time is counted from it. */
 export const act2Anchor = (shipment: Pick<Shipment, 'baselineEta'>): string => {
   const ms = Date.parse(shipment.baselineEta);
