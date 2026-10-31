@@ -2,11 +2,12 @@ import { Actor, Persisted } from 'durable-actors';
 import { ports } from '../domain';
 import { relaySuccess, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import { assessmentFromEnv, assessNotices, type AssessmentCache } from './assessment';
-import { postBoard, readBoard } from './board/transport';
+import { postBoard, readBoard, readChannel } from './board/transport';
 import { emptyMemory, type PortMemory } from './port/memory';
 import { watchPort } from './port/watch';
 import { pollPort } from './sources';
-import { emptyTelemetryState, mmsiPattern, telemetrySourceFromEnv, watchShipment, type TelemetryState } from './telemetry';
+import type { BoardMessage } from '../board';
+import { decideBoard, emptyBoardMemory, emptyTelemetryState, mmsiPattern, postDecisions, rememberBoard, selectBoardEvidence, telemetrySourceFromEnv, watchShipment, type ShipBoardMemory, type TelemetryState } from './telemetry';
 import { toDisruption } from './sources/disruption';
 import type { Cursor } from './realtime/cursor';
 import { attemptRelay, joinChannel, publishDisruption, readDisruptionsSince, registerParticipant, relayChannel, type RelayIdentity } from './relay';
@@ -16,7 +17,7 @@ type PortState = Readonly<{
   portId: PortId; relay: RelayIdentity; ready: boolean;
   outbox: readonly Disruption[]; published: readonly string[]; checkedAt: string | null; board?: PortMemory;
 }>;
-type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState }>;
+type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; seen?: readonly BoardMessage[] }>;
 const assessment = assessmentFromEnv(process.env);
 const telemetrySource = telemetrySourceFromEnv(process.env);
 const enqueueLive = (state: PortState, incoming: readonly Disruption[]): readonly Disruption[] =>
@@ -127,18 +128,23 @@ export class ShipmentAgent extends Actor {
   async check(): Promise<RelayOutcome<Shipment>> {
     await this.scheduleCheck();
     if (!this.state) return { status: 'unavailable', message: 'Shipment monitoring has not been initialized.' };
-    if (this.state.mmsi) {
-      const watched = await watchShipment({ source: telemetrySource, assess: assessment }, this.state.shipment, this.state.mmsi, this.state.telemetry ?? emptyTelemetryState, this.state.assessmentCache ?? {});
-      this.state = { ...this.state, shipment: watched.shipment, telemetry: watched.state, assessmentCache: watched.cache };
+    const start = this.state;
+    const now = new Date().toISOString();
+    const connection = await connect(start, false);
+    const channel = connection.status === 'unavailable' ? connection : await readChannel(start.relay, start.cursor ?? null);
+    const seen = channel.status === 'ok' ? rememberBoard(start.seen ?? [], channel.value.board, now) : start.seen ?? [];
+    const evidence = selectBoardEvidence(start.shipment, seen, now);
+    const watched = start.mmsi
+      ? await watchShipment({ source: telemetrySource, assess: assessment, board: evidence }, start.shipment, start.mmsi, start.telemetry ?? emptyTelemetryState, start.assessmentCache ?? {})
+      : { shipment: start.shipment, state: start.telemetry, cache: start.assessmentCache ?? {} };
+    if (channel.status === 'unavailable') {
+      this.state = { ...start, shipment: watched.shipment, assessmentCache: watched.cache, telemetry: watched.state, seen };
+      return channel;
     }
-    const current = this.state;
-    const connection = await connect(current, false);
-    if (connection.status === 'unavailable') return connection;
-    const replay = await attemptRelay(() => readDisruptionsSince(current.relay, current.cursor ?? null), 'Agent Relay history is unavailable. Monitoring will retry without changing the shipment.');
-    if (replay.status === 'unavailable') return replay;
-    const assessed = await assessNotices(assessment, current.assessmentCache ?? {}, current.shipment, replay.value.disruptions);
-    this.state = { ...current, ready: true, shipment: assessed.shipment, assessmentCache: assessed.cache, cursor: replay.value.cursor, checkedAt: new Date().toISOString() };
-    return relaySuccess(this.state.shipment);
+    const assessed = await assessNotices(assessment, watched.cache, watched.shipment, channel.value.disruptions, evidence);
+    const posted = await postDecisions(message => postBoard(start.relay, message), start.board ?? emptyBoardMemory, decideBoard(start.board ?? emptyBoardMemory, { shipment: assessed.shipment, situation: watched.state?.situation ?? null, now }));
+    this.state = { ...start, ready: true, shipment: assessed.shipment, assessmentCache: assessed.cache, cursor: channel.value.cursor, telemetry: watched.state, board: posted.memory, seen, checkedAt: now };
+    return posted.failure ? { status: 'unavailable', message: posted.failure } : relaySuccess(this.state.shipment);
   }
 
   async onAlarm(): Promise<void> { await this.check(); }
