@@ -11,7 +11,7 @@ const balticAreas: readonly PortArea[] = [
   { id: 'naantali', coordinates: [21.98, 60.46] }, { id: 'rauma', coordinates: [21.45, 61.13] }, { id: 'tallinn', coordinates: [24.77, 59.45] },
 ];
 
-type IngestStatus = Readonly<{
+export type IngestStatus = Readonly<{
   running: boolean; provenance: 'live'; source: string; startedAt: string; lastMessageAt: string | null;
   messagesPerSecond: number; received: number; invalid: number; activeVessels: number; trackedMmsi: number;
   countedVessels: number; unclassified: number; areas: Readonly<Record<string, Readonly<Counts>>>;

@@ -23,13 +23,12 @@ const access = createAccess(resolve(dataDir, 'access.sqlite'));
 const monitoring = await createMonitoring({ dataDir: resolve(dataDir, 'actors'), workspaceIds: access.workspaceIds(), hasWorkspace: workspaceId => access.workspaceIds().includes(workspaceId) });
 /** The live AIS firehose: one reader for the whole process. GAZETTEER_INGEST=off turns it off. */
 const ingest = process.env.GAZETTEER_INGEST === 'off' ? undefined : startIngest();
-const api = createApi({ access, monitoring, origin, mail: mail.kind === 'resend' ? mail : undefined });
+const api = createApi({ access, monitoring, origin, ingest: ingest?.status, mail: mail.kind === 'resend' ? mail : undefined });
 
 const server = Bun.serve({
   port, hostname, maxRequestBodySize: 16384, idleTimeout: 120,
   fetch: async (request, server) => {
     const path = new URL(request.url).pathname;
-    if (path === '/api/ingest/status' && request.method === 'GET') return Response.json(ingest ? ingest.status() : { running: false });
     if (path.startsWith('/api/')) return api(request, server.requestIP(request)?.address ?? 'unknown');
     if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
     const target = resolve(assets, `.${decodeURIComponent(path)}`);

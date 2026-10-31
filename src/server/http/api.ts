@@ -3,7 +3,9 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { createEventsHandler } from './events';
+import { createIngestHandler } from './ingest';
 import type { Access, AccessError, Result, Session } from '../access/access';
+import type { IngestStatus } from '../runtime/ingest';
 import type { Monitoring } from '../runtime/monitoring';
 import { portIds } from '../../core/ports';
 import type { Dashboard, RelayOutcome, User, Workspace } from '../../core/types';
@@ -11,7 +13,7 @@ type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment'>>; origin: string; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment'>>; origin: string; ingest?: () => IngestStatus; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
 type App = Readonly<{ Bindings: Readonly<{ clientKey: string }>; Variables: Readonly<{ user: User; token: string | undefined; membership: Workspace }> }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
@@ -47,7 +49,7 @@ const segment = (c: Context, index: number): string => new URL(c.req.url).pathna
 const workspaceOf = (c: Context): string => segment(c, 3);
 const shipmentOf = (c: Context): string => segment(c, 5);
 
-export function createApi({ access, monitoring, origin, demo = process.env.GAZETTEER_DEMO !== 'off', mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
+export function createApi({ access, monitoring, origin, ingest, demo = process.env.GAZETTEER_DEMO !== 'off', mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
   const cookie = (token: string, maxAge = 604800): string => `gazetteer_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${origin.startsWith('https:') ? '; Secure' : ''}`;
   const authenticated = (result: Result<Session>): Response => {
     if (!result.ok) return respond(result);
@@ -89,6 +91,7 @@ export function createApi({ access, monitoring, origin, demo = process.env.GAZET
     })
     .post('/api/signup', throttled, jsonOnly, body(signupSchema), async c => authenticated(await access.signup(c.req.valid('json'))))
     .post('/api/login', throttled, jsonOnly, body(loginSchema), async c => authenticated(await access.login(c.req.valid('json'))))
+    .get('/api/ingest', createIngestHandler(() => ingest?.()))
     .use('*', signedIn)
     .get('/api/session', c => respond(access.workspaces(c.get('user').id), workspaces => ({ user: c.get('user'), workspaces })))
     .post('/api/logout', c => {

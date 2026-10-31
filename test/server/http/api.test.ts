@@ -175,3 +175,23 @@ describe('HTTP access boundary', () => {
     access.close();
   });
 });
+
+describe('the ingest view', () => {
+  const status = {
+    running: true, provenance: 'live', source: 'test', startedAt: '2026-10-31T12:00:00.000Z', lastMessageAt: '2026-10-31T12:00:05.000Z',
+    messagesPerSecond: 33, received: 165, invalid: 1, activeVessels: 300, trackedMmsi: 0, countedVessels: 2, unclassified: 9,
+    areas: { helsinki: { anchored: 1, berthed: 1, approach: 0 } },
+  } as const;
+
+  test('is readable without a session, reports the feed and the zone counts, and says nothing when ingest is off', async () => {
+    const access = createAccess(':memory:');
+    const body = z.object({ feeds: z.array(z.object({ provider: z.string(), live: z.boolean(), msgPerSec: z.number(), trackedVessels: z.number(), lastMessageAt: z.string().nullable() })), zones: z.array(z.object({ id: z.string(), anchored: z.number() })) });
+    const on = createApi({ access, monitoring: monitoringFixture, origin, ingest: () => status });
+    const reply = await on(new Request(`${origin}/api/ingest`));
+    expect(reply.status).toBe(200);
+    expect(body.parse(await reply.json())).toMatchObject({ feeds: [{ provider: 'digitraffic', live: true, msgPerSec: 33, trackedVessels: 300 }], zones: [{ id: 'helsinki', anchored: 1 }] });
+    const off = await createApi({ access, monitoring: monitoringFixture, origin })(new Request(`${origin}/api/ingest`));
+    expect(await off.json()).toEqual({ feeds: [], zones: [] });
+    access.close();
+  });
+});
