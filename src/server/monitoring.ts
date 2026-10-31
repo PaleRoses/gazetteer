@@ -11,6 +11,7 @@ import { createBoardModel, recentBoard } from './board/model';
 import { boardFrom } from './board/transport';
 import { portStatuses } from './port/status';
 import { createCoalescer } from './realtime/coalesce';
+import { createLimiter, createStartup, type StartupTask } from './realtime/startup';
 import { fileSeqStore, startRelayLive } from './realtime/live';
 import { createHub, type Subscribe } from './realtime/sse';
 import { disruptionFrom, relayChannel, workspaceOfChannel } from './relay';
@@ -34,13 +35,6 @@ export type Monitoring = Readonly<{
   publishComment(workspaceId: string, shipmentId: string, comment: Comment): void;
   close(): Promise<void>;
 }>;
-const sequenceRelay = <A>(operations: readonly (() => Promise<RelayOutcome<A>>)[]): Promise<RelayOutcome<readonly A[]>> =>
-  operations.reduce<Promise<RelayOutcome<readonly A[]>>>((previous, operation) => previous.then(async outcome => {
-    if (outcome.status === 'unavailable') return outcome;
-    const next = await operation();
-    return next.status === 'unavailable' ? next : relaySuccess([...outcome.value, next.value]);
-  }), Promise.resolve(relaySuccess([])));
-
 export async function createMonitoring(options: Readonly<{ dataDir?: string; workspaceIds: readonly string[]; hasWorkspace?: (workspaceId: string) => boolean }>): Promise<Monitoring> {
   const workspaceKey = process.env.RELAY_WORKSPACE_KEY;
   if (!workspaceKey) throw new Error('Agent Relay is not configured. Run npm run setup:relay first.');
@@ -68,42 +62,80 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     throw error;
   });
 
-  const initialize = async (workspaceId: string): Promise<RelayOutcome<readonly Shipment[]>> => {
-    const seeds = demoShipments();
-    const initialized = await sequenceRelay<null>([
-      () => port(workspaceId, 'singapore').initialize(workspaceId, 'singapore', workspaceKey, true),
-      ...ports.filter(value => value.id !== 'singapore').map(value => () => port(workspaceId, value.id).initialize(workspaceId, value.id, workspaceKey, false)),
-      ...seeds.map(value => () => shipment(workspaceId, value.id).initialize(workspaceId, value, workspaceKey)),
-    ]);
-    return initialized.status === 'unavailable' ? initialized : relaySuccess(seeds);
-  };
   const hub = createHub();
   const relay = new AgentRelay({ workspaceKey });
   const board = createBoardModel(workspaceId => recentBoard(request => relay.messages.list(relayChannel(workspaceId), request)));
+  /** Relay is rate limited and slow: every Relay-touching actor call from here shares three slots. */
+  const relayLimit = createLimiter(3);
+
+  const portKey = (id: PortId): string => `port:${id}`;
+  const shipKey = (id: string): string => `ship:${id}`;
+  /** The seeds ARE each shipment actor's initial state, so the dashboard may show them honestly before the actor is ready. */
+  const seedsByWorkspace = new Map<string, readonly Shipment[]>();
+  const seedsOf = (workspaceId: string): readonly Shipment[] => {
+    const known = seedsByWorkspace.get(workspaceId);
+    if (known) return known;
+    const seeds = demoShipments();
+    seedsByWorkspace.set(workspaceId, seeds);
+    return seeds;
+  };
+  const tasksOf = (workspaceId: string): readonly StartupTask[] => [
+    { key: portKey('singapore'), run: async () => (await port(workspaceId, 'singapore').initialize(workspaceId, 'singapore', workspaceKey, true)).status === 'ok' },
+    ...ports.filter(value => value.id !== 'singapore').map((value): StartupTask => ({ key: portKey(value.id), after: portKey('singapore'), run: async () => (await port(workspaceId, value.id).initialize(workspaceId, value.id, workspaceKey, false)).status === 'ok' })),
+    ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: shipKey(seed.id), after: portKey('singapore'), run: async () => (await shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey)).status === 'ok' })),
+  ];
+  /** Disruptions simulated before their port's actor was ready; delivered the moment it is. */
+  const queued = new Map<string, readonly Disruption[]>();
+  const queuedFor = (workspaceId: string): readonly Disruption[] => queued.get(workspaceId) ?? [];
+
   const dashboard = async (workspaceId: string): Promise<RelayOutcome<Dashboard>> => {
-    const initialized = await initialize(workspaceId);
-    if (initialized.status === 'unavailable') return initialized;
-    const snapshots = await Promise.all(initialized.value.map(value => shipment(workspaceId, value.id).snapshot()));
-    const retained = snapshots.filter((value): value is Shipment => value !== null);
-    if (retained.length !== initialized.value.length) return { status: 'unavailable', message: 'A durable shipment is missing after initialization.' };
-    const posts = await board.board(workspaceId);
-    const built: Dashboard = {
-      shipments: retained, ports, ...(posts ? { board: posts, portStatus: portStatuses(ports, retained, posts) } : {}),
-      updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
-      runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
-    };
-    hub.publishDashboard(workspaceId, built);
-    return relaySuccess(built);
+    startup.ensure(workspaceId);
+    const status = startup.status(workspaceId);
+    try {
+      const retained = await Promise.all(seedsOf(workspaceId).map(async seed =>
+        (startup.isReady(workspaceId, shipKey(seed.id)) ? await shipment(workspaceId, seed.id).snapshot().catch(() => null) : null) ?? seed));
+      const posts = await board.board(workspaceId);
+      const waiting = queuedFor(workspaceId).length;
+      const built: Dashboard = {
+        shipments: retained, ports, ...(posts ? { board: posts, portStatus: portStatuses(ports, retained, posts) } : {}),
+        updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
+        runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
+        ...(status.complete ? {} : { startup: { ready: status.ready, total: status.total, ...(waiting > 0 ? { queued: waiting } : {}) } }),
+      };
+      hub.publishDashboard(workspaceId, built);
+      return relaySuccess(built);
+    } catch {
+      return { status: 'unavailable', message: 'The workspace could not be read. Retry shortly.' };
+    }
   };
 
-  // A Relay notice is a doorbell: each shipment actor re-reads only past its persisted cursor, then the browser is pushed the result.
+  // A Relay notice is a doorbell: each ready shipment actor re-reads only past its persisted cursor, then the browser is pushed the result.
+  const checkReadyShipments = (workspaceId: string): Promise<unknown> => Promise.all(seedsOf(workspaceId)
+    .filter(seed => startup.isReady(workspaceId, shipKey(seed.id)))
+    .map(seed => relayLimit(() => shipment(workspaceId, seed.id).check()).catch(() => undefined)));
   const refresh = createCoalescer(async workspaceId => {
-    const initialized = await initialize(workspaceId);
-    if (initialized.status === 'unavailable') return;
-    await sequenceRelay(initialized.value.map(value => () => shipment(workspaceId, value.id).check()));
+    startup.ensure(workspaceId);
+    await checkReadyShipments(workspaceId);
     await dashboard(workspaceId);
   }, error => console.error('Realtime refresh failed:', error instanceof Error ? error.message : 'unknown error'));
   const announce = createCoalescer(async workspaceId => { await dashboard(workspaceId); }, error => console.error('Board announcement failed:', error instanceof Error ? error.message : 'unknown error'));
+  /** Hand queued disruptions to a port actor that just became ready: its outbox then guarantees delivery. */
+  const deliverQueued = async (workspaceId: string, id: PortId): Promise<void> => {
+    const mine = queuedFor(workspaceId).filter(item => item.portId === id);
+    if (mine.length === 0) return;
+    queued.set(workspaceId, queuedFor(workspaceId).filter(item => item.portId !== id));
+    await Promise.all(mine.map(item => port(workspaceId, id).simulate(item)));
+    await relayLimit(() => port(workspaceId, id).check());
+  };
+  const startup = createStartup({
+    tasksOf, limit: relayLimit,
+    onReady: (workspaceId, key) => {
+      const arrived = ports.find(value => portKey(value.id) === key);
+      void (arrived ? deliverQueued(workspaceId, arrived.id) : Promise.resolve())
+        .catch(error => console.error('Queued disruption delivery failed:', error instanceof Error ? error.message : 'unknown error'))
+        .then(() => (hub.subscribers(workspaceId) > 0 ? announce(workspaceId) : undefined));
+    },
+  });
   const hasWorkspace = options.hasWorkspace ?? (workspaceId => options.workspaceIds.includes(workspaceId));
   const seq = fileSeqStore(resolve(dataDir, '..', 'relay-seq'));
   const live = await startRelayLive({
@@ -121,22 +153,26 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   return {
     dashboard,
     simulate: async (workspaceId, portId, delayHours) => {
-      const initialized = await initialize(workspaceId);
-      if (initialized.status === 'unavailable') return initialized;
+      startup.ensure(workspaceId);
       const id = randomUUID();
       const disruption: Disruption = {
         id, portId, delayHours,
         evidence: { id, source: 'simulation', title: 'Simulated port congestion', detail: `Synthetic terminal bulletin: a ${delayHours}-hour berth delay at ${ports.find(value => value.id === portId)?.name ?? portId}. Deterministic demo assessment; not live intelligence.`, observedAt: new Date().toISOString() },
       };
+      if (!startup.isReady(workspaceId, portKey(portId))) {
+        queued.set(workspaceId, [...queuedFor(workspaceId), disruption]);
+        return dashboard(workspaceId);
+      }
       await port(workspaceId, portId).simulate(disruption);
-      const publication = await port(workspaceId, portId).check();
+      const publication = await relayLimit(() => port(workspaceId, portId).check());
       if (publication.status === 'unavailable') return publication;
-      const checked = await sequenceRelay(initialized.value.map(value => () => shipment(workspaceId, value.id).check()));
-      return checked.status === 'unavailable' ? checked : dashboard(workspaceId);
+      await checkReadyShipments(workspaceId);
+      return dashboard(workspaceId);
     },
     subscribe: hub.subscribe,
     publishComment: (workspaceId, shipmentId, comment) => hub.publish(workspaceId, { event: 'comment', data: { shipmentId, comment } }),
     close: async () => {
+      startup.close();
       if (live.status === 'ok') await live.value.close();
       await runtime.stop();
     },

@@ -15,7 +15,7 @@ const shipment: z.ZodType<Shipment> = z.object({
   ])),
   appliedDisruptions: z.array(z.string()),
 });
-export const dashboardSchema: z.ZodType<Dashboard> = z.object({ shipments: z.array(shipment), ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })), updatedAt: z.string(), mode: z.enum(['simulation', 'mixed']), runtime: z.string(), relay: z.string() });
+export const dashboardSchema: z.ZodType<Dashboard> = z.object({ shipments: z.array(shipment), ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })), updatedAt: z.string(), mode: z.enum(['simulation', 'mixed']), runtime: z.string(), relay: z.string(), startup: z.object({ ready: z.number(), total: z.number(), queued: z.number().optional() }).optional() });
 const userSchema: z.ZodType<User> = z.object({ id: z.string(), name: z.string(), email: z.string() });
 export const workspaceSchema: z.ZodType<Workspace> = z.object({ id: z.string(), name: z.string(), role: z.enum(['owner', 'member']) });
 export const sessionSchema = z.object({ user: userSchema, workspaces: z.array(workspaceSchema) });

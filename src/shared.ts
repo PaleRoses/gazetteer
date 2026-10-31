@@ -25,4 +25,6 @@ export type Dashboard = Readonly<{
   /** 'mixed' = live notices may appear beside simulated ones, each labelled by its evidence. */
   mode: 'simulation' | 'mixed'; runtime: string; relay: string;
   portStatus?: readonly PortStatus[]; board?: readonly BoardMessage[];
+  /** Present only while the workspace's actors are still starting; the shipments shown for the rest are their seed state. `queued` counts simulated disruptions waiting for their port actor. */
+  startup?: Readonly<{ ready: number; total: number; queued?: number }>;
 }>;
