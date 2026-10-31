@@ -136,9 +136,14 @@ export function selectBoardEvidence(shipment: AssessedShipment, board: readonly 
 }
 
 const maxRemembered = 50;
-/** Pure: the ship's recent view of the board, since each read only sees what is past the cursor. Deduplicated by id, bounded by age and count. */
-export const rememberBoard = (previous: readonly BoardMessage[], incoming: readonly BoardMessage[], now: string): readonly BoardMessage[] =>
-  [...new Map([...previous, ...incoming].map(message => [message.id, message] as const)).values()]
+/** Pure: the ship's recent view of the board, since each read only sees what is past the cursor. Deduplicated by id and bounded by age; the newest 50 messages are kept, and every ship's latest observation besides, since the queue is ordered by them and a flood of ETAs must not push a stop off the board. */
+export const rememberBoard = (previous: readonly BoardMessage[], incoming: readonly BoardMessage[], now: string): readonly BoardMessage[] => {
+  const fresh = [...new Map([...previous, ...incoming].map(message => [message.id, message] as const)).values()]
     .filter(message => Date.parse(now) - Date.parse(message.at) <= peerHorizonHours * 3_600_000)
-    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
-    .slice(-maxRemembered);
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const newest = new Set(fresh.slice(-maxRemembered).map(message => message.id));
+  const latestStops = new Map<string, string>();
+  fresh.forEach(message => { if (message.kind === 'ship.observation') latestStops.set(message.shipmentId, message.id); });
+  const stops = new Set(latestStops.values());
+  return fresh.filter(message => newest.has(message.id) || stops.has(message.id));
+};

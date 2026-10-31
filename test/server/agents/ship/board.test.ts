@@ -134,4 +134,11 @@ describe('remembering the board', () => {
     expect(bounded).toHaveLength(50);
     expect(bounded[49]!.id).toBe('m79');
   });
+  test('a ship\'s latest stop outlives a flood of newer messages, but only its latest', () => {
+    const stop = (id: string, at: string): BoardMessage => ({ id, kind: 'ship.observation', author: { role: 'ship', id: 'gz-9', vessel: 'v' }, at, summary: id, shipmentId: 'gz-9', signals: ['stationary-outside-port'], position: [0, 0], nearPort: null, provider: 'p', observedAt: at });
+    const flood = Array.from({ length: 80 }, (_, i) => message(`m${i}`, new Date(Date.parse(now) - (80 - i) * 60_000).toISOString()));
+    const kept = rememberBoard([], [stop('older', '2026-10-31T01:00:00.000Z'), stop('latest', '2026-10-31T02:00:00.000Z'), ...flood], now).map(item => item.id);
+    expect(kept).toContain('latest');
+    expect(kept).not.toContain('older');
+  });
 });
