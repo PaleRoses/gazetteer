@@ -5,6 +5,7 @@ import { ArrowDownRight, ArrowRight, Check, ChevronDown, FlaskConical, Layers3, 
 import { z } from 'zod';
 import { portIds } from '../core/ports';
 import type { Comment, Dashboard, Shipment, Workspace } from '../core/types';
+import './styles.css';
 import { commentsSchema, dashboardSchema, invitationSchema, membersSchema, request, sessionSchema, workspaceSchema, type Invitation, type Session } from './api';
 import { MapBackdrop, ShipmentMap } from './Map';
 import { mergeComment, type CommentEvent } from './feed';
@@ -12,7 +13,6 @@ import { createChangeFlash, createWorkspaceFeed, type FeedMode } from './live';
 import { ActorLine, PixelShip } from './ActorLine';
 import { SocietyPanel } from './SocietyPanel';
 import { date, EvidenceCard, portName, RiskBadge, time } from './presentation';
-import './styles.css';
 
 const minute = (eta: string | undefined): string => (eta ?? '').slice(0, 16);
 const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'CONNECTING', live: 'STREAMING', polling: 'POLLING · 5 S' };
