@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createActorStub, createActorTransport } from 'durable-actors/backend';
 import { startLocalActors } from 'durable-actors/dev';
+import type { ShipObservation } from '../../../../src/core/board';
+import { portById } from '../../../../src/core/ports';
 import type { HazardWatch } from '../../../../src/server/agents/city/hazard-watch';
+import type { TrafficWatch } from '../../../../src/server/agents/city/traffic-watch';
 import type { Disruption } from '../../../../src/core/types';
 
 type HazardClient = Pick<HazardWatch, 'initialize' | 'simulate' | 'check' | 'publish' | 'queued'>;
@@ -20,10 +23,12 @@ const disruption: Disruption = {
 /** A Relay that remembers what it was sent: enough of the wire protocol for a port to register, join and publish. */
 function fakeRelay() {
   const sent = new Map<string, unknown>();
+  const outage = { down: false };
   const reply = (data: unknown): Response => Response.json({ ok: true, data });
   const server = Bun.serve({
     port: 0,
     fetch: async request => {
+      if (outage.down) return Response.json({ ok: false, error: { code: 'unavailable', message: 'down' } }, { status: 503 });
       const url = new URL(request.url);
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) as Record<string, unknown> : {};
       if (request.method === 'POST' && url.pathname === '/v1/agents') return reply({ id: randomUUID(), name: body.name, token: `tok-${randomUUID()}`, type: 'agent', status: 'online', created_at: new Date().toISOString() });
@@ -39,7 +44,7 @@ function fakeRelay() {
       return Response.json({ ok: false, error: { code: 'not_found', message: 'unhandled' } }, { status: 404 });
     },
   });
-  return { url: `http://127.0.0.1:${server.port}`, sent, stop: () => server.stop(true) };
+  return { url: `http://127.0.0.1:${server.port}`, sent, outage, stop: () => server.stop(true) };
 }
 
 /** Actors get their environment from the project's .env, not from this process: a throwaway project that links the real sources and points Relay at the fake. */
@@ -87,6 +92,42 @@ test('a disruption simulated before registration, across a restart, is published
       expect(await port.queued()).toBe(0);
     });
     expect([...relay.sent.keys()]).toEqual([disruption.id]);
+  } finally {
+    relay.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+}, 180_000);
+
+type TrafficClient = Pick<TrafficWatch, 'initialize' | 'deliver' | 'check' | 'unpublished'>;
+const trafficMethods = [
+  { name: 'initialize', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'unpublished', result: 'value' },
+] as const;
+
+test('with Relay down for the whole check, a traffic watch still decides from what was delivered locally and queues its report', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'gazetteer-offline-'));
+  const relay = fakeRelay();
+  const project = projectWith({ RELAY_BASE_URL: relay.url, GAZETTEER_LIVE_SOURCES: 'off' });
+  const singapore = portById.get('singapore')!;
+  const observedAt = new Date(Date.now() - 3_600_000).toISOString();
+  const stopped = (shipmentId: string): ShipObservation => ({
+    id: `obs:${shipmentId}`, kind: 'ship.observation', author: { role: 'ship', id: shipmentId, vessel: shipmentId }, at: observedAt, summary: 'stopped',
+    shipmentId, signals: ['stationary-outside-port'], position: [singapore.coordinates[0], singapore.coordinates[1] + 0.1], nearPort: 'singapore', provider: 'test', observedAt,
+  });
+  try {
+    const runtime = await startLocalActors({ project, projectId: 'gazetteer-offline', entrypoint: 'src/server/agents/index.ts', dataDir, apiKey: randomUUID(), quiet: true });
+    try {
+      const transport = createActorTransport({ projectId: runtime.connection.projectId, controlPlaneUrl: runtime.connection.controlPlaneUrl, apiKey: runtime.connection.apiKey, homeRegion: runtime.connection.storageRegion });
+      const watch = createActorStub<TrafficClient>('TrafficWatch', 'offline-test-city-singapore-traffic', trafficMethods, transport);
+      expect(await watch.initialize('workspace', 'singapore', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
+      relay.outage.down = true;
+      await watch.deliver({ board: [stopped('a'), stopped('b')], disruptions: [] });
+      expect((await watch.check()).status).toBe('unavailable');
+      const queued = (await watch.unpublished())?.board ?? [];
+      expect(queued.map(message => message.kind)).toEqual(['city.traffic']);
+      expect(queued[0]).toMatchObject({ risk: 'elevated', anchored: 2, evidenceIds: ['obs:a', 'obs:b'] });
+      expect(relay.sent.size).toBe(0);
+    } finally { await runtime.stop(); }
   } finally {
     relay.stop();
     rmSync(dataDir, { recursive: true, force: true });

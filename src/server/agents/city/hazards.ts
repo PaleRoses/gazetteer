@@ -2,7 +2,7 @@ import type { HazardNotice, HazardReport, PortRisk } from '../../../core/board';
 import { portById, type PortId } from '../../../core/ports';
 import type { PortNotice } from '../../sources/poll';
 import type { NoticeSeverity } from '../../sources/notice';
-import { clip, heartbeat, plural, reportId } from './report';
+import { clip, heartbeat, reportId } from './report';
 
 type Level = 0 | 1 | 2;
 const riskOf = (level: Level): PortRisk => (['normal', 'elevated', 'severe'] as const)[level];
@@ -39,9 +39,11 @@ const changed = (assessment: HazardAssessment, previous: HazardReport | null): b
     ? assessment.risk !== 'normal' || assessment.notices.length > 0
     : previous.risk !== assessment.risk || !sameNotices(previous.notices, assessment.notices);
 
-const lead = (assessment: HazardAssessment): string => {
+/** Data first and no count the message does not carry: the notice that set the risk, or why nothing did. */
+const reason = (assessment: HazardAssessment): string => {
   const worst = assessment.notices.find(notice => notice.id === assessment.evidenceIds[0]);
-  return worst ? `: ${worst.severity} ${worst.kind}, ${worst.title}` : '';
+  return worst ? `set by a ${worst.severity} ${worst.kind}, ${worst.title}`
+    : assessment.notices.length > 0 ? 'the live notices in force are minor or off the city' : 'no live notice in force';
 };
 
 /** Posts on a change of risk or of the notices in force, or on a heartbeat; a quiet city that has never said anything stays silent. */
@@ -51,7 +53,7 @@ export const decideHazards = (assessment: HazardAssessment, previous: HazardRepo
   return place ? {
     id: reportId(assessment.city, 'hazards', previous), kind: 'city.hazards', author: { role: 'city', city: assessment.city, element: 'hazards' },
     at: now.toISOString(),
-    summary: clip(`${place.name} hazard watch: ${assessment.risk}, ${plural(assessment.notices.length, 'live notice', 'live notices')} in force${lead(assessment)}.`),
+    summary: clip(`${place.name} hazard watch: ${assessment.risk}, ${reason(assessment)}.`),
     risk: assessment.risk, notices: [...assessment.notices], evidenceIds: [...assessment.evidenceIds],
   } : null;
 };

@@ -57,7 +57,7 @@ describe('hazard reports', () => {
       notices: [{ id: 'test:severe', provider: 'gdacs', url: 'https://www.gdacs.org/report.aspx?eventid=1', fetchedAt: '2026-10-31T19:59:00.000Z' }],
     });
     expect(parseBoardMessage(report)).toEqual(report);
-    expect(report.summary).toBe(`Rotterdam hazard watch: ${report.risk}, ${report.notices.length} live notice in force: severe cyclone, A severe cyclone.`);
+    expect(report.summary).toBe(`Rotterdam hazard watch: ${report.risk}, set by a severe cyclone, A severe cyclone.`);
   });
 
   test('a change in the notices in force is a new report; the same notices are not', () => {

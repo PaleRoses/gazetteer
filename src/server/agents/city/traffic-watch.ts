@@ -62,20 +62,19 @@ export class TrafficWatch extends Actor {
     const place = portById.get(committed.city);
     if (!place) return relaySuccess(null);
     const heard = committed.inbox.board;
-    let consumed = false;
-    const read: BoardIo['read'] = async (identity, cursor) => {
-      if (committed.synced) { consumed = true; return relaySuccess({ messages: heard, cursor }); }
-      const result = await readBoard(identity, cursor);
-      if (result.status === 'unavailable') return result;
-      consumed = true;
-      return relaySuccess({ messages: [...new Map([...result.value.messages, ...heard].map(message => [message.id, message] as const)).values()], cursor: result.value.cursor });
-    };
-    let decided: readonly BoardMessage[] = [];
-    const post: BoardIo['post'] = async (_identity, message) => { decided = [...decided, message]; return relaySuccess(message.id); };
+    // Relay only completes the history; the watch decides from what it holds and what was delivered locally, whatever Relay does.
+    const history = committed.synced ? null : await readBoard(committed.relay, committed.memory.cursor);
+    const fromRelay = history?.status === 'ok' ? history.value : null;
+    const messages = [...new Map([...(fromRelay?.messages ?? []), ...heard].map(message => [message.id, message] as const)).values()];
+    const read: BoardIo['read'] = async () => relaySuccess({ messages, cursor: fromRelay?.cursor ?? committed.memory.cursor });
+    const post: BoardIo['post'] = async (_identity, message) => relaySuccess(message.id);
     const watched = await watchTraffic({ read, post }, committed.relay, committed.memory, { city: place.id, coordinates: place.coordinates, now: new Date() });
     const latest = this.state ?? committed;
-    this.state = { ...latest, memory: watched.memory, outbox: enqueue(latest.outbox, decided), ...(consumed ? { synced: true, inbox: drainInbox(latest.inbox, { board: heard, disruptions: [] }) } : {}) };
-    return watched.outcome;
+    this.state = {
+      ...latest, memory: watched.memory, outbox: enqueue(latest.outbox, watched.decided ? [watched.decided] : []),
+      synced: latest.synced || fromRelay !== null, inbox: drainInbox(latest.inbox, { board: heard, disruptions: [] }),
+    };
+    return history?.status === 'unavailable' ? history : watched.outcome;
   }
 
   /** What this watch has decided that Relay has not acknowledged yet; the server echoes it at once and writes it to Relay itself. */

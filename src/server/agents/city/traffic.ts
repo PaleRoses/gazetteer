@@ -115,7 +115,7 @@ export const decideTraffic = (assessment: TrafficAssessment, previous: TrafficRe
   return place ? {
     id: reportId(assessment.city, 'traffic', previous), kind: 'city.traffic', author: { role: 'city', city: assessment.city, element: 'traffic' },
     at: now.toISOString(),
-    summary: clip(`${place.name} traffic watch: ${assessment.risk}, ${plural(assessment.anchored, 'ship', 'ships')} anchored outside, ${plural(assessment.arrivals48h, 'arrival', 'arrivals')} due within ${arrivalWindowHours} h.`),
+    summary: clip(`${place.name} traffic watch: ${assessment.risk}, ${plural(assessment.anchored, 'ship', 'ships')} anchored outside, ${plural(assessment.arrivals48h, 'arrival', 'arrivals')} due within forty-eight hours.`),
     risk: assessment.risk, anchored: assessment.anchored, arrivals48h: assessment.arrivals48h, evidenceIds: [...assessment.evidenceIds],
     basis: place.serviceRate,
   } : null;
@@ -152,14 +152,14 @@ export type Watch = Readonly<{ city: PortId; coordinates: LonLat; now: Date }>;
  * heartbeat. Failures are data: an unreadable board leaves the memory untouched; a failed post keeps the old report, so the next
  * alarm derives the same id and Relay dedupes it.
  */
-export async function watchTraffic(io: BoardIo, identity: RelayIdentity, memory: TrafficMemory, watch: Watch): Promise<Readonly<{ memory: TrafficMemory; outcome: RelayOutcome<null> }>> {
+export async function watchTraffic(io: BoardIo, identity: RelayIdentity, memory: TrafficMemory, watch: Watch): Promise<Readonly<{ memory: TrafficMemory; outcome: RelayOutcome<null>; decided: TrafficReport | null }>> {
   const read = await io.read(identity, memory.cursor);
-  if (read.status === 'unavailable') return { memory, outcome: read };
+  if (read.status === 'unavailable') return { memory, outcome: read, decided: null };
   const absorbed = { ...absorb(memory, read.value.messages, watch.city), cursor: read.value.cursor };
   const assessed = assessTraffic({ city: watch.city, coordinates: watch.coordinates, now: watch.now, observations: absorbed.observations, etas: absorbed.etas, previous: absorbed.previous });
   const advanced: TrafficMemory = { ...absorbed, previous: { levels: assessed.levels, anchoredShips: assessed.anchoredShips } };
   const report = decideTraffic(assessed, absorbed.report, watch.now);
-  if (report === null) return { memory: advanced, outcome: relaySuccess(null) };
+  if (report === null) return { memory: advanced, outcome: relaySuccess(null), decided: null };
   const posted = await io.post(identity, report);
-  return posted.status === 'unavailable' ? { memory: advanced, outcome: posted } : { memory: { ...advanced, report }, outcome: relaySuccess(null) };
+  return posted.status === 'unavailable' ? { memory: advanced, outcome: posted, decided: report } : { memory: { ...advanced, report }, outcome: relaySuccess(null), decided: report };
 }

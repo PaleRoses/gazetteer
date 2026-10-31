@@ -99,7 +99,7 @@ describe('traffic reports', () => {
 
   test('the summary speaks as the watch and every number in it is a field of the message', () => {
     const report = decideTraffic(assessTraffic(inputs({ observations: [observation('a'), observation('b')], etas: [eta('c', 5)] })), null, now)!;
-    expect(report.summary).toBe(`Rotterdam traffic watch: ${report.risk}, ${report.anchored} ships anchored outside, ${report.arrivals48h} arrival due within 48 h.`);
+    expect(report.summary).toBe(`Rotterdam traffic watch: ${report.risk}, ${report.anchored} ships anchored outside, ${report.arrivals48h} arrival due within forty-eight hours.`);
   });
 
   test('re-said every 6 hours while not normal, and never while normal', () => {
