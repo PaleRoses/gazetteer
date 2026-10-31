@@ -19,6 +19,18 @@ const monitoringFixture: Pick<Monitoring, 'dashboard' | 'simulate'> = {
 };
 const authBody = z.object({ user: z.object({ id: z.string(), name: z.string(), email: z.string() }), workspaces: z.array(z.object({ id: z.string(), name: z.string(), role: z.enum(['owner', 'member']) })) });
 const inviteBody = z.object({ email: z.string(), url: z.string().url(), delivery: z.literal('link-only') });
+const submittedInviteBody = z.discriminatedUnion('delivery', [
+  z.object({ email: z.string(), url: z.string().url(), delivery: z.literal('accepted'), messageId: z.string() }),
+  z.object({ email: z.string(), url: z.string().url(), delivery: z.literal('unconfirmed'), warning: z.string() }),
+]);
+const mailCases: readonly Readonly<{ name: string; response: () => Promise<Response>; delivery: 'accepted' | 'unconfirmed' }>[] = [
+  { name: 'provider receipt', response: async () => Response.json({ id: 'test-message-id' }), delivery: 'accepted' },
+  { name: 'missing receipt', response: async () => Response.json({}), delivery: 'unconfirmed' },
+  { name: 'empty receipt', response: async () => Response.json({ id: ' ' }), delivery: 'unconfirmed' },
+  { name: 'invalid JSON', response: async () => new Response('not JSON'), delivery: 'unconfirmed' },
+  { name: 'provider rejection', response: async () => Response.json({ message: 'TEST rejected' }, { status: 403 }), delivery: 'unconfirmed' },
+  { name: 'network failure', response: () => Promise.reject(new Error('TEST network failure')), delivery: 'unconfirmed' },
+];
 const request = (path: string, cookie?: string, body?: unknown, requestOrigin = origin): Request => new Request(`${origin}${path}`, {
   method: body === undefined ? 'GET' : 'POST',
   headers: { Origin: requestOrigin, ...(cookie ? { Cookie: cookie } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -34,6 +46,38 @@ const signup = async (api: ReturnType<typeof createApi>, name: string) => {
 };
 
 describe('HTTP access boundary', () => {
+  test.each(mailCases)('reports $name honestly and retains an email-bound usable link', async ({ response, delivery }) => {
+    const access = createAccess(':memory:');
+    const api = createApi({ access, monitoring: monitoringFixture, origin,
+      mail: { key: 'TEST credential', from: 'Gazetteer <sender@example.com>' },
+      mailTransport: async outgoing => {
+        expect(outgoing.url).toBe('https://api.resend.com/emails');
+        expect(outgoing.headers.get('Authorization')).toBe('Bearer TEST credential');
+        expect(outgoing.headers.get('Idempotency-Key')).toBeTruthy();
+        const payload: unknown = await outgoing.json();
+        const message = z.object({ from: z.string(), to: z.array(z.string()), text: z.string() }).parse(payload);
+        expect(message.from).toBe('Gazetteer <sender@example.com>');
+        expect(message.to).toEqual(['member@example.com']);
+        expect(message.text).toContain('Shipment information is synthetic demo data.');
+        return response();
+      },
+    });
+    const owner = await signup(api, 'owner');
+    const workspace = owner.workspaces[0];
+    if (!workspace) throw new Error('Owner workspace missing');
+    const invited = await api(request(`/api/workspaces/${workspace.id}/invitations`, owner.cookie, { email: 'MEMBER@example.com' }));
+    expect(invited.status).toBe(200);
+    const payload: unknown = await invited.json();
+    const invitation = submittedInviteBody.parse(payload);
+    expect(invitation.delivery).toBe(delivery);
+    if (invitation.delivery === 'accepted') expect(invitation.messageId).toBe('test-message-id');
+    else expect(invitation.warning).toContain('unconfirmed');
+    const member = await signup(api, 'member');
+    const token = new URL(invitation.url).searchParams.get('invite');
+    expect((await api(request('/api/invitations/accept', member.cookie, { token }))).status).toBe(200);
+    access.close();
+  });
+
   test('throttles signup and login together by trusted peer, not supplied headers', async () => {
     const access = createAccess(':memory:');
     const api = createApi({ access, monitoring: monitoringFixture, origin });
@@ -102,9 +146,16 @@ describe('HTTP access boundary', () => {
     expect((await api(request(comments, member.cookie, { body: 'Consignee has been notified.' }))).status).toBe(200);
     const ownerComments = await api(request(comments, owner.cookie));
     const memberComments = await api(request(comments, member.cookie));
-    expect(await ownerComments.json()).toEqual(await memberComments.json());
+    const sharedComments: unknown = await ownerComments.json();
+    expect(sharedComments).toEqual(await memberComments.json());
     expect((await api(request(comments, outsider.cookie))).status).toBe(403);
     expect((await api(request(comments, outsider.cookie, { body: 'Unauthorized comment' }))).status).toBe(403);
+    const separateWorkspace = outsider.workspaces[0];
+    if (!separateWorkspace) throw new Error('Outsider workspace missing');
+    const separateComments = `/api/workspaces/${separateWorkspace.id}/shipments/gz-1042/comments`;
+    expect(await (await api(request(separateComments, outsider.cookie))).json()).toEqual({ comments: [] });
+    expect((await api(request(separateComments, outsider.cookie, { body: 'A separate workspace discussion.' }))).status).toBe(200);
+    expect(await (await api(request(comments, owner.cookie))).json()).toEqual(sharedComments);
     expect((await api(request(`${path}/shipments/unknown/comments`, owner.cookie))).status).toBe(404);
     expect((await api(request(`${path}/shipments/unknown/comments`, member.cookie, { body: 'No such shipment' }))).status).toBe(404);
     access.close();

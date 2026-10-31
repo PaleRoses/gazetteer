@@ -2,7 +2,10 @@ import { z } from 'zod';
 import type { Access, AccessError, Result, Session } from './access';
 import type { Monitoring } from './monitoring';
 export type Mail = Readonly<{ key: string; from: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'>; origin: string; mail?: Mail }>;
+type MailTransport = (request: Request) => Promise<Response>;
+type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
+  | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'>; origin: string; mail?: Mail; mailTransport?: MailTransport }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
   status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers },
@@ -18,13 +21,14 @@ const email = z.string().trim().email().max(254);
 const password = z.string().min(12).max(1024);
 const signupSchema = z.object({ email, password, name: z.string().trim().min(1).max(80), workspaceName: z.string().trim().min(1).max(100).optional() });
 const disruptionSchema = z.object({ portId: z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']), delayHours: z.number().int().min(1).max(168) });
+const mailReceiptSchema = z.object({ id: z.string().trim().min(1) });
 const bodyWith = async <T>(request: Request, schema: z.ZodType<T>, action: (body: T) => Response | Promise<Response>): Promise<Response> => {
   if (!request.headers.get('Content-Type')?.startsWith('application/json')) return json({ error: 'Expected application/json' }, 415);
   const body = schema.safeParse(await request.json().catch(() => null));
   return body.success ? action(body.data) : json({ error: 'Invalid request fields' }, 400);
 };
 
-export function createApi({ access, monitoring, origin, mail }: Options): (request: Request, clientKey?: string) => Promise<Response> {
+export function createApi({ access, monitoring, origin, mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
   const cookie = (token: string, maxAge = 604800): string => `gazetteer_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${origin.startsWith('https:') ? '; Secure' : ''}`;
   const authenticated = (result: Result<Session>): Response => {
     if (!result.ok) return respond(result);
@@ -65,14 +69,16 @@ export function createApi({ access, monitoring, origin, mail }: Options): (reque
       if (!invitation.ok) return respond(invitation);
       const inviteUrl = `${origin}/?invite=${encodeURIComponent(invitation.value.token)}`;
       if (!mail) return json({ email: invitation.value.email, url: inviteUrl, delivery: 'link-only' });
-      const sent = await fetch('https://api.resend.com/emails', {
+      const sent = await mailTransport(new Request('https://api.resend.com/emails', {
         method: 'POST', headers: { Authorization: `Bearer ${mail.key}`, 'Content-Type': 'application/json', 'Idempotency-Key': invitation.value.id },
         body: JSON.stringify({ from: mail.from, to: [invitation.value.email], subject: 'Join your Gazetteer workspace', text: `${user.name} invited you to ${membership.value.name} on Gazetteer.\n\nSign in with ${invitation.value.email} and accept your invitation:\n${inviteUrl}\n\nThis link expires in seven days. Shipment information is synthetic demo data.` }),
         signal: AbortSignal.timeout(10000),
-      }).catch(() => null);
-      return sent?.ok
-        ? json({ email: invitation.value.email, url: inviteUrl, delivery: 'sent' })
-        : json({ email: invitation.value.email, url: inviteUrl, delivery: 'link-only', warning: 'Email delivery failed. Share this invitation link directly.' });
+      })).catch(() => null);
+      const receipt = sent?.ok ? mailReceiptSchema.safeParse(await sent.json().catch(() => null)) : undefined;
+      const delivery: InvitationDelivery = receipt?.success
+        ? { delivery: 'accepted', messageId: receipt.data.id }
+        : { delivery: 'unconfirmed', warning: 'Email delivery is unconfirmed. Share this invitation link directly.' };
+      return json({ email: invitation.value.email, url: inviteUrl, ...delivery });
     });
     const shipmentId = match[3];
     if (shipmentId) {

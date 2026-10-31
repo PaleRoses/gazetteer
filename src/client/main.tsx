@@ -35,6 +35,14 @@ function Authentication({ onSession }: Readonly<{ onSession: (session: Session) 
       <p className="auth-disclaimer">Demo shipments and disruptions are simulated. No live vessel positions or carrier feeds are connected.</p></div></section></main>;
 }
 
+const invitationCopy = (invitation: Invitation): Readonly<{ title: string; detail: string }> => {
+  switch (invitation.delivery) {
+    case 'accepted': return { title: 'Invitation email submitted', detail: `The email provider accepted the invitation for ${invitation.email}. Inbox delivery is not confirmed.` };
+    case 'unconfirmed': return { title: 'Email delivery unconfirmed', detail: `${invitation.warning} Share this link with ${invitation.email}; they must sign in with that address.` };
+    case 'link-only': return { title: 'Invitation ready — email not sent', detail: `Share this link with ${invitation.email}. They must sign in with that email to join.` };
+  }
+};
+
 function TeamPanel({ workspace, onClose }: Readonly<{ workspace: Workspace; onClose: () => void }>) {
   const [members, setMembers] = useState<readonly Member[]>([]);
   const [invitation, setInvitation] = useState<Invitation | null>(null);
@@ -50,20 +58,22 @@ function TeamPanel({ workspace, onClose }: Readonly<{ workspace: Workspace; onCl
     const result = await request(`/api/workspaces/${workspace.id}/invitations`, invitationSchema, { email }); setBusy(false);
     if (result.ok) setInvitation(result.value); else setError(result.error);
   }
-  return <div className="modal-backdrop"><section className="team-dialog" role="dialog" aria-modal="true" aria-labelledby="team-title"><button className="icon-button dialog-close" onClick={onClose} aria-label="Close team settings"><X size={20} /></button><span className="section-kicker">SHARED WORKSPACE</span><h2 id="team-title">Your team, in sync.</h2><p>Members share shipments, updates and comments in <strong>{workspace.name}</strong>.</p><div className="member-list">{members.map(member => <div className="member" key={member.id}><span className="avatar">{member.name.slice(0, 1).toUpperCase()}</span><div><strong>{member.name}</strong><small>{member.email}</small></div><span className="member-role">{member.role}</span></div>)}</div>{workspace.role === 'owner' ? <form onSubmit={invite}><label>Invite by email<input type="email" name="email" placeholder="teammate@company.com" required /></label><button className="primary full" disabled={busy}><Plus size={16} />{busy ? 'Creating invitation…' : 'Invite teammate'}</button></form> : <p className="muted">Only the workspace owner can invite teammates.</p>}{error && errorMessage(error)}{invitation && <div className="invitation-result"><strong>{invitation.delivery === 'sent' ? 'Invitation sent' : 'Invitation ready — email not sent'}</strong><p>{invitation.delivery === 'sent' ? `Sent to ${invitation.email}.` : `Share this link with ${invitation.email}. They must sign in with that email to join.`}</p><label>Invitation link<input readOnly value={invitation.url} onFocus={event => event.currentTarget.select()} /></label></div>}</section></div>;
+  return <div className="modal-backdrop"><section className="team-dialog" role="dialog" aria-modal="true" aria-labelledby="team-title"><button className="icon-button dialog-close" onClick={onClose} aria-label="Close team settings"><X size={20} /></button><span className="section-kicker">SHARED WORKSPACE</span><h2 id="team-title">Your team, in sync.</h2><p>Members share shipments, updates and comments in <strong>{workspace.name}</strong>.</p><div className="member-list">{members.map(member => <div className="member" key={member.id}><span className="avatar">{member.name.slice(0, 1).toUpperCase()}</span><div><strong>{member.name}</strong><small>{member.email}</small></div><span className="member-role">{member.role}</span></div>)}</div>{workspace.role === 'owner' ? <form onSubmit={invite}><label>Invite by email<input type="email" name="email" placeholder="teammate@company.com" required /></label><button className="primary full" disabled={busy}><Plus size={16} />{busy ? 'Creating invitation…' : 'Invite teammate'}</button></form> : <p className="muted">Only the workspace owner can invite teammates.</p>}{error && errorMessage(error)}{invitation && <div className="invitation-result"><strong>{invitationCopy(invitation).title}</strong><p>{invitationCopy(invitation).detail}</p><label>Invitation link<input readOnly value={invitation.url} onFocus={event => event.currentTarget.select()} /></label></div>}</section></div>;
 }
 
 function ShipmentDetails({ shipment, dashboard, workspaceId }: Readonly<{ shipment: Shipment; dashboard: Dashboard; workspaceId: string }>) {
   const [comments, setComments] = useState<readonly Comment[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const path = `/api/workspaces/${workspaceId}/shipments/${shipment.id}/comments`;
   useEffect(() => {
+    if (sending) return;
     const controller = new AbortController();
-    const load = (): Promise<void> => controller.signal.aborted ? Promise.resolve() : request(path, commentsSchema, undefined, controller.signal).then(result => { if (!controller.signal.aborted) { if (result.ok) { setComments(result.value.comments); setError(null); } else setError(result.error); window.setTimeout(() => { void load(); }, 5000); } });
+    const load = (): Promise<void> => controller.signal.aborted ? Promise.resolve() : request(path, commentsSchema, undefined, controller.signal).then(result => { if (!controller.signal.aborted) { if (result.ok) { setComments(result.value.comments); setLoadError(null); } else setLoadError(result.error); window.setTimeout(() => { void load(); }, 5000); } });
     void load();
     return () => controller.abort();
-  }, [path]);
+  }, [path, sending]);
   async function comment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget; const body = textField(new FormData(form), 'body'); setSending(true); setError(null);
     const result = await request(path, commentsSchema, { body }); setSending(false);
@@ -77,47 +87,59 @@ function ShipmentDetails({ shipment, dashboard, workspaceId }: Readonly<{ shipme
     <section className="detail-section"><h3>What changed</h3><p>{shipment.change}</p>{shipment.action && <div className="action-box"><TriangleAlert size={16} /><div><strong>Action needed</strong><p>{shipment.action}</p></div></div>}</section>
     <section className="detail-section"><h3>Route milestones</h3><ol className="milestones">{shipment.milestones.map((milestone, index) => <li className={milestone.status} key={`${milestone.label}-${index}`}><span className="milestone-node">{milestone.status === 'complete' && <Check size={10} />}</span><div><strong>{milestone.label}</strong><small>{date(milestone.at)} · {time(milestone.at)} UTC</small></div>{milestone.status === 'current' && <span className="current-label">CURRENT</span>}</li>)}</ol></section>
     <section className="detail-section"><h3>Supporting evidence<span className="mini-sim">SIMULATED</span></h3>{shipment.evidence.length === 0 ? <p className="muted">No disruption reported in this demo.</p> : shipment.evidence.map(evidence => <article className="evidence" key={evidence.id}><div><FlaskConical size={14} /><strong>{evidence.title}</strong></div><p>{evidence.detail}</p><small>Scenario source · {date(evidence.observedAt)}, {time(evidence.observedAt)} UTC</small></article>)}</section>
-    <section className="detail-section comments"><h3><MessageSquare size={15} />Team notes<span className="note-count">{comments.length}</span></h3>{comments.length === 0 && <p className="muted">Keep the next handoff in view. Add a note for your team.</p>}{comments.map(comment => <article className="comment" key={comment.id}><div><strong>{comment.author}</strong><small>{date(comment.createdAt)}, {time(comment.createdAt)}</small></div><p>{comment.body}</p></article>)}<form onSubmit={comment}><label className="sr-only" htmlFor="comment-body">Add a team note</label><textarea id="comment-body" name="body" placeholder="Add a note for your team…" maxLength={4000} required rows={2} /><button className="text-button" disabled={sending}>{sending ? 'Posting…' : 'Post note'}<Send size={13} /></button></form>{error && errorMessage(error)}</section>
+    <section className="detail-section comments"><h3><MessageSquare size={15} />Team notes<span className="note-count">{comments.length}</span></h3>{comments.length === 0 && <p className="muted">Keep the next handoff in view. Add a note for your team.</p>}{comments.map(comment => <article className="comment" key={comment.id}><div><strong>{comment.author}</strong><small>{date(comment.createdAt)}, {time(comment.createdAt)}</small></div><p>{comment.body}</p></article>)}<form onSubmit={comment}><label className="sr-only" htmlFor="comment-body">Add a team note</label><textarea id="comment-body" name="body" placeholder="Add a note for your team…" maxLength={4000} required rows={2} /><button className="text-button" disabled={sending}>{sending ? 'Posting…' : 'Post note'}<Send size={13} /></button></form>{(error ?? loadError) && errorMessage(error ?? loadError ?? '')}</section>
   </aside>;
 }
 
-function WorkspaceScreen({ session, onSession, onLogout }: Readonly<{ session: Session; onSession: (session: Session) => void; onLogout: () => void }>) {
-  const [workspaceId, setWorkspaceId] = useState(session.workspaces[0]?.id ?? '');
+function WorkspaceOperations({ workspaceId }: Readonly<{ workspaceId: string }>) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'attention'>('all');
-  const [teamOpen, setTeamOpen] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [inviteToken, setInviteToken] = useState(new URLSearchParams(window.location.search).get('invite'));
-  const workspace = session.workspaces.find(item => item.id === workspaceId);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const selected = dashboard?.shipments.find(shipment => shipment.id === selectedId) ?? dashboard?.shipments[0];
   const shipments = dashboard?.shipments.filter(shipment => (filter === 'all' || shipment.risk !== 'on-track') && `${shipment.vessel} ${shipment.reference} ${shipment.cargo}`.toLowerCase().includes(query.toLowerCase())) ?? [];
   useEffect(() => {
-    if (!workspaceId) return;
-    const controller = new AbortController(); setDashboard(null); setError(null);
-    const load = (): Promise<void> => controller.signal.aborted ? Promise.resolve() : request(`/api/workspaces/${workspaceId}/dashboard`, dashboardSchema, undefined, controller.signal).then(result => { if (!controller.signal.aborted) { if (result.ok) { setDashboard(result.value); setError(null); } else setError(result.error); window.setTimeout(() => { void load(); }, 5000); } });
+    if (simulating) return;
+    const controller = new AbortController();
+    const load = (): Promise<void> => controller.signal.aborted ? Promise.resolve() : request(`/api/workspaces/${workspaceId}/dashboard`, dashboardSchema, undefined, controller.signal).then(result => { if (!controller.signal.aborted) { if (result.ok) { setDashboard(result.value); setLoadError(null); } else setLoadError(result.error); window.setTimeout(() => { void load(); }, 5000); } });
     void load();
     return () => controller.abort();
-  }, [workspaceId]);
+  }, [workspaceId, simulating]);
   async function simulate() {
     setSimulating(true); setError(null);
     const result = await request(`/api/workspaces/${workspaceId}/disruptions`, dashboardSchema, { portId: 'singapore', delayHours: 36 }); setSimulating(false);
     if (result.ok) setDashboard(result.value); else setError(result.error);
   }
-  async function acceptInvitation() {
-    const result = await request('/api/invitations/accept', workspaceSchema, { token: inviteToken });
-    if (result.ok) { onSession({ ...session, workspaces: [...session.workspaces.filter(item => item.id !== result.value.id), result.value] }); setWorkspaceId(result.value.id); setInviteToken(null); window.history.replaceState(null, '', window.location.pathname); } else setError(result.error);
-  }
-  return <div className="workspace-shell"><header className="topbar"><Brand /><div className="workspace-picker"><Layers3 size={15} /><label className="sr-only" htmlFor="workspace">Workspace</label><select id="workspace" disabled={simulating} value={workspaceId} onChange={event => { setWorkspaceId(event.target.value); setSelectedId(null); }}>{session.workspaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={13} /></div><div className="topbar-right"><span className="demo-tag"><FlaskConical size={12} /> DEMO WORKSPACE</span><button className="team-button" onClick={() => setTeamOpen(true)} disabled={!workspace}><Users size={15} />Team</button><span className="avatar" title={session.user.email}>{session.user.name.slice(0, 1).toUpperCase()}</span><button className="icon-button" onClick={onLogout} aria-label="Sign out"><LogOut size={16} /></button></div></header>
-    <div className="simulation-banner"><span><span className="simulation-light" />Synthetic data<span className="banner-separator">/</span>Not live vessel tracking. Test a disruption to see its impact.</span><span className="banner-scope">ALL TIMES UTC</span></div>
-    {inviteToken && <div className="invite-banner"><span><Users size={16} />You have a workspace invitation. Signed in as {session.user.email}.</span><button onClick={() => { void acceptInvitation(); }}>Accept invitation<ArrowRight size={14} /></button></div>}
-    {error && <div className="global-error">{errorMessage(error)}</div>}
-    <main className="operations-layout"><aside className="shipments-panel"><div className="shipments-heading"><span className="section-kicker">YOUR OPERATIONS</span><h1>Shipments<span>{dashboard?.shipments.length ?? '—'}</span></h1><p>Track ocean shipments and exceptions.</p></div><div className="shipment-search"><Search size={15} /><label className="sr-only" htmlFor="search">Search shipments</label><input id="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Vessel, reference or cargo" /></div><div className="filter-tabs"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All shipments</button><button className={filter === 'attention' ? 'active' : ''} onClick={() => setFilter('attention')}>Needs attention<span>{dashboard?.shipments.filter(item => item.risk !== 'on-track').length ?? 0}</span></button></div><div className="shipment-list">{!dashboard && <div className="empty-state"><Radio size={22} /><p>{error ? 'Shipment updates unavailable.' : 'Loading your shipments…'}</p></div>}{dashboard && shipments.length === 0 && <div className="empty-state"><Check size={22} /><p>{query ? 'No shipments match your search.' : 'Nothing needs attention.'}</p></div>}{shipments.map(shipment => <button key={shipment.id} className={`shipment-card ${selected?.id === shipment.id ? 'selected' : ''}`} onClick={() => setSelectedId(shipment.id)} aria-pressed={selected?.id === shipment.id}><div className="shipment-card-top"><span className="small-ship"><Ship size={17} /></span><RiskBadge risk={shipment.risk} /></div><h2>{shipment.vessel}</h2><span className="reference">{shipment.reference}</span><div className="shipment-card-route">{dashboard?.ports.find(port => port.id === shipment.origin)?.name}<ArrowRight size={12} />{dashboard?.ports.find(port => port.id === shipment.destination)?.name}</div><div className="shipment-card-footer"><span>ETA <strong>{date(shipment.eta)}</strong></span>{shipment.delayHours > 0 ? <span className="delay">+{shipment.delayHours}h</span> : <span className="containers">{shipment.containers} containers</span>}</div></button>)}</div><footer className="list-footer"><span className="status-dot" /><span>{dashboard ? `Updated ${time(dashboard.updatedAt)} UTC` : 'Connecting to workspace'}</span></footer></aside>
+  return <>{(error ?? loadError) && <div className="global-error">{errorMessage(error ?? loadError ?? '')}</div>}
+    <main className="operations-layout"><aside className="shipments-panel"><div className="shipments-heading"><span className="section-kicker">YOUR OPERATIONS</span><h1>Shipments<span>{dashboard?.shipments.length ?? '—'}</span></h1><p>Track ocean shipments and exceptions.</p></div><div className="shipment-search"><Search size={15} /><label className="sr-only" htmlFor="search">Search shipments</label><input id="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Vessel, reference or cargo" /></div><div className="filter-tabs"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All shipments</button><button className={filter === 'attention' ? 'active' : ''} onClick={() => setFilter('attention')}>Needs attention<span>{dashboard?.shipments.filter(item => item.risk !== 'on-track').length ?? 0}</span></button></div><div className="shipment-list">{!dashboard && <div className="empty-state"><Radio size={22} /><p>{(error ?? loadError) ? 'Shipment updates unavailable.' : 'Loading your shipments…'}</p></div>}{dashboard && shipments.length === 0 && <div className="empty-state"><Check size={22} /><p>{query ? 'No shipments match your search.' : 'Nothing needs attention.'}</p></div>}{shipments.map(shipment => <button key={shipment.id} className={`shipment-card ${selected?.id === shipment.id ? 'selected' : ''}`} onClick={() => setSelectedId(shipment.id)} aria-pressed={selected?.id === shipment.id}><div className="shipment-card-top"><span className="small-ship"><Ship size={17} /></span><RiskBadge risk={shipment.risk} /></div><h2>{shipment.vessel}</h2><span className="reference">{shipment.reference}</span><div className="shipment-card-route">{dashboard?.ports.find(port => port.id === shipment.origin)?.name}<ArrowRight size={12} />{dashboard?.ports.find(port => port.id === shipment.destination)?.name}</div><div className="shipment-card-footer"><span>ETA <strong>{date(shipment.eta)}</strong></span>{shipment.delayHours > 0 ? <span className="delay">+{shipment.delayHours}h</span> : <span className="containers">{shipment.containers} containers</span>}</div></button>)}</div><footer className="list-footer"><span className="status-dot" /><span>{dashboard ? `Updated ${time(dashboard.updatedAt)} UTC` : 'Connecting to workspace'}</span></footer></aside>
       <section className="map-panel" aria-label="Shipment overview map"><div className="map-heading"><span><span className="status-dot" />OCEAN FREIGHT</span><span><Anchor size={13} />{dashboard?.ports.length ?? '—'} ports in view</span></div><ShipmentMap dashboard={dashboard} selected={selected} onSelect={setSelectedId} /><div className="simulation-card"><span className="simulation-icon"><FlaskConical size={20} /></span><div><strong>Put the plan to the test.</strong><p>Simulate a 36-hour disruption at Singapore.<br />Watch affected arrivals and risks update.</p><button className="simulation-button" onClick={() => { void simulate(); }} disabled={simulating || !dashboard}><FlaskConical size={14} />{simulating ? 'Assessing impact…' : 'Simulate port disruption'}<ArrowRight size={14} /></button></div></div><div className="runtime-note">{dashboard ? `${dashboard.runtime} · ${dashboard.relay}` : 'Connecting…'}</div></section>
       {selected && dashboard && <ShipmentDetails key={`${workspaceId}/${selected.id}`} shipment={selected} dashboard={dashboard} workspaceId={workspaceId} />}
-    </main>{teamOpen && workspace && <TeamPanel workspace={workspace} onClose={() => setTeamOpen(false)} />}</div>;
+    </main>
+  </>;
+}
+
+function WorkspaceScreen({ session, onSession, onLogout }: Readonly<{ session: Session; onSession: (session: Session) => void; onLogout: () => void }>) {
+  const [workspaceId, setWorkspaceId] = useState(session.workspaces[0]?.id ?? '');
+  const [teamOpen, setTeamOpen] = useState(false);
+  const [accepting, setAccepting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [inviteToken, setInviteToken] = useState(new URLSearchParams(window.location.search).get('invite'));
+  const workspace = session.workspaces.find(item => item.id === workspaceId);
+  async function acceptInvitation() {
+    setAccepting(true); setError(null);
+    const result = await request('/api/invitations/accept', workspaceSchema, { token: inviteToken });
+    setAccepting(false);
+    if (result.ok) { onSession({ ...session, workspaces: [...session.workspaces.filter(item => item.id !== result.value.id), result.value] }); setWorkspaceId(result.value.id); setTeamOpen(false); setInviteToken(null); window.history.replaceState(null, '', window.location.pathname); } else setError(result.error);
+  }
+  return <div className="workspace-shell"><header className="topbar"><Brand /><div className="workspace-picker"><Layers3 size={15} /><label className="sr-only" htmlFor="workspace">Workspace</label><select id="workspace" value={workspaceId} onChange={event => { setWorkspaceId(event.target.value); setTeamOpen(false); }}>{session.workspaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={13} /></div><div className="topbar-right"><span className="demo-tag"><FlaskConical size={12} /> DEMO WORKSPACE</span><button className="team-button" onClick={() => setTeamOpen(true)} disabled={!workspace}><Users size={15} />Team</button><span className="avatar" title={session.user.email}>{session.user.name.slice(0, 1).toUpperCase()}</span><button className="icon-button" onClick={onLogout} aria-label="Sign out"><LogOut size={16} /></button></div></header>
+    <div className="simulation-banner"><span><span className="simulation-light" />Synthetic data<span className="banner-separator">/</span>Not live vessel tracking. Test a disruption to see its impact.</span><span className="banner-scope">ALL TIMES UTC</span></div>
+    {inviteToken && <div className="invite-banner"><span><Users size={16} />You have a workspace invitation. Signed in as {session.user.email}.</span><button disabled={accepting} onClick={() => { void acceptInvitation(); }}>{accepting ? 'Joining…' : 'Accept invitation'}<ArrowRight size={14} /></button></div>}
+    {error && <div className="global-error">{errorMessage(error)}</div>}
+    {workspace && <WorkspaceOperations key={workspace.id} workspaceId={workspace.id} />}
+    {teamOpen && workspace && <TeamPanel key={workspace.id} workspace={workspace} onClose={() => setTeamOpen(false)} />}</div>;
 }
 
 function App() {

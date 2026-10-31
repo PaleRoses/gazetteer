@@ -18,7 +18,12 @@ export const workspaceSchema: z.ZodType<Workspace> = z.object({ id: z.string(), 
 export const sessionSchema = z.object({ user: userSchema, workspaces: z.array(workspaceSchema) });
 const commentSchema: z.ZodType<Comment> = z.object({ id: z.string(), author: z.string(), body: z.string(), createdAt: z.string() });
 export const commentsSchema = z.object({ comments: z.array(commentSchema) });
-export const invitationSchema = z.object({ email: z.string(), url: z.string(), delivery: z.enum(['link-only', 'sent']) });
+const invitationLink = { email: z.string(), url: z.string() };
+export const invitationSchema = z.discriminatedUnion('delivery', [
+  z.object({ ...invitationLink, delivery: z.literal('link-only') }),
+  z.object({ ...invitationLink, delivery: z.literal('accepted'), messageId: z.string().min(1) }),
+  z.object({ ...invitationLink, delivery: z.literal('unconfirmed'), warning: z.string() }),
+]);
 export const membersSchema = z.object({ members: z.array(z.object({ id: z.string(), name: z.string(), email: z.string(), role: z.enum(['owner', 'member']) })) });
 export type Session = z.infer<typeof sessionSchema>;
 export type Member = z.infer<typeof membersSchema>['members'][number];

@@ -1,14 +1,33 @@
 # Gazetteer
 
-Map-first shared shipment monitoring. **All shipment positions, cargo, port notices and ETA assessments are synthetic.** No AIS feed, live intelligence, or LLM inference is connected.
+Gazetteer is a shared operations workspace for teams monitoring commercial ocean shipments. It answers four questions: **Where is the cargo? When will it arrive? What changed? What needs our attention?**
+
+The main screen is a map, not an agent dashboard. Select a vessel to see its route, cargo, milestones, current ETA, changes to that ETA, risks, supporting evidence and the next action. Teammates work from the same shipments, updates and comments.
+
+## Essential product behavior
+
+1. **Durable monitoring:** every port and shipment has its own Terse Durable Actor. Monitoring state must survive process restarts; scheduled checks must continue without an open browser.
+2. **Port-to-shipment communication:** port agents publish developments through Agent Relay. Shipment agents consume relevant notices, assess their route/cargo exposure, revise ETAs and flag risks with evidence. Replayed notices must not add the same delay twice; unaffected shipments must remain unchanged.
+3. **A useful operations map:** selectable vessels and clear risk icons lead to route/milestones, current ETA, what changed and any action needed. Use familiar logistics terminology and compact copy—not agent-count vanity metrics.
+4. **A genuinely shared workspace:** accounts, email-addressed invitations and owner/member roles. Members see the same shipment state and comments; other workspaces cannot access them. Only owners invite teammates.
+5. **One complete demo journey:** create a workspace, invite/join as a teammate, simulate a Singapore disruption, observe affected vessels and ETAs change, inspect evidence, leave a shared comment, restart, and retain the resulting state.
+6. **Honest provenance:** synthetic notices are always labelled simulated. An unconfigured provider, unsent invitation or unverified integration must never be presented as live or successful.
+
+These are acceptance requirements, not a claim that every integration has been verified. Finish this complete flow before adding more features. The supplied visual starting point is `reference/gazetteer.html`.
+
+## Current implementation and limits
+
+**All shipment positions, cargo, port notices and ETA assessments are synthetic.** Terse and Agent Relay are real integrations; the demo's impact assessment is currently deterministic, not LLM inference. No live AIS/carrier feed is connected. The intended AI-backed monitoring must retain evidence and report uncertainty rather than invent logistics facts.
+
+Accounts, owner/member workspaces, invitation links and shared comments are implemented. Actual email delivery needs configured credentials and a verified sender; remote teammate access needs a reachable deployment. See `HANDOFF.md` for the checks actually performed and remaining gaps—neither a passing build nor a provider adapter establishes end-to-end operation.
 
 ## Run
 
-Requires Node/npm for installation; the project pins its own Bun 1.4.4 runtime because Terse requires Bun 1.4.2 or later.
+Requires Node/npm for bootstrapping; the project pins its own Bun 1.4.4 runtime because Terse requires Bun 1.4.2 or later. `bun.lock` is the dependency source of truth. Use the npm scripts after installation so Terse's child processes resolve the pinned Bun rather than an older global binary.
 
 ```sh
-npm install
-cp .env.example .env
+npx --yes bun@1.4.4 install --frozen-lockfile
+test -f .env || cp .env.example .env
 npm run setup:relay
 npm run build
 npm start
@@ -22,7 +41,7 @@ Open **http://localhost:4310**. Create an account (password: 12+ characters); yo
 
 The workspace owner can invite an email address. The invitee registers/signs in with that exact address and accepts the single-use link. Members share shipments, updates and comments; only owners can invite. The UI refreshes shared state every five seconds.
 
-Without `RESEND_API_KEY` and a verified `MAIL_FROM`, an invitation produces a **manual share link**, not a sent email. Configure both for actual email delivery. Set `APP_ORIGIN` to the reachable HTTPS origin before sharing remotely, and run behind a TLS proxy with a persistent data volume. A localhost link is not reachable by a teammate on another machine.
+Without `RESEND_API_KEY` and a verified `MAIL_FROM`, an invitation produces a **manual share link**, not a sent email. Configure both for actual email delivery; a partial configuration is rejected. The UI distinguishes a provider-accepted email from an unconfirmed send—neither is proof of inbox delivery. Set `APP_ORIGIN` to the reachable HTTPS origin before sharing remotely, and run behind a TLS proxy with a persistent data volume. A localhost link is not reachable by a teammate on another machine.
 
 There is no password reset, account email verification, membership removal, production operations setup, or live-source ingestion yet. This is a handoff-ready basic demo, not a production authentication platform.
 

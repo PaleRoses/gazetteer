@@ -3,19 +3,27 @@ import { resolve, sep } from 'node:path';
 import { createAccess } from './access';
 import { createApi } from './http';
 import { createMonitoring } from './monitoring';
+import { readStartupConfig } from './config';
 
-const port = Number(process.env.PORT ?? '4310');
-const origin = process.env.APP_ORIGIN ?? `http://localhost:${port}`;
-const dataDir = resolve(process.env.DATA_DIR ?? '.data');
-await mkdir(dataDir, { recursive: true });
+const configuration = readStartupConfig(process.env, Bun.version);
+if (!configuration.ok) {
+  console.error(configuration.errors.join('\n'));
+  process.exit(1);
+}
+const { port, hostname, origin, mail } = configuration.value;
+const dataDir = resolve(configuration.value.dataDir);
+const assets = resolve('dist');
+if (!await Bun.file(resolve(assets, 'index.html')).exists()) {
+  console.error('Gazetteer frontend is not built. Run npm run build, then npm start.');
+  process.exit(1);
+}
+await mkdir(dataDir, { recursive: true, mode: 0o700 });
 const access = createAccess(resolve(dataDir, 'access.sqlite'));
 const monitoring = await createMonitoring();
-const api = createApi({ access, monitoring, origin,
-  mail: process.env.RESEND_API_KEY && process.env.MAIL_FROM ? { key: process.env.RESEND_API_KEY, from: process.env.MAIL_FROM } : undefined });
-const assets = resolve('dist');
+const api = createApi({ access, monitoring, origin, mail: mail.kind === 'resend' ? mail : undefined });
 
 const server = Bun.serve({
-  port, hostname: process.env.HOST ?? '127.0.0.1', maxRequestBodySize: 16384, idleTimeout: 120,
+  port, hostname, maxRequestBodySize: 16384, idleTimeout: 120,
   fetch: async (request, server) => {
     const path = new URL(request.url).pathname;
     if (path.startsWith('/api/')) return api(request, server.requestIP(request)?.address ?? 'unknown');
@@ -32,6 +40,7 @@ const server = Bun.serve({
   },
 });
 console.info(`Gazetteer: ${origin} (synthetic demo data)`);
+console.info(mail.kind === 'manual' ? 'Invitations: manual share links; email is not configured.' : 'Invitations: email provider configured; delivery requires a provider receipt.');
 const close = async (): Promise<void> => { await server.stop(true); access.close(); await monitoring.close(); process.exit(0); };
 process.once('SIGINT', close);
 process.once('SIGTERM', close);

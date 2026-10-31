@@ -1,7 +1,6 @@
 import type { Dashboard, Shipment } from '../shared';
+import { project, routePath } from './map-geometry';
 
-const project = ([longitude, latitude]: readonly [number, number]): readonly [number, number] => [(longitude + 180) * 1000 / 360, (90 - latitude) * 500 / 180];
-const line = (points: Shipment['route']): string => points.map(point => project(point).join(',')).join(' ');
 const coastline = new URL('./world-coastline.svg', import.meta.url).href;
 
 export function ShipmentMap({ dashboard, selected, onSelect }: Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; onSelect: (id: string) => void }>) {
@@ -11,8 +10,8 @@ export function ShipmentMap({ dashboard, selected, onSelect }: Readonly<{ dashbo
       <rect width="1000" height="520" fill="url(#map-grid)" />
       <image href={coastline} width="1000" height="500" aria-hidden="true" />
       <g className="ocean-labels"><text x="296" y="232">ATLANTIC OCEAN</text><text x="64" y="315">PACIFIC OCEAN</text><text x="554" y="308">INDIAN OCEAN</text><text x="837" y="237">PACIFIC OCEAN</text></g>
-      {dashboard?.shipments.filter(shipment => shipment.id !== selected?.id).map(shipment => <polyline key={shipment.id} points={line(shipment.route)} fill="none" stroke="#7c9ab3" strokeWidth="1.2" strokeDasharray="4 6" opacity=".5" />)}
-      {selected && <><polyline points={line(selected.route)} fill="none" stroke="white" strokeWidth="5" strokeLinejoin="round" opacity=".7" /><polyline points={line(selected.route)} fill="none" stroke="#245b98" strokeWidth="2.5" strokeLinejoin="round" strokeDasharray="7 5" /></>}
+      {dashboard?.shipments.filter(shipment => shipment.id !== selected?.id).map(shipment => <path key={shipment.id} d={routePath(shipment.route)} fill="none" stroke="#7c9ab3" strokeWidth="1.2" strokeDasharray="4 6" opacity=".5" />)}
+      {selected && <><path d={routePath(selected.route)} fill="none" stroke="white" strokeWidth="5" strokeLinejoin="round" opacity=".7" /><path d={routePath(selected.route)} fill="none" stroke="#245b98" strokeWidth="2.5" strokeLinejoin="round" strokeDasharray="7 5" /></>}
       {dashboard?.ports.map(port => { const [x, y] = project(port.coordinates); return <g key={port.id} transform={`translate(${x},${y})`}><circle r="3" fill="#335b78" stroke="#faf9f2" strokeWidth="2" /><text className="port-label" x="7" y="-8">{port.name}</text></g>; })}
       {dashboard?.shipments.map(shipment => { const [x, y] = project(shipment.coordinates); const active = shipment.id === selected?.id; return <g key={shipment.id} transform={`translate(${x},${y})`} className={`ship-marker ${shipment.risk}${active ? ' selected' : ''}`} role="button" tabIndex={0} aria-label={`${shipment.vessel}, ${shipment.risk.replace('-', ' ')}`} aria-pressed={active} onClick={() => onSelect(shipment.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(shipment.id); } }}>
         {active && <circle className="marker-halo" r="25" />}
