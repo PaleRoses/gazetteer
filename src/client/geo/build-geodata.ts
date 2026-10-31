@@ -1,16 +1,15 @@
-// Regenerates public/geo/land.geojson and src/sea-lanes.ts. Run: bun src/client/geo/build-geodata.ts
+// Regenerates public/geo/land.geojson (Natural Earth 1:50m land, public domain, naturalearthdata.com) and src/sea-lanes.ts.
+// Run: bun src/client/geo/build-geodata.ts
 import { seaRoute } from 'searoute-ts';
-import { feature } from 'topojson-client';
 import type { FeatureCollection, MultiPolygon, Polygon, Position } from 'geojson';
-import type { Topology } from 'topojson-specification';
 import { ports } from '../../domain';
 
 const round = (value: number, digits: number): number => Math.round(value * 10 ** digits) / 10 ** digits;
 const roundPosition = (digits: number) => (position: Position): Position => [round(position[0] ?? 0, digits), round(position[1] ?? 0, digits)];
 const roundRings = (digits: number) => (rings: Position[][]): Position[][] => rings.map(ring => ring.map(roundPosition(digits)));
 
-const topology: Topology = await Bun.file(new URL('../../../node_modules/world-atlas/land-50m.json', import.meta.url)).json();
-const land = feature(topology, topology.objects.land as never) as unknown as FeatureCollection<Polygon | MultiPolygon>;
+const NATURAL_EARTH = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/ca96624a56bd078437bca8184e78163e5039ad19/geojson/ne_50m_land.geojson';
+const land = await fetch(NATURAL_EARTH).then(response => response.json()) as FeatureCollection<Polygon | MultiPolygon>;
 const quantised: FeatureCollection<Polygon | MultiPolygon> = {
   type: 'FeatureCollection',
   features: land.features.map(item => ({

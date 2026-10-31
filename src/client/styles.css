@@ -27,7 +27,7 @@
 .port-marker{display:flex;align-items:center;gap:6px;pointer-events:none;z-index:1}
 .port-dot{width:8px;height:8px;border-radius:50%;background:#1b3b59;border:2px solid #fff;box-shadow:0 0 0 1px #1b3b5955}
 .port-label{font-size:10px;font-weight:650;color:#1b3b59;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 5px #fff}
-.vessel-marker{position:relative;width:30px;height:30px;padding:0;border:0;background:transparent;display:grid;place-items:center;cursor:pointer;color:#fff}
+.vessel-marker{width:30px;height:30px;padding:0;border:0;background:transparent;display:grid;place-items:center;cursor:pointer;color:#fff}
 .vessel-disc{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#16815c;border:2px solid #fff;box-shadow:0 2px 6px #102a4540;transition:transform .15s}
 .vessel-marker:hover .vessel-disc{transform:scale(1.12)}
 .vessel-marker.watch .vessel-disc{background:#c58217}
@@ -40,7 +40,7 @@
 .vessel-marker.selected .vessel-disc{box-shadow:0 0 0 5px #245b9830,0 2px 6px #102a4540;transform:scale(1.15)}
 .vessel-marker:focus-visible{outline:none}
 .vessel-marker:focus-visible .vessel-disc{box-shadow:0 0 0 3px #b5a539,0 2px 6px #102a4540}
-@keyframes flash-ring{0%{box-shadow:0 0 0 0 #c5821780;background:#fff3dc}100%{box-shadow:0 0 0 14px #c5821700}}
+@keyframes flash-ring{0%{box-shadow:0 0 0 0 #c5821780;background:#fff3dc}100%{box-shadow:0 0 0 7px #c5821700}}
 @keyframes flash-fade{0%{background:#fff0d2}100%{background:transparent}}
 .shipment-card.flash{animation:flash-ring 1.6s ease-out 2}
 .eta-card.flash{animation:flash-ring 1.6s ease-out 2}

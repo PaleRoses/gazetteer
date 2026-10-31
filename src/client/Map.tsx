@@ -10,7 +10,7 @@ type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | un
 
 const COLOURS = { ocean: '#d6e6f2', land: '#f5f3ea', coast: '#8fb0c9', grid: '#9ebdd3', lane: '#5f87ad', route: '#1f5a9e' } as const;
 const TICK_MS = 4_000;
-const FRAME_PADDING = { top: 64, bottom: 150, left: 48, right: 48 } as const;
+const FRAME_PADDING = { top: 70, bottom: 150, left: 60, right: 110 } as const;
 const OCEANS: readonly (readonly [string, number, number])[] = [['ATLANTIC OCEAN', -35, 25], ['PACIFIC OCEAN', -150, 10], ['PACIFIC OCEAN', 175, 5], ['INDIAN OCEAN', 78, -22]];
 const RISK_TEXT = { 'on-track': 'on schedule', watch: 'watch', delayed: 'delayed' } as const;
 
@@ -28,7 +28,7 @@ const style = (origin: string): StyleSpecification => ({
 const emptyLines: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 const addRouteLayers = (map: MapLibreMap): void => {
   for (const id of ['lanes', 'sailed', 'ahead']) map.addSource(id, { type: 'geojson', data: emptyLines });
-  map.addLayer({ id: 'lanes', type: 'line', source: 'lanes', layout: { 'line-cap': 'round' }, paint: { 'line-color': COLOURS.lane, 'line-width': 1.4, 'line-opacity': 0.55, 'line-dasharray': [2, 3] } });
+  map.addLayer({ id: 'lanes', type: 'line', source: 'lanes', layout: { 'line-cap': 'round' }, paint: { 'line-color': COLOURS.lane, 'line-width': 1.6, 'line-opacity': 0.75, 'line-dasharray': [2, 3] } });
   map.addLayer({ id: 'ahead-casing', type: 'line', source: 'ahead', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.75 } });
   map.addLayer({ id: 'ahead', type: 'line', source: 'ahead', layout: { 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 2.2, 'line-dasharray': [2, 2] } });
   map.addLayer({ id: 'sailed-casing', type: 'line', source: 'sailed', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 6, 'line-opacity': 0.8 } });
@@ -55,7 +55,9 @@ const vesselElement = (onSelect: (id: string) => void, view: VesselView): HTMLBu
 };
 
 const decorate = (button: HTMLElement, view: VesselView, selected: boolean): void => {
-  button.className = `vessel-marker ${view.risk}${selected ? ' selected' : ''}`;
+  button.classList.remove('on-track', 'watch', 'delayed', 'selected');
+  button.classList.add(view.risk);
+  button.classList.toggle('selected', selected);
   button.setAttribute('aria-label', `${view.vessel}, ${RISK_TEXT[view.risk]}${selected ? ', selected' : ''}`);
   button.setAttribute('aria-pressed', String(selected));
   button.style.zIndex = selected ? '3' : view.risk === 'on-track' ? '1' : '2';
