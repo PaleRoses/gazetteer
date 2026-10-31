@@ -2,8 +2,7 @@ import { type BoardMessage } from '../src/core/board';
 import { demoShipments } from '../src/core/demo';
 import { portById, type PortId } from '../src/core/ports';
 import { relaySuccess } from '../src/core/types';
-import { emptyMemory, type PortMemory } from '../src/server/agents/port/memory';
-import { watchPort, type BoardIo } from '../src/server/agents/port/watch';
+import { emptyTrafficMemory, watchTraffic, type BoardIo, type TrafficMemory } from '../src/server/agents/city/traffic';
 import { think, type Thoughts } from '../src/server/agents/ship/think';
 import { demoScenarios, simulationSource, type Scenario } from '../src/server/telemetry/simulation';
 
@@ -24,7 +23,7 @@ export async function runSociety(scenarios: (cycle: number) => Readonly<Record<s
   const portCursor = new Map<PortId, number>();
   let clock = clockAt(0);
   const portIds = [...new Set(fleet.flatMap(shipment => [shipment.destination, ...shipment.via]))];
-  const memories = new Map<PortId, PortMemory>(portIds.map(id => [id, emptyMemory]));
+  const memories = new Map<PortId, TrafficMemory>(portIds.map(id => [id, emptyTrafficMemory]));
   const io = (id: PortId): BoardIo => ({
     read: async () => { const from = portCursor.get(id) ?? 0; portCursor.set(id, board.length); return relaySuccess({ messages: board.slice(from), cursor: null }); },
     post: async (_, message) => { post(message); return relaySuccess(message.id); },
@@ -45,7 +44,7 @@ export async function runSociety(scenarios: (cycle: number) => Readonly<Record<s
     ships = next;
     for (const id of portIds) {
       const port = portById.get(id)!;
-      const step = await watchPort(io(id), { token: 't', channel: 'c' }, memories.get(id)!, { portId: id, name: port.name, coordinates: port.coordinates, now: new Date(clock), notices: [] });
+      const step = await watchTraffic(io(id), { token: 't', channel: 'c' }, memories.get(id)!, { city: id, coordinates: port.coordinates, now: new Date(clock) });
       memories.set(id, step.memory);
     }
   }

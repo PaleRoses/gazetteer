@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createActorStub, createActorTransport } from 'durable-actors/backend';
 import { startLocalActors } from 'durable-actors/dev';
-import type { PortAgent } from '../../../../src/server/agents/port/agent';
+import type { HazardWatch } from '../../../../src/server/agents/city/hazard-watch';
 import type { Disruption } from '../../../../src/core/types';
 
-type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'publish' | 'queued'>;
+type HazardClient = Pick<HazardWatch, 'initialize' | 'simulate' | 'check' | 'publish' | 'queued'>;
 const methods = [
   { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' }, { name: 'publish', result: 'value' }, { name: 'queued', result: 'value' },
 ] as const;
@@ -51,11 +51,11 @@ function projectWith(env: Readonly<Record<string, string>>): string {
   return project;
 }
 
-async function withPort<A>(project: string, dataDir: string, operation: (port: PortClient) => Promise<A>): Promise<A> {
+async function withWatch<A>(project: string, dataDir: string, operation: (port: HazardClient) => Promise<A>): Promise<A> {
   const runtime = await startLocalActors({ project, projectId: 'gazetteer-restart', entrypoint: 'src/server/agents/index.ts', dataDir, apiKey: randomUUID(), quiet: true });
   try {
     const transport = createActorTransport({ projectId: runtime.connection.projectId, controlPlaneUrl: runtime.connection.controlPlaneUrl, apiKey: runtime.connection.apiKey, homeRegion: runtime.connection.storageRegion });
-    return await operation(createActorStub<PortClient>('PortAgent', 'restart-test-port-singapore', methods, transport));
+    return await operation(createActorStub<HazardClient>('HazardWatch', 'restart-test-city-singapore-hazards', methods, transport));
   } finally { await runtime.stop(); }
 }
 
@@ -64,11 +64,11 @@ test('a disruption simulated before registration, across a restart, is published
   const relay = fakeRelay();
   const project = projectWith({ RELAY_BASE_URL: relay.url, GAZETTEER_LIVE_SOURCES: 'off' });
   try {
-    await withPort(project, dataDir, async port => {
+    await withWatch(project, dataDir, async port => {
       await port.simulate(disruption);
       expect(await port.queued()).toBe(1);
     });
-    await withPort(project, dataDir, async port => {
+    await withWatch(project, dataDir, async port => {
       expect(await port.queued()).toBe(1);
       expect(relay.sent.size).toBe(0);
       expect(await port.initialize('workspace', 'singapore', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
@@ -79,7 +79,7 @@ test('a disruption simulated before registration, across a restart, is published
       expect(await port.check()).toEqual({ status: 'ok', value: null });
       expect(await port.publish()).toEqual({ status: 'ok', value: null });
     });
-    await withPort(project, dataDir, async port => {
+    await withWatch(project, dataDir, async port => {
       expect(await port.queued()).toBe(0);
       await port.simulate(disruption);
       expect(await port.check()).toEqual({ status: 'ok', value: null });

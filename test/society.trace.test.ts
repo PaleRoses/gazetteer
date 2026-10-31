@@ -1,27 +1,27 @@
 import { describe, expect, test } from 'bun:test';
-import { citations, type BoardMessage, type PortBulletin, type ShipAssessment, type ShipObservation } from '../src/core/board';
+import { citations, type BoardMessage, type TrafficReport, type ShipAssessment, type ShipObservation } from '../src/core/board';
 import { demoShipments } from '../src/core/demo';
 import { demoScenarios, underway } from '../src/server/telemetry/simulation';
 import { cycles, runSociety, start } from './society-run';
 
 const assessments = (board: readonly BoardMessage[]): readonly ShipAssessment[] => board.filter((message): message is ShipAssessment => message.kind === 'ship.assessment');
-const bulletins = (board: readonly BoardMessage[]): readonly PortBulletin[] => board.filter((message): message is PortBulletin => message.kind === 'port.bulletin');
+const bulletins = (board: readonly BoardMessage[]): readonly TrafficReport[] => board.filter((message): message is TrafficReport => message.kind === 'city.traffic');
 
 describe('the society on a fake clock, model off', () => {
   test('a queue at Singapore is heard by the ships behind it, in order, each citing what it heard', async () => {
     const { board, ships } = await runSociety();
     const observation = board.find(message => message.kind === 'ship.observation' && message.signals.includes('stationary-outside-port'));
     expect(observation).toBeDefined();
-    const bulletin = bulletins(board).find(item => item.portId === 'singapore' && item.risk !== 'normal' && item.evidenceIds.includes(observation!.id));
+    const bulletin = bulletins(board).find(item => item.author.city === 'singapore' && item.risk !== 'normal' && item.evidenceIds.includes(observation!.id));
     expect(bulletin).toBeDefined();
     expect(board.indexOf(observation!)).toBeLessThan(board.indexOf(bulletin!));
     const listeners = assessments(board).filter(item => item.method === 'rule-based' && item.citedEvidence.includes(bulletin!.id) && item.shipmentId !== (observation as ShipObservation).shipmentId);
     expect(new Set(listeners.map(item => item.shipmentId)).size).toBeGreaterThanOrEqual(2);
     expect(listeners.every(item => item.confidence === null)).toBe(true);
-    expect(bulletins(board).filter(item => item.portId === 'singapore').some(item => item.risk === 'severe')).toBe(true);
+    expect(bulletins(board).filter(item => item.author.city === 'singapore').some(item => item.risk === 'severe')).toBe(true);
     // Every cited board message exists, and every bulletin, rule-based assessment and revised ETA cites something.
     const ids = new Set(board.map(message => message.id));
-    const boardIds = /^(bulletin|obs|asm|eta):/;
+    const boardIds = /^(traffic|obs|asm|eta):/;
     board.flatMap(citations).filter(id => boardIds.test(id)).forEach(id => expect(ids.has(id)).toBe(true));
     bulletins(board).filter(item => item.risk !== 'normal').forEach(item => expect(citations(item).length).toBeGreaterThan(0));
     assessments(board).filter(item => item.method === 'rule-based').forEach(item => expect(citations(item).length).toBeGreaterThan(0));
@@ -55,7 +55,7 @@ describe('the society on a fake clock, model off', () => {
     const queue = Object.keys(demoScenarios).filter(id => demoScenarios[id]!.kind === 'queue');
     const leaves = (cycle: number) => cycle < cycles * 3 / 4 ? demoScenarios : { ...demoScenarios, ...Object.fromEntries(queue.map(id => [id, underway])) };
     const { board, ships } = await runSociety(leaves);
-    const singapore = bulletins(board).filter(item => item.portId === 'singapore');
+    const singapore = bulletins(board).filter(item => item.author.city === 'singapore');
     expect(Math.max(...singapore.map(item => item.anchored))).toBeGreaterThanOrEqual(2);
     expect(singapore[singapore.length - 1]!.anchored).toBe(0);
     expect(board.some(message => message.kind === 'ship.observation' && message.signals.length === 0)).toBe(true);
