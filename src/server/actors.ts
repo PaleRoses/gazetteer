@@ -22,7 +22,7 @@ type PortState = Readonly<{
   /** Heard by the server on the Relay stream; `synced` = the actor has read Relay once since it started, so it may live on the inbox alone. */
   inbox?: Inbox; synced?: boolean;
 }>;
-type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean }>;
+type ShipmentState = Readonly<{ paused?: boolean; shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean }>;
 const assessment = assessmentFromEnv(process.env);
 const telemetrySource = telemetrySourceFromEnv(process.env);
 const demo = demoEnabled(process.env);
@@ -142,7 +142,7 @@ export class ShipmentAgent extends Actor {
   @Persisted private nextCheckAt: number | null = null;
 
   async resume(): Promise<void> {
-    if (!this.state) return;
+    if (!this.state || this.state.paused) return;
     this.state = { ...this.state, synced: false };
     this.nextCheckAt = this.nextCheckAt ?? Date.now();
     this.alarm.set(this.nextCheckAt);
@@ -156,7 +156,12 @@ export class ShipmentAgent extends Actor {
   async initialize(workspaceId: string, shipment: Shipment, workspaceKey: string, mmsi?: string): Promise<RelayOutcome<null>> {
     if (mmsi !== undefined && !mmsiPattern.test(mmsi)) return { status: 'unavailable', message: 'MMSI must be nine digits.' };
     if (mmsi && this.state && this.state.mmsi !== mmsi) this.state = { ...this.state, mmsi };
+    if (this.state && shipment.voyage && this.state.shipment.voyage?.updatedAt !== shipment.voyage.updatedAt) {
+      this.state = { ...this.state, shipment, assessmentCache: {}, telemetry: undefined, board: undefined, seen: [], inbox: emptyInbox };
+      await this.scheduleCheck();
+    }
     if (this.state?.ready) return relaySuccess(null);
+    if (this.state?.paused) return relaySuccess(null);
     await this.scheduleCheck();
     if (!this.state) {
       const registration = await attemptRelay(() => registerParticipant(workspaceKey, this.id, relayChannel(workspaceId)), 'Agent Relay registration is unavailable. Retry initialization.');
@@ -169,16 +174,20 @@ export class ShipmentAgent extends Actor {
     return relaySuccess(null);
   }
 
+  async pause(): Promise<void> { if (this.state) this.state = { ...this.state, paused: true }; }
+
   async snapshot(): Promise<Shipment | null> { return this.state?.shipment ?? null; }
 
   /** The server heard these on the Relay stream (or authored them): take them locally instead of reading Relay. */
   async deliver(batch: Inbox): Promise<void> {
-    if (this.state) this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, batch) };
+    if (this.state && !this.state.paused) this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, batch) };
   }
 
   async check(): Promise<RelayOutcome<Shipment>> {
+    if (this.state?.paused) return relaySuccess(this.state.shipment);
     await this.scheduleCheck();
     if (!this.state) return { status: 'unavailable', message: 'Shipment monitoring has not been initialized.' };
+    if (this.state.shipment.voyage?.status === 'arrived' || this.state.shipment.voyage?.status === 'planned') return relaySuccess(this.state.shipment);
     const start = this.state;
     const now = new Date().toISOString();
     const connection = await connect(start, false);
@@ -198,6 +207,7 @@ export class ShipmentAgent extends Actor {
     }
     const assessed = await assessNotices(assessment, watched.cache, watched.shipment, channel.value.disruptions, evidence);
     const posted = await postDecisions(message => postBoard(start.relay, message), start.board ?? emptyBoardMemory, decideBoard(start.board ?? emptyBoardMemory, { shipment: assessed.shipment, situation: watched.state?.situation ?? null, now }));
+    if (this.state?.paused) return relaySuccess(this.state.shipment);
     this.state = { ...start, ready: true, shipment: assessed.shipment, assessmentCache: assessed.cache, cursor: channel.value.cursor, telemetry: watched.state, board: posted.memory, seen, checkedAt: now, synced: true, inbox: drainInbox(this.state?.inbox, heard) };
     return posted.failure ? { status: 'unavailable', message: posted.failure } : relaySuccess(this.state.shipment);
   }

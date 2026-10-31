@@ -49,11 +49,12 @@ export function createStartup({ tasksOf, limit, onReady = () => undefined, delay
     return settle(workspaceId, task, attempt + 1);
   };
   const ensure = (workspaceId: string): void => {
-    if (workspaces.has(workspaceId) || closed) return;
+    if (closed) return;
     const tasks = tasksOf(workspaceId);
-    const ready = new Set<string>();
+    const ready = workspaces.get(workspaceId)?.ready ?? new Set<string>();
     workspaces.set(workspaceId, { keys: tasks.map(task => task.key), ready });
     tasks.forEach(task => {
+      if (gates.has(`${workspaceId}\u0000${task.key}`)) return;
       const gate = (async () => {
         if (task.after) await gates.get(`${workspaceId}\u0000${task.after}`);
         await settle(workspaceId, task, 0);
@@ -68,7 +69,8 @@ export function createStartup({ tasksOf, limit, onReady = () => undefined, delay
     ensure,
     status: workspaceId => {
       const entry = workspaces.get(workspaceId);
-      return { ready: entry?.ready.size ?? 0, total: entry?.keys.length ?? 0, complete: entry !== undefined && entry.ready.size === entry.keys.length };
+      const count = entry?.keys.filter(key => entry.ready.has(key)).length ?? 0;
+      return { ready: count, total: entry?.keys.length ?? 0, complete: entry !== undefined && count === entry.keys.length };
     },
     isReady: (workspaceId, key) => workspaces.get(workspaceId)?.ready.has(key) ?? false,
     close: () => { closed = true; },

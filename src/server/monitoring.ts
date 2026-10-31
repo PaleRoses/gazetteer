@@ -1,3 +1,5 @@
+import { createOperations } from './operations';
+import type { Operation } from '../operations';
 import { AgentRelay } from '@agent-relay/sdk';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -8,7 +10,7 @@ import { buildIntelligence } from './intelligence';
 import { buildRouteMonitoring } from './routes';
 import { liveSweep, type Sweep } from './sources';
 import { securityReports } from './sources/security';
-import { demoShipments, ports } from '../domain';
+import { ports } from '../domain';
 import { relaySuccess, type Comment, type Dashboard, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import type { PortAgent, ShipmentAgent } from './actors';
 import { createBoardModel, recentBoard } from './board/model';
@@ -23,17 +25,19 @@ import { createHub, type Subscribe } from './realtime/sse';
 import { disruptionFrom, relayChannel, workspaceOfChannel } from './relay';
 
 type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume' | 'deliver' | 'queued'>;
-type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume' | 'deliver'>;
+type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume' | 'deliver' | 'pause'>;
 const portMethods = [
   { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' },
   { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'queued', result: 'value' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof PortClient })[];
 const shipmentMethods = [
+  { name: 'pause', result: 'void' },
   { name: 'initialize', result: 'value' }, { name: 'snapshot', result: 'value' }, { name: 'check', result: 'value' },
   { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof ShipmentClient })[];
 
 export type Monitoring = Readonly<{
+  operate(workspaceId: string, operation: Operation, author: string): Promise<RelayOutcome<Dashboard>>;
   dashboard(workspaceId: string): Promise<RelayOutcome<Dashboard>>;
   simulate(workspaceId: string, portId: PortId, delayHours: number): Promise<RelayOutcome<Dashboard>>;
   /** Push channel behind GET /api/workspaces/:id/events. */
@@ -48,6 +52,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const dataDir = resolve(project, options.dataDir ?? resolve(process.env.DATA_DIR ?? '.data', 'actors'));
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
+  const operations = createOperations(resolve(dataDir, '..', 'operations.sqlite'));
   const runtime = await startLocalActors({
     project, projectId: 'gazetteer', entrypoint: 'src/server/actors.ts',
     dataDir, apiKey: randomUUID(), quiet: true,
@@ -62,7 +67,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   // Restore native alarms once at process startup, never from dashboard polling.
   await options.workspaceIds.flatMap(workspaceId => [
     ...ports.map(value => () => port(workspaceId, value.id).resume()),
-    ...demoShipments().map(value => () => shipment(workspaceId, value.id).resume()),
+    ...operations.fleet(workspaceId).map(value => () => shipment(workspaceId, value.id).resume()),
   ]).reduce<Promise<void>>((previous, resume) => previous.then(resume), Promise.resolve()).catch(async error => {
     await runtime.stop();
     throw error;
@@ -77,18 +82,12 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const portKey = (id: PortId): string => `port:${id}`;
   const shipKey = (id: string): string => `ship:${id}`;
   /** The seeds ARE each shipment actor's initial state, so the dashboard may show them honestly before the actor is ready. */
-  const seedsByWorkspace = new Map<string, readonly Shipment[]>();
-  const seedsOf = (workspaceId: string): readonly Shipment[] => {
-    const known = seedsByWorkspace.get(workspaceId);
-    if (known) return known;
-    const seeds = demoShipments();
-    seedsByWorkspace.set(workspaceId, seeds);
-    return seeds;
-  };
+  const seedsOf = operations.fleet;
+  const revisionKey = (seed: Shipment): string => `${shipKey(seed.id)}:${seed.voyage?.updatedAt ?? 'seed'}`;
   const tasksOf = (workspaceId: string): readonly StartupTask[] => [
     { key: portKey('singapore'), run: async () => (await port(workspaceId, 'singapore').initialize(workspaceId, 'singapore', workspaceKey, true)).status === 'ok' },
     ...ports.filter(value => value.id !== 'singapore').map((value): StartupTask => ({ key: portKey(value.id), after: portKey('singapore'), run: async () => (await port(workspaceId, value.id).initialize(workspaceId, value.id, workspaceKey, false)).status === 'ok' })),
-    ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: shipKey(seed.id), after: portKey('singapore'), run: async () => (await shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey)).status === 'ok' })),
+    ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: revisionKey(seed), after: portKey('singapore'), run: async () => (await shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey)).status === 'ok' })),
   ];
   /** Simulated disruptions wait in their port actor's persisted state, not here: a restart cannot lose them. */
   const waitingOn = async (workspaceId: string): Promise<number> =>
@@ -120,7 +119,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     const status = startup.status(workspaceId);
     try {
       const retained = await Promise.all(seedsOf(workspaceId).map(async seed =>
-        (startup.isReady(workspaceId, shipKey(seed.id)) ? await shipment(workspaceId, seed.id).snapshot().catch(() => null) : null) ?? seed));
+        (startup.isReady(workspaceId, revisionKey(seed)) ? await shipment(workspaceId, seed.id).snapshot().catch(() => null) : null) ?? seed));
       const posts = board.board(workspaceId);
       const waiting = status.complete ? 0 : await waitingOn(workspaceId);
       const now = new Date();
@@ -129,7 +128,9 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       const notices = [...(coverage?.notices ?? []), ...(enabled ? securityReports(now) : [])];
       const intelligence = buildIntelligence(retained, notices, now, failures, enabled);
       const routes = buildRouteMonitoring(retained, notices, now, failures, enabled);
+      operations.observe(workspaceId, retained.filter(ship => startup.isReady(workspaceId, revisionKey(ship))));
       const built: Dashboard = {
+        operations: operations.read(workspaceId),
         intelligence: { ...intelligence, checkedAt: checkedAt ?? now.toISOString() },
         routes: routes.map(route => ({ ...route, intelligence: route.intelligence && { ...route.intelligence, checkedAt: checkedAt ?? now.toISOString() } })),
         shipments: retained, ports, ...(posts ? { board: posts, portStatus: portStatuses(ports, retained, posts) } : {}),
@@ -146,7 +147,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
 
   // A Relay notice is a doorbell: each ready shipment actor re-reads only past its persisted cursor, then the browser is pushed the result.
   const checkReadyShipments = (workspaceId: string): Promise<unknown> => Promise.all(seedsOf(workspaceId)
-    .filter(seed => startup.isReady(workspaceId, shipKey(seed.id)))
+    .filter(seed => startup.isReady(workspaceId, revisionKey(seed)))
     .map(seed => relayLimit(() => shipment(workspaceId, seed.id).check()).catch(() => undefined)));
   const refresh = createCoalescer(async workspaceId => {
     startup.ensure(workspaceId);
@@ -162,7 +163,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   /** One Relay stream per process feeds every actor by local RPC: actors read Relay only at start, never per alarm. */
   const fanOut = (workspaceId: string, batch: Inbox): Promise<unknown> => Promise.all([
     ...ports.filter(value => startup.isReady(workspaceId, portKey(value.id)) && batch.board.length > 0).map(value => port(workspaceId, value.id).deliver(batch).catch(() => undefined)),
-    ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, shipKey(seed.id))).map(seed => shipment(workspaceId, seed.id).deliver(batch).catch(() => undefined)),
+    ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, revisionKey(seed))).map(seed => shipment(workspaceId, seed.id).deliver(batch).catch(() => undefined)),
   ]);
   const checkPorts = (workspaceId: string, ids: readonly PortId[]): Promise<unknown> => Promise.all(ids
     .filter(id => startup.isReady(workspaceId, portKey(id)))
@@ -197,6 +198,22 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   if (live.status === 'unavailable') console.warn(live.message);
   return {
     dashboard,
+    operate: async (workspaceId, operation, author) => {
+      if (operation.action === 'save') {
+        // Capture the current ETA before an operator changes it, even on the first edit.
+        const before = await dashboard(workspaceId);
+        if (before.status === 'unavailable') return before;
+        const current = before.value.shipments.find(s => s.id === operation.vessel.id);
+        if (current && !startup.isReady(workspaceId, revisionKey(current))) return { status: 'unavailable', message: 'This vessel agent is still starting. Retry in a moment.' };
+        const saved = operations.save(workspaceId, operation.vessel, author, current);
+        operations.observe(workspaceId, [saved]);
+      } else if (operation.action === 'remove') {
+        operations.remove(workspaceId, operation.id);
+        await shipment(workspaceId, operation.id).pause();
+      } else if (operation.action === 'acknowledge') operations.acknowledge(workspaceId, operation.id);
+      else operations.setPreferences(workspaceId, operation.preferences);
+      return dashboard(workspaceId);
+    },
     simulate: async (workspaceId, portId, delayHours) => {
       startup.ensure(workspaceId);
       const id = randomUUID();
@@ -219,6 +236,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       startup.close();
       if (live.status === 'ok') await live.value.close();
       await runtime.stop();
+      operations.close();
     },
   };
 }

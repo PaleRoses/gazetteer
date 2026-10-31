@@ -1,3 +1,4 @@
+import type { Operations, VesselIdentity, Voyage } from './operations';
 import type { BoardMessage, PortStatus } from './board.js';
 export type Risk = 'on-track' | 'watch' | 'delayed';
 export type RelayOutcome<A> = Readonly<{ status: 'ok'; value: A }> | Readonly<{ status: 'unavailable'; message: string }>;
@@ -9,6 +10,7 @@ export type ReportContext = Readonly<{ kind: 'news' | 'advisory'; region: string
 export type Evidence = EvidenceBody & (Readonly<{ source: 'simulation' }> | Readonly<{ source: 'live'; provider: string; url: string; report?: ReportContext }>);
 export type Milestone = Readonly<{ label: string; at: string; status: 'complete' | 'current' | 'upcoming' }>;
 export type Shipment = Readonly<{
+  identity?: VesselIdentity; voyage?: Voyage;
   id: string; vessel: string; reference: string; cargo: string; containers: number;
   origin: PortId; destination: PortId; via: readonly PortId[];
   coordinates: readonly [number, number]; route: readonly (readonly [number, number])[];
@@ -23,6 +25,7 @@ export type Workspace = Readonly<{ id: string; name: string; role: 'owner' | 'me
 export type User = Readonly<{ id: string; name: string; email: string }>;
 export type Comment = Readonly<{ id: string; author: string; body: string; createdAt: string }>;
 export type Dashboard = Readonly<{
+  operations?: Operations;
   intelligence?: Intelligence;
   routes?: readonly MonitoredRoute[];
   shipments: readonly Shipment[]; ports: readonly Port[]; updatedAt: string;

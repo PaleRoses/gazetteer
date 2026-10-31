@@ -1,0 +1,105 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createOperations } from './operations';
+import { validImo, vesselInputSchema, type VesselInput } from '../operations';
+import type { AssessedShipment } from './assessment/apply';
+
+const dir = mkdtempSync(join(tmpdir(), 'gazetteer-operations-'));
+let stores: ReturnType<typeof createOperations>[] = [];
+afterEach(() => { stores.forEach(store => store.close()); stores = []; });
+process.on('exit', () => rmSync(dir, { recursive: true, force: true }));
+const store = (name: string = crypto.randomUUID()) => { const value = createOperations(join(dir, name)); stores.push(value); return value; };
+const at = '2026-10-31T10:00:00.000Z';
+const input: VesselInput = { vessel: 'Test vessel', identity: { imo: '9074729', mmsi: '' }, origin: 'jebel-ali', destination: 'singapore', via: [], departure: at, eta: '2026-11-07T10:00:00.000Z', status: 'planned' };
+
+describe('persistent fleet and operational alerts', () => {
+  test('validates identifiers, distinct ports and voyage times', () => {
+    expect(validImo('9074729')).toBe(true);
+    expect(validImo('9074728')).toBe(false);
+    expect(vesselInputSchema.safeParse(input).success).toBe(true);
+    expect(vesselInputSchema.safeParse({ ...input, identity: { imo: '', mmsi: '' } }).success).toBe(false);
+    expect(vesselInputSchema.safeParse({ ...input, destination: input.origin }).success).toBe(false);
+    expect(vesselInputSchema.safeParse({ ...input, eta: input.departure }).success).toBe(false);
+  });
+  test('fleet additions, edits, removals and settings survive reopen; workspaces are isolated', () => {
+    const first = store('restart.sqlite');
+    const added = first.save('a', input, 'Operator', undefined, at);
+    first.setPreferences('a', { etaHours: 12, stopHours: 4, staleHours: 8 });
+    expect(first.fleet('a')).toHaveLength(13);
+    expect(first.fleet('b')).toHaveLength(12);
+    expect(() => first.save('a', input, 'Operator')).toThrow('already in your fleet');
+    expect(() => first.save('b', { ...input, id: added.id }, 'Operator')).toThrow('not found');
+    first.close(); stores = [];
+    const second = store('restart.sqlite');
+    expect(second.fleet('a').find(s => s.id === added.id)?.voyage?.updatedBy).toBe('Operator');
+    expect(second.read('a').preferences.etaHours).toBe(12);
+    expect(() => second.remove('b', added.id)).toThrow('not found');
+    second.remove('a', added.id);
+    expect(second.fleet('a')).toHaveLength(12);
+    second.close(); stores = [];
+    expect(store('restart.sqlite').fleet('a').some(s => s.id === added.id)).toBe(false);
+  });
+  test('ETA alerts accumulate small movements, deduplicate polling, and retain acknowledgement across restarts', () => {
+    const ops = store('alerts.sqlite');
+    const ship = ops.save('a', input, 'Operator', undefined, at);
+    ops.observe('a', [ship], at);
+    const changed = { ...ship, eta: '2026-11-07T13:00:00.000Z' };
+    ops.observe('a', [changed], at);
+    expect(ops.read('a').alerts).toHaveLength(0);
+    const slipped = { ...ship, eta: '2026-11-07T17:00:00.000Z' };
+    ops.observe('a', [slipped], at);
+    ops.observe('a', [slipped], at);
+    expect(ops.read('a').alerts).toHaveLength(1);
+    const alert = ops.read('a').alerts[0]!;
+    expect(alert.kind).toBe('eta');
+    expect(() => ops.acknowledge('b', alert.id)).toThrow('not found');
+    ops.acknowledge('a', alert.id);
+    ops.close(); stores = [];
+    const restarted = store('alerts.sqlite');
+    restarted.observe('a', [slipped], at);
+    expect(restarted.read('a').alerts).toHaveLength(1);
+    expect(restarted.read('a').alerts[0]?.acknowledgedAt).not.toBeNull();
+  });
+  test('manual departure and arrival are reported once, never inferred just from elapsed ETA', () => {
+    const ops = store();
+    const ship = ops.save('a', input, 'Operator', undefined, at);
+    ops.observe('a', [ship], '2026-12-01T00:00:00.000Z');
+    expect(ops.read('a').alerts).toHaveLength(0);
+    const underway = ops.save('a', { ...input, id: ship.id, status: 'underway' }, 'Operator', ship, at);
+    ops.observe('a', [underway], at); ops.observe('a', [underway], at);
+    expect(ops.read('a').alerts[0]?.kind).toBe('departure');
+    expect(ops.read('a').alerts[0]?.source).toBe('operator');
+    const arrived = ops.save('a', { ...input, id: ship.id, status: 'arrived' }, 'Operator', underway, at);
+    ops.observe('a', [arrived], at);
+    expect(ops.read('a').alerts.map(a => a.kind)).toEqual(['arrival', 'departure']);
+  });
+  test('stop threshold alerts once per episode and status time survives unrelated edits', () => {
+    const ops = store();
+    const stopped = ops.save('a', { ...input, status: 'stopped' }, 'Operator', undefined, at);
+    ops.observe('a', [stopped], at);
+    ops.observe('a', [stopped], '2026-10-31T15:59:00.000Z');
+    expect(ops.read('a').alerts).toHaveLength(0);
+    ops.observe('a', [stopped], '2026-10-31T16:00:00.000Z');
+    ops.observe('a', [stopped], '2026-10-31T17:00:00.000Z');
+    expect(ops.read('a').alerts).toHaveLength(1);
+    const edit = ops.save('a', { ...input, id: stopped.id, status: 'stopped', vessel: 'New name' }, 'Operator', stopped, '2026-10-31T17:00:00.000Z');
+    expect(edit.voyage?.statusSince).toBe(at);
+  });
+  test('staleness requires a real telemetry timestamp, is labelled, and rearms only after recovery', () => {
+    const ops = store();
+    const ship = ops.save('a', input, 'Operator', undefined, at);
+    ops.observe('a', [ship], '2026-12-01T00:00:00.000Z');
+    expect(ops.read('a').alerts).toHaveLength(0);
+    const tracked: AssessedShipment = { ...ship, telemetry: { mmsi: '123456789', position: [55, 25], sogKnots: 0, cogDegrees: 0, navStatus: 0, observedAt: at, fetchedAt: at, provider: 'simulation', provenance: 'simulation' } };
+    ops.observe('a', [tracked], '2026-10-31T16:00:00.000Z');
+    ops.observe('a', [tracked], '2026-10-31T17:00:00.000Z');
+    expect(ops.read('a').alerts).toHaveLength(1);
+    expect(ops.read('a').alerts[0]?.source).toBe('simulation');
+    const recovered = { ...tracked, telemetry: { ...tracked.telemetry!, observedAt: '2026-10-31T17:00:00.000Z' } };
+    ops.observe('a', [recovered], '2026-10-31T17:00:00.000Z');
+    ops.observe('a', [recovered], '2026-11-01T01:00:00.000Z');
+    expect(ops.read('a').alerts).toHaveLength(2);
+  });
+});
