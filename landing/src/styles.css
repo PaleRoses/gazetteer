@@ -71,7 +71,7 @@ a:focus-visible { outline: 1px solid var(--mint); outline-offset: 4px; }
   align-items: center;
   gap: 24px;
   min-height: 100dvh;
-  padding: 96px 56px 48px 72px;
+  padding: 84px 48px 36px 64px;
 }
 
 .copy { position: relative; max-width: 760px; }
@@ -86,8 +86,8 @@ a:focus-visible { outline: 1px solid var(--mint); outline-offset: 4px; }
 }
 
 .kicker {
-  margin: 0 0 22px;
-  font-size: 14px;
+  margin: 0 0 16px;
+  font-size: 13px;
   font-weight: 500;
   letter-spacing: 4px;
   text-transform: uppercase;
@@ -96,9 +96,9 @@ a:focus-visible { outline: 1px solid var(--mint); outline-offset: 4px; }
 
 .headline {
   margin: 0;
-  font-size: clamp(52px, 6.6vw, 112px);
+  font-size: clamp(40px, 5.2vw, 76px);
   font-weight: 800;
-  line-height: 0.94;
+  line-height: 0.95;
   letter-spacing: -0.5px;
   text-transform: uppercase;
   color: var(--bone);
@@ -109,27 +109,27 @@ a:focus-visible { outline: 1px solid var(--mint); outline-offset: 4px; }
   display: flex;
   align-items: center;
   gap: 16px;
-  margin: 26px 0 26px;
-  font-size: clamp(22px, 2vw, 30px);
+  margin: 18px 0 18px;
+  font-size: clamp(20px, 1.8vw, 26px);
   font-weight: 400;
   color: var(--bone);
 }
 
 .body {
-  margin: 0 0 14px;
-  max-width: 600px;
-  font-size: 18px;
+  margin: 0 0 12px;
+  max-width: 34em;
+  font-size: 17px;
   line-height: 1.55;
   color: #b9b7ae;
 }
 
-.actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 30px; }
+.actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 22px; }
 
 .button {
   display: inline-flex;
   align-items: center;
-  height: 52px;
-  padding: 0 26px;
+  height: 48px;
+  padding: 0 24px;
   border-radius: 6px;
   font-size: 17px;
   font-weight: 500;
@@ -144,7 +144,7 @@ a:focus-visible { outline: 1px solid var(--mint); outline-offset: 4px; }
 .globe {
   position: relative;
   justify-self: center;
-  width: min(680px, 100%, calc(100dvh - 140px));
+  width: min(680px, 100%, calc(100dvh - 120px));
   aspect-ratio: 1;
   cursor: grab;
   touch-action: none;
@@ -228,9 +228,9 @@ a:focus-visible { outline: 1px solid var(--mint); outline-offset: 4px; }
 @keyframes port { 0%, 100% { opacity: 0.82; } 50% { opacity: 1; } }
 @keyframes ring { 0% { transform: scale(1); opacity: 0.7; } 70%, 100% { transform: scale(2.6); opacity: 0; } }
 
-@media (max-width: 960px) {
-  .hero { grid-template-columns: 1fr; padding: 88px 22px 40px; }
-  .globe { width: min(560px, 100%); }
+@media (max-width: 900px) {
+  .hero { grid-template-columns: 1fr; align-items: start; align-content: start; gap: 36px; padding: 76px 24px 40px; }
+  .globe { width: min(420px, 100%); }
   .top { padding: 20px 22px 0; }
   .nav { gap: 24px; font-size: 16px; }
 }
