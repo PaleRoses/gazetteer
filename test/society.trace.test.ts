@@ -7,6 +7,9 @@ import { cycles, runSociety, start } from './society-run';
 const assessments = (board: readonly BoardMessage[]): readonly ShipAssessment[] => board.filter((message): message is ShipAssessment => message.kind === 'ship.assessment');
 const bulletins = (board: readonly BoardMessage[]): readonly TrafficReport[] => board.filter((message): message is TrafficReport => message.kind === 'city.traffic');
 
+/** Each test runs the whole society for an hour of simulated time; a loaded machine needs more than bun's 5 s. */
+const patience = 120_000;
+
 describe('the society on a fake clock, model off', () => {
   test('a queue at Singapore is heard by the ships behind it, in order, each citing what it heard', async () => {
     const { board, ships } = await runSociety();
@@ -27,7 +30,7 @@ describe('the society on a fake clock, model off', () => {
     assessments(board).filter(item => item.method === 'rule-based').forEach(item => expect(citations(item).length).toBeGreaterThan(0));
     board.filter(message => message.kind === 'ship.eta' && message.citedEvidence).forEach(message => expect(citations(message).length).toBeGreaterThan(0));
     expect(ships.size).toBeGreaterThan(0);
-  });
+  }, patience);
 
   test('every ship message is spoken by the ship\'s own mind, and says so first', async () => {
     const { board, ships } = await runSociety();
@@ -38,7 +41,7 @@ describe('the society on a fake clock, model off', () => {
       expect(message.author.role === 'ship' ? message.author.agent : undefined).toBe(mind);
       expect(message.summary.startsWith(`${mind}, aboard ${message.author.role === 'ship' ? message.author.vessel : ''}`)).toBe(true);
     });
-  });
+  }, patience);
 
   test('what a ship posts, its risk, its method and its words, comes from one decision, and the last post is the ship\'s risk now', async () => {
     const { board, ships } = await runSociety();
@@ -54,7 +57,7 @@ describe('the society on a fake clock, model off', () => {
       const last = posted.filter(item => item.shipmentId === id).at(-1);
       if (last) expect(last.risk).toBe(state.shipment.risk);
     }
-  });
+  }, patience);
 
   test('the head of the queue is delayed by its own measured stop with its ETA untouched; the ship behind it is held by the queue ahead', async () => {
     const { board, ships } = await runSociety();
@@ -65,7 +68,7 @@ describe('the society on a fake clock, model off', () => {
     expect(ships.get(head!)!.shipment.eta).toBe(original.get(head!)!);
     expect(behind.length).toBeGreaterThan(0);
     behind.forEach(id => expect(Date.parse(ships.get(id!)!.shipment.eta)).toBeGreaterThan(Date.parse(original.get(id!)!)));
-  });
+  }, patience);
 
   test('the longest-waiting veteran (20 h at anchor, its ETA already past) is the head of the queue and waits for no one', async () => {
     const template = demoShipments(new Date(start)).find(item => item.destination === 'singapore' && demoScenarios[item.id]?.kind === 'queue')!;
@@ -74,7 +77,7 @@ describe('the society on a fake clock, model off', () => {
     const { board, ships } = await runSociety(() => ({ ...demoScenarios, 'gz-veteran': { kind: 'queue', offsetKm: 16, bearingDegrees: 120, holdHours: 40 } }), [veteran]);
     expect(board.some(message => message.kind === 'city.traffic' && message.anchored >= 3)).toBe(true);
     expect(ships.get('gz-veteran')!.shipment.eta).toBe(veteran.eta);
-  });
+  }, patience);
 
   test('a ship that leaves the queue says so, and the port stops counting it', async () => {
     const queue = Object.keys(demoScenarios).filter(id => demoScenarios[id]!.kind === 'queue');
@@ -86,13 +89,13 @@ describe('the society on a fake clock, model off', () => {
     expect(board.some(message => message.kind === 'ship.observation' && message.signals.length === 0)).toBe(true);
     const original = new Map(demoShipments(new Date(start)).map(shipment => [shipment.id, shipment.eta]));
     expect(ships.get('gz-1047')!.shipment.eta).toBe(original.get('gz-1047')!);
-  });
+  }, patience);
 
   test('when the signals clear, a ship returns to the risk it was assessed at', async () => {
     const troubled = await runSociety(cycle => cycle < cycles / 2 ? demoScenarios : { ...demoScenarios, 'gz-1051': underway, 'gz-1052': underway });
     const hobbled = await runSociety(() => demoScenarios);
     expect(hobbled.ships.get('gz-1052')!.shipment.risk).toBe('watch');
     expect(troubled.ships.get('gz-1052')!.shipment.risk).toBe('on-track');
-  });
+  }, patience);
 });
 
