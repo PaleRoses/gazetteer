@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { HazardReport, TrafficReport } from '../../src/core/board';
+import type { BoardMessage, HazardReport, TrafficReport } from '../../src/core/board';
 import { cityStatuses, latestReport, relevance } from '../../src/core/city';
 import { demoShipments } from '../../src/core/demo';
 import { ports } from '../../src/core/ports';
@@ -26,15 +26,30 @@ describe('cities', () => {
     const rotterdam = cityStatuses(ports, fleet, board).find(status => status.portId === 'rotterdam');
     expect(rotterdam).toMatchObject({
       risk: 'elevated', relevance: 1,
-      agents: [{ element: 'traffic', risk: 'normal', latest: 'traffic:rotterdam#2' }, { element: 'hazards', risk: 'elevated', latest: 'hazards:rotterdam#1' }],
+      agents: [{ element: 'traffic', risk: 'normal', latest: 'traffic:rotterdam#2' }, { element: 'hazards', risk: 'elevated', latest: 'hazards:rotterdam#1' }, { element: 'terminal' }, { element: 'haulier' }],
     });
     expect(latestReport(board, 'rotterdam', 'traffic')?.id).toBe('traffic:rotterdam#2');
   });
 
   test('another city\'s report is not this city\'s; a silent city is normal, and a city with no calls has no agents', () => {
     const statuses = cityStatuses(ports, fleet, [traffic('traffic:singapore#1', now.toISOString(), 'severe', 'singapore')]);
-    expect(statuses.find(status => status.portId === 'rotterdam')).toMatchObject({ risk: 'normal', agents: [{ element: 'traffic', latest: null }, { element: 'hazards', latest: null }] });
-    expect(statuses.find(status => status.portId === 'singapore')?.risk).toBe('severe');
+    expect(statuses.find(status => status.portId === 'rotterdam')).toMatchObject({ risk: 'normal', agents: [{ element: 'traffic', latest: null }, { element: 'hazards', latest: null }, { element: 'terminal', latest: null }, { element: 'haulier', latest: null }] });
+    expect(statuses.find(status => status.portId === 'singapore')).toMatchObject({ risk: 'severe', agents: [{ element: 'traffic' }, { element: 'hazards' }] });
     expect(statuses.find(status => status.portId === 'busan')).toMatchObject({ risk: 'normal', relevance: 0, agents: [] });
+  });
+
+  test('the desk and the haulier stationed at a city show their own latest post and grade no risk', () => {
+    const post = (id: string, at: string, author: BoardMessage['author']): BoardMessage => ({ ...traffic(id, at, 'severe'), author } as BoardMessage);
+    const board: readonly BoardMessage[] = [
+      traffic('traffic:rotterdam#1', '2026-10-31T18:00:00.000Z', 'elevated'),
+      post('offer:case-1:unload', '2026-10-31T18:30:00.000Z', { role: 'city', city: 'rotterdam', element: 'terminal' }),
+      post('offer:case-1:storage', '2026-10-31T19:30:00.000Z', { role: 'city', city: 'rotterdam', element: 'terminal' }),
+      post('offer:case-1:truck', '2026-10-31T19:00:00.000Z', { role: 'haulier', city: 'rotterdam' }),
+      post('offer:case-2:truck', '2026-10-31T19:45:00.000Z', { role: 'haulier', city: 'singapore' }),
+    ];
+    expect(cityStatuses(ports, fleet, board).find(status => status.portId === 'rotterdam')).toMatchObject({
+      risk: 'elevated',
+      agents: [{ element: 'traffic', risk: 'elevated' }, { element: 'hazards', risk: 'normal' }, { element: 'terminal', risk: null, latest: 'offer:case-1:storage' }, { element: 'haulier', risk: null, latest: 'offer:case-1:truck' }],
+    });
   });
 });
