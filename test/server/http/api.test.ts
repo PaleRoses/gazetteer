@@ -266,3 +266,12 @@ describe('demo access', () => {
     expect(await available('off', 'http://localhost:4310')).toEqual({ available: false });
   });
 });
+
+describe('origin check', () => {
+  test('a POST is accepted from the configured origin and from this machine, and refused from anywhere else', async () => {
+    const post = async (from: string): Promise<number> => (await createApi({ access: createAccess(':memory:'), monitoring: monitoringFixture, origin, demo: 'public' })(new Request(`${origin}/api/demo-session`, { method: 'POST', headers: { Origin: from, 'Content-Type': 'application/json' }, body: '{}' }))).status;
+    expect(await post(origin)).not.toBe(403);
+    expect(await post('http://localhost:4310')).not.toBe(403);
+    expect(await post('https://elsewhere.example')).toBe(403);
+  });
+});
