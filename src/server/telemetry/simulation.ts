@@ -18,7 +18,7 @@ export const underway: Scenario = { kind: 'underway' };
 
 /**
  * The stories, keyed to each ship's own baseline ETA so no clock state exists: a Singapore queue that builds over the first two
- * hours (five arrivals going to anchor); a Red Sea diversion (three ships on the Cape lane
+ * hours (five arrivals going to anchor) beside a veteran already 15 h at anchor; a Red Sea diversion (three ships on the Cape lane
  * against a Suez plan); a slow ship in the Indian Ocean; a ship silent in the mid-Pacific.
  */
 export const demoScenarios: Readonly<Record<string, Scenario>> = {
@@ -27,6 +27,7 @@ export const demoScenarios: Readonly<Record<string, Scenario>> = {
   'gz-1065': { kind: 'queue', offsetKm: 15, bearingDegrees: 230, holdHours: 30 },
   'gz-1067': { kind: 'queue', offsetKm: 21, bearingDegrees: 140, holdHours: 30 },
   'gz-1073': { kind: 'queue', offsetKm: 24, bearingDegrees: 180, holdHours: 30 },
+  'gz-1074': { kind: 'queue', offsetKm: 16, bearingDegrees: 120, holdHours: 40 },
   'gz-1055': { kind: 'diversion' },
   'gz-1057': { kind: 'diversion' },
   'gz-1058': { kind: 'diversion' },

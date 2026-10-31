@@ -50,9 +50,10 @@ describe('simulated telemetry', () => {
     });
   });
 
-  test('the queue builds in front of the user: arrivals going to anchor one after another over the first two hours', () => {
+  test('the queue builds in front of the user: one veteran at anchor, then arrivals going to anchor one after another over the first two hours', () => {
     const counts = [0, 0.3, 0.6, 1.0, 1.5, 2.1].map(hours => anchoredAt(at(hours)).length);
-    expect(counts[0]).toBe(0);
+    expect(counts[0]).toBe(1);
+    expect(Date.parse(byId(anchoredAt(at(0))[0]!).baselineEta)).toBeLessThanOrEqual(Date.parse(at(-12)));
     counts.slice(1).forEach((count, index) => expect(count).toBeGreaterThan(counts[index]!));
     expect(counts[counts.length - 1]).toBe(queueIds.length);
   });
