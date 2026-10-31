@@ -43,6 +43,9 @@ describe('asking a ship mind over HTTP', () => {
     expect((await api(post(path, stranger.cookie, { question: 'Why the delay?' }))).status).not.toBe(200);
     expect((await api(post(path, owner.cookie, { question: '' }))).status).toBe(400);
     expect((await api(post(path, owner.cookie, { question: 'x'.repeat(501) }))).status).toBe(400);
+    const unknown = await api(post(`/api/workspaces/${owner.workspaces[0]!.id}/shipments/ghost-ship/ask`, owner.cookie, { question: 'Why the delay?' }));
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toEqual({ error: 'Ship not found' });
     expect(asked).toEqual([`${meridian.id}:Why the delay?`]);
     access.close();
   });
