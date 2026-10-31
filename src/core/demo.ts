@@ -15,8 +15,8 @@ type Place = Readonly<{ progress: number }> | Readonly<{ arrivalHours: number }>
 type Voyage = Pick<Shipment, 'id' | 'vessel' | 'cargo' | 'containers' | 'origin' | 'destination'> & Readonly<{ knots: number; place: Place }>;
 
 const voyages: readonly Voyage[] = [
-  { id: 'gz-1046', vessel: 'Orient Harbour', cargo: 'Semiconductor equipment', containers: 28, origin: 'shanghai', destination: 'singapore', knots: 18, place: { arrivalHours: 30 } },
-  { id: 'gz-1047', vessel: 'Cape Meridian', cargo: 'Packaged chemicals', containers: 16, origin: 'rotterdam', destination: 'singapore', knots: 17, place: { arrivalHours: 40 } },
+  { id: 'gz-1046', vessel: 'Orient Harbour', cargo: 'Semiconductor equipment', containers: 28, origin: 'shanghai', destination: 'singapore', knots: 18, place: { arrivalHours: 0.2 } },
+  { id: 'gz-1047', vessel: 'Cape Meridian', cargo: 'Packaged chemicals', containers: 16, origin: 'rotterdam', destination: 'singapore', knots: 17, place: { arrivalHours: 0.5 } },
   { id: 'gz-1048', vessel: 'Baltic Dawn', cargo: 'Furniture & homeware', containers: 22, origin: 'singapore', destination: 'rotterdam', knots: 17, place: { arrivalHours: 40 } },
   { id: 'gz-1049', vessel: 'North Sea Voyager', cargo: 'Apparel', containers: 30, origin: 'shanghai', destination: 'rotterdam', knots: 17, place: { arrivalHours: 30 } },
   { id: 'gz-1050', vessel: 'Nordic Pioneer', cargo: 'Almonds & dried fruit', containers: 40, origin: 'los-angeles', destination: 'rotterdam', knots: 16, place: { arrivalHours: 44 } },
@@ -34,13 +34,14 @@ const voyages: readonly Voyage[] = [
   { id: 'gz-1062', vessel: 'Atlantic Jade', cargo: 'Toys & games', containers: 28, origin: 'shanghai', destination: 'new-york-new-jersey', knots: 17, place: { progress: 0.6 } },
   { id: 'gz-1063', vessel: 'Savannah Sunrise', cargo: 'Home appliances', containers: 24, origin: 'ningbo-zhoushan', destination: 'savannah', knots: 17, place: { progress: 0.45 } },
   { id: 'gz-1064', vessel: 'Hallyeo Pioneer', cargo: 'Tyres', containers: 18, origin: 'busan', destination: 'savannah', knots: 17, place: { progress: 0.8 } },
-  { id: 'gz-1065', vessel: 'Malacca Courier', cargo: 'Palm oil derivatives', containers: 10, origin: 'port-klang', destination: 'singapore', knots: 14, place: { progress: 0.3 } },
+  { id: 'gz-1065', vessel: 'Malacca Courier', cargo: 'Palm oil derivatives', containers: 10, origin: 'port-klang', destination: 'singapore', knots: 15, place: { arrivalHours: 0.9 } },
   { id: 'gz-1066', vessel: 'Serangoon Star', cargo: 'Electronic components', containers: 14, origin: 'singapore', destination: 'colombo', knots: 16, place: { progress: 0.5 } },
-  { id: 'gz-1067', vessel: 'Dune Navigator', cargo: 'Aluminium ingots', containers: 20, origin: 'jebel-ali', destination: 'singapore', knots: 17, place: { progress: 0.5 } },
+  { id: 'gz-1067', vessel: 'Dune Navigator', cargo: 'Aluminium ingots', containers: 20, origin: 'jebel-ali', destination: 'singapore', knots: 17, place: { arrivalHours: 1.4 } },
   { id: 'gz-1068', vessel: 'Huangpu Spirit', cargo: 'Industrial machinery', containers: 22, origin: 'singapore', destination: 'shanghai', knots: 17, place: { progress: 0.5 } },
   { id: 'gz-1069', vessel: 'Maas Navigator', cargo: 'Specialty chemicals', containers: 18, origin: 'rotterdam', destination: 'new-york-new-jersey', knots: 17, place: { progress: 0.5 } },
   { id: 'gz-1070', vessel: 'Hellenic Star', cargo: 'Marble & stone', containers: 12, origin: 'piraeus', destination: 'new-york-new-jersey', knots: 16, place: { progress: 0.6 } },
   { id: 'gz-1071', vessel: 'Paulista Grace', cargo: 'Coffee', containers: 30, origin: 'santos', destination: 'rotterdam', knots: 16, place: { progress: 0.5 } },
+  { id: 'gz-1073', vessel: 'Haeundae Breeze', cargo: 'Electronic displays', containers: 20, origin: 'busan', destination: 'singapore', knots: 18, place: { arrivalHours: 2 } },
   { id: 'gz-1072', vessel: 'Liberty Southern', cargo: 'Agricultural machinery', containers: 14, origin: 'new-york-new-jersey', destination: 'santos', knots: 16, place: { progress: 0.7 } },
 ];
 

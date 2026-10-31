@@ -18,7 +18,9 @@ const plan = (shipment: Shipment) => ({ route: voyageRoute(shipment) ?? shipment
 const signalsOf = (shipment: Shipment, now: string, scenario: Scenario = demoScenarios[shipment.id] ?? underway): readonly string[] =>
   observe(plan(shipment), simulate(shipment, scenario, now), now).signals.map(signal => signal.kind);
 const byId = (id: string): Shipment => fleet.find(shipment => shipment.id === id)!;
-const anchoredIds = Object.entries(demoScenarios).filter(([, scenario]) => scenario.kind === 'anchored').map(([id]) => id);
+const queueIds = Object.entries(demoScenarios).filter(([, scenario]) => scenario.kind === 'queue').map(([id]) => id);
+const diversionIds = Object.entries(demoScenarios).filter(([, scenario]) => scenario.kind === 'diversion').map(([id]) => id);
+const anchoredAt = (now: string): readonly string[] => queueIds.filter(id => simulate(byId(id), demoScenarios[id]!, now).navStatus === 1);
 
 describe('simulated telemetry', () => {
   test('is a pure function of shipment, scenario and time, and says what it is', () => {
@@ -35,22 +37,45 @@ describe('simulated telemetry', () => {
     expect(fleet.map(ship => simulate(ship, demoScenarios[ship.id] ?? underway, at(5)))).toEqual(again.map(ship => simulate(ship, demoScenarios[ship.id] ?? underway, at(5))));
   });
 
-  test('anchored ships sit 10 to 25 km off Singapore, stopped, and trip stationary-outside-port', () => {
+  test('queued ships anchor 10 to 25 km off Singapore, stopped, and trip stationary-outside-port', () => {
     const singapore = ports.find(port => port.id === 'singapore')!.coordinates;
-    expect(anchoredIds.length).toBeGreaterThanOrEqual(2);
-    anchoredIds.forEach(id => {
-      const ship = byId(id);
-      const fix = simulate(ship, demoScenarios[id]!, at(1));
+    expect(anchoredAt(at(3)).toSorted()).toEqual(queueIds.toSorted());
+    queueIds.forEach(id => {
+      const fix = simulate(byId(id), demoScenarios[id]!, at(3));
       const km = distanceKm(fix.position, singapore);
       expect(km).toBeGreaterThanOrEqual(10);
       expect(km).toBeLessThanOrEqual(25);
       expect(fix).toMatchObject({ sogKnots: 0.1, navStatus: 1 });
-      expect(signalsOf(ship, at(1))).toEqual(['stationary-outside-port']);
+      expect(signalsOf(byId(id), at(3))).toEqual(['stationary-outside-port']);
+    });
+  });
+
+  test('the queue builds in front of the user: arrivals going to anchor one after another over the first two hours', () => {
+    const counts = [0, 0.3, 0.6, 1.0, 1.5, 2.1].map(hours => anchoredAt(at(hours)).length);
+    expect(counts[0]).toBe(0);
+    counts.slice(1).forEach((count, index) => expect(count).toBeGreaterThan(counts[index]!));
+    expect(counts[counts.length - 1]).toBe(queueIds.length);
+  });
+
+  test('a queued ship berths after its hold: moored at the port and silent', () => {
+    const ship = byId('gz-1046');
+    const scenario = demoScenarios['gz-1046']!;
+    const after = new Date(Date.parse(ship.baselineEta) + (scenario.kind === 'queue' ? scenario.holdHours + 1 : 0) * 3_600_000).toISOString();
+    expect(simulate(ship, scenario, after)).toMatchObject({ navStatus: 5, sogKnots: 0 });
+    expect(signalsOf(ship, after)).toEqual([]);
+  });
+
+  test('the Red Sea diversion: on the plan at first, off it within the first three hours, never back', () => {
+    expect(diversionIds.length).toBeGreaterThanOrEqual(3);
+    diversionIds.forEach(id => {
+      expect({ id, signals: signalsOf(byId(id), at(0)) }).toEqual({ id, signals: [] });
+      expect(signalsOf(byId(id), at(3))).toContain('off-route');
+      expect(signalsOf(byId(id), at(12))).toContain('off-route');
     });
   });
 
   test('the moving ships raise nothing as the hours pass; the slow one and the dark one raise exactly their own signal', () => {
-    const special = new Set([...anchoredIds, 'gz-1051', 'gz-1052']);
+    const special = new Set([...queueIds, ...diversionIds, 'gz-1051', 'gz-1052']);
     const quiet = fleet.filter(ship => !special.has(ship.id));
     expect(quiet.length).toBeGreaterThanOrEqual(6);
     [0, 3, 12, 24].forEach(hours => quiet.forEach(ship => expect({ id: ship.id, hours, signals: signalsOf(ship, at(hours)) }).toEqual({ id: ship.id, hours, signals: [] })));
@@ -102,7 +127,7 @@ describe('the society from simulated observations', () => {
     const story = await board(demoScenarios);
     const singapore = risk(story, 'singapore');
     expect(singapore.risk).toBe('severe');
-    expect(singapore.anchoredShips.toSorted()).toEqual(anchoredIds.toSorted());
+    expect(singapore.anchoredShips.toSorted()).toEqual(anchoredAt(now).toSorted());
     const calm = risk(await board({}), 'singapore');
     expect(calm.anchored).toBe(0);
     expect(['normal', 'elevated']).toContain(calm.risk);
@@ -115,9 +140,27 @@ describe('the society from simulated observations', () => {
     expect(risk(story, 'los-angeles').risk).toBe('normal');
   });
 
+  test('the history lets a ship already 15 h at anchor show its loiter on its very first watch', async () => {
+    const veteran = byId('gz-1046');
+    const atAnchor: Scenario = { kind: 'queue', offsetKm: 16, bearingDegrees: 120, holdHours: 40 };
+    const seasoned: Shipment = { ...veteran, baselineEta: at(-14), eta: at(-14) };
+    const watch = (source: TelemetrySource) => watchShipment({ source, assess: { model: null, modelId: 'none', now: () => now }, now: () => now }, seasoned, `sim:${veteran.id}`, emptyTelemetryState, {});
+    const loiter = async (source: TelemetrySource) => (await watch(source)).shipment.signals?.find(signal => signal.kind === 'stationary-outside-port')?.measured.loiteringHours ?? null;
+    const fed = simulationSource(seasoned, { [veteran.id]: atAnchor }, () => now);
+    const withHistory = await loiter(fed);
+    expect(withHistory).toBeGreaterThanOrEqual(12);
+    const latestOnly: TelemetrySource = async key => { const outcome = await fed(key); return outcome.status === 'ok' ? { status: 'ok', value: outcome.value } : outcome; };
+    expect((await loiter(latestOnly)) ?? 0).toBeLessThan(12);
+    const outcome = await fed(`sim:${veteran.id}`);
+    expect(outcome.status === 'ok' && outcome.history?.every(fix => fix.provenance === 'simulation' && fix.provider === 'simulation')).toBe(true);
+  });
+
   test('the dark and slow ships also speak on the board, labelled as simulation', async () => {
     const observations = (await board(demoScenarios)).filter((message): message is ShipObservation => message.kind === 'ship.observation');
-    expect(observations.map(message => message.signals).flat().sort()).toEqual(['ais-dark', 'slow-steaming', 'stationary-outside-port', 'stationary-outside-port']);
+    const kinds = (id: string) => observations.filter(message => message.shipmentId === id).flatMap(message => message.signals);
+    expect(kinds('gz-1051')).toEqual(['slow-steaming']);
+    expect(kinds('gz-1052')).toEqual(['ais-dark']);
+    anchoredAt(now).forEach(id => expect(kinds(id)).toEqual(['stationary-outside-port']));
     expect(new Set(observations.map(message => message.provider))).toEqual(new Set(['simulation']));
   });
 });

@@ -52,7 +52,8 @@ describe('the society on a fake clock, model off', () => {
   });
 
   test('a ship that leaves the queue says so, and the port stops counting it', async () => {
-    const leaves = (cycle: number) => cycle < cycles / 2 ? demoScenarios : { ...demoScenarios, 'gz-1046': underway, 'gz-1047': underway };
+    const queue = Object.keys(demoScenarios).filter(id => demoScenarios[id]!.kind === 'queue');
+    const leaves = (cycle: number) => cycle < cycles * 3 / 4 ? demoScenarios : { ...demoScenarios, ...Object.fromEntries(queue.map(id => [id, underway])) };
     const { board, ships } = await runSociety(leaves);
     const singapore = bulletins(board).filter(item => item.portId === 'singapore');
     expect(Math.max(...singapore.map(item => item.anchored))).toBeGreaterThanOrEqual(2);
