@@ -1,6 +1,6 @@
 import { Actor, Persisted } from 'durable-actors';
-import { assessDisruption } from '../domain';
 import { relaySuccess, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
+import { assessmentFromEnv, assessNotices, type AssessmentCache } from './assessment';
 import { attemptRelay, joinChannel, publishDisruption, readDisruptions, registerParticipant, relayChannel, type RelayIdentity } from './relay';
 
 const checkIntervalMs = 60_000;
@@ -8,7 +8,8 @@ type PortState = Readonly<{
   portId: PortId; relay: RelayIdentity; ready: boolean;
   outbox: readonly Disruption[]; published: readonly string[]; checkedAt: string | null;
 }>;
-type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null }>;
+type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache }>;
+const assessment = assessmentFromEnv(process.env);
 const connect = (state: Readonly<{ relay: RelayIdentity; ready: boolean }>, createChannel: boolean): Promise<RelayOutcome<null>> =>
   state.ready ? Promise.resolve(relaySuccess(null)) : attemptRelay(async () => {
     await joinChannel(state.relay, createChannel);
@@ -108,7 +109,8 @@ export class ShipmentAgent extends Actor {
     if (connection.status === 'unavailable') return connection;
     const replay = await attemptRelay(() => readDisruptions(current.relay), 'Agent Relay history is unavailable. Monitoring will retry without changing the shipment.');
     if (replay.status === 'unavailable') return replay;
-    this.state = { ...current, ready: true, shipment: replay.value.reduce(assessDisruption, current.shipment), checkedAt: new Date().toISOString() };
+    const assessed = await assessNotices(assessment, current.assessmentCache ?? {}, current.shipment, replay.value);
+    this.state = { ...current, ready: true, shipment: assessed.shipment, assessmentCache: assessed.cache, checkedAt: new Date().toISOString() };
     return relaySuccess(this.state.shipment);
   }
 
