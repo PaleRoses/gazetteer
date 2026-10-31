@@ -3,7 +3,7 @@ import { demoShipments } from '../../src/core/demo';
 import { ports } from '../../src/core/ports';
 import type { PortBulletin, PortStatus, TrafficReport } from '../../src/core/board';
 import { distanceKm, routeLengthKm, voyageRoute } from '../../src/core/routes';
-import { boundsOf, graticule, portFeatures, routeLayers, vesselView, vesselViews } from '../../src/client/map-model';
+import { boundsOf, cameraFor, fleetPorts, regions, portFeatures, routeLayers, statusLine, vesselView, vesselViews } from '../../src/client/map-model';
 
 const now = new Date('2026-10-31T12:00:00Z');
 const shipments = demoShipments(now);
@@ -98,32 +98,49 @@ describe('vessel views', () => {
 
 describe('route layers', () => {
   const views = vesselViews(shipments, now.getTime());
-  test('every voyage retains its risk-coloured faint lane while the selected voyage gets a split overlay', () => {
+  test('the selected voyage splits at the ship: the sailed leg ends where the remaining leg begins', () => {
     const layers = routeLayers(views, 'gz-1043');
-    expect(layers.lanes.features.map(feature => feature.properties?.id)).toEqual(views.map(view => view.id));
-    expect(layers.lanes.features.map(feature => feature.properties?.risk)).toEqual(views.map(view => view.risk));
     const sailed = need(layers.sailed.features[0]).geometry.coordinates;
     const ahead = need(layers.ahead.features[0]).geometry.coordinates;
     expect(sailed[sailed.length - 1]).toEqual(ahead[0]);
+    expect(need(ahead[ahead.length - 1])).toEqual([...need(need(views.find(view => view.id === 'gz-1043')).route.at(-1))]);
   });
 
-  test('with nothing selected every voyage is a faint lane', () => {
+  test('with nothing selected no voyage is drawn', () => {
     const layers = routeLayers(views, undefined);
-    expect(layers.lanes.features.length).toBe(views.length);
     expect(layers.sailed.features).toEqual([]);
+    expect(layers.ahead.features).toEqual([]);
+  });
+});
+
+describe('fleet cities and status', () => {
+  test('only cities a voyage touches are kept, calls included', () => {
+    const voyage = { ...shanghaiLosAngeles, origin: 'shanghai' as const, via: ['busan' as const], destination: 'singapore' as const };
+    expect(fleetPorts(portFeatures(ports), [voyage]).features.map(feature => feature.id).sort()).toEqual(['busan', 'shanghai', 'singapore']);
+    expect(fleetPorts(portFeatures(ports), []).features).toEqual([]);
+  });
+
+  test('a delay is stated in hours only when there is one', () => {
+    expect(statusLine({ risk: 'delayed', delayHours: 6 })).toBe('Delayed · +6 h');
+    expect(statusLine({ risk: 'watch', delayHours: 0 })).toBe('Watch');
+    expect(statusLine({ risk: 'on-track', delayHours: 3 })).toBe('On track');
   });
 });
 
 describe('geometry helpers', () => {
+  test('the whole world fits a wide viewport across and a tall one down, never wider than the screen', () => {
+    const world = need(regions.find(region => region.id === 'world')).bounds;
+    const wide = cameraFor(world, 1206, 691, 25);
+    expect(512 * 2 ** wide.zoom).toBeCloseTo(1156, 6);
+    const tall = cameraFor(world, 600, 300, 25);
+    expect(512 * 2 ** tall.zoom).toBeLessThan(550);
+    expect(cameraFor([-10, -10, 10, 10], 800, 800, 0).center).toEqual([0, expect.closeTo(0, 9)]);
+  });
+
   test('bounds of a date-line route extend beyond 180 so the camera frames the Pacific', () => {
     const bounds = need(boundsOf(need(voyageRoute(shanghaiLosAngeles))));
     expect(bounds[2] - bounds[0]).toBeLessThan(150);
     expect(bounds[2]).toBeGreaterThan(180);
     expect(boundsOf([])).toBeUndefined();
-  });
-  test('graticule lines are meridians and parallels', () => {
-    const lines = graticule(30).features;
-    expect(lines.some(feature => feature.properties?.id === 'lat0')).toBe(true);
-    expect(lines.some(feature => feature.properties?.id === 'lon-180')).toBe(true);
   });
 });
