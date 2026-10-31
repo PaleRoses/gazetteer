@@ -23,3 +23,31 @@ export async function flush(
   }, Promise.resolve(null));
   return { remaining: queue.filter(message => !sent.has(message.id)), failure };
 }
+
+/** What an actor hands the server to write to Relay on its behalf: its identity and everything not yet acknowledged. */
+export type Outgoing<D> = Readonly<{ relay: Readonly<{ token: string; channel: string }>; board: readonly BoardMessage[]; disruptions: readonly D[] }>;
+
+/** What remains after `sent` ids were acknowledged by Relay. */
+export const without = <A extends Readonly<{ id: string }>>(queue: readonly A[], sent: readonly string[]): readonly A[] => queue.filter(item => !sent.includes(item.id));
+
+export type Transmitted = Readonly<{ board: readonly string[]; disruptions: readonly string[]; failure: string | null }>;
+
+/**
+ * Writes an actor's outgoing queue to Relay in order, disruptions before board posts, stopping at the first failure.
+ * One implementation for the server's background writer and the actor's alarm.
+ */
+export async function transmit<D extends Readonly<{ id: string }>>(
+  outgoing: Outgoing<D>,
+  effects: Readonly<{ post(message: BoardMessage): Promise<RelayOutcome<string>>; publish(disruption: D): Promise<RelayOutcome<unknown>> }>,
+): Promise<Transmitted> {
+  const sent: string[] = [];
+  const failure = await outgoing.disruptions.reduce<Promise<string | null>>(async (previous, disruption) => {
+    if (await previous !== null) return previous;
+    const result = await effects.publish(disruption).catch((error: unknown): RelayOutcome<unknown> => ({ status: 'unavailable', message: describe(error) }));
+    if (result.status === 'ok') sent.push(disruption.id);
+    return result.status === 'ok' ? null : result.message;
+  }, Promise.resolve(null));
+  if (failure !== null) return { board: [], disruptions: sent, failure };
+  const posted = await flush(effects.post, outgoing.board);
+  return { board: outgoing.board.filter(message => !posted.remaining.some(rest => rest.id === message.id)).map(message => message.id), disruptions: sent, failure: posted.failure };
+}

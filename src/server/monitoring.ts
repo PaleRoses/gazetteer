@@ -8,7 +8,8 @@ import { demoShipments, ports } from '../domain';
 import { relaySuccess, type Comment, type Dashboard, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import type { PortAgent, ShipmentAgent } from './actors';
 import { createBoardModel, recentBoard } from './board/model';
-import { boardFrom } from './board/transport';
+import { boardFrom, postBoard } from './board/transport';
+import { transmit } from './realtime/outbox';
 import { portStatuses } from './port/status';
 import { concerns } from '../board';
 import { createCoalescer } from './realtime/coalesce';
@@ -16,18 +17,18 @@ import type { Inbox } from './realtime/inbox';
 import { createLimiter, createStartup, type StartupTask } from './realtime/startup';
 import { fileSeqStore, startRelayLive } from './realtime/live';
 import { createHub, type Subscribe } from './realtime/sse';
-import { disruptionFrom, relayChannel, workspaceOfChannel } from './relay';
+import { attemptRelay, disruptionFrom, publishDisruption, relayChannel, workspaceOfChannel } from './relay';
 
-type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume' | 'deliver' | 'queued' | 'unpublished' | 'publish'>;
-type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'publish'>;
+type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume' | 'deliver' | 'queued' | 'unpublished' | 'acknowledge'>;
+type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
 const portMethods = [
   { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' },
   { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'queued', result: 'value' },
-  { name: 'unpublished', result: 'value' }, { name: 'publish', result: 'value' },
+  { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof PortClient })[];
 const shipmentMethods = [
   { name: 'initialize', result: 'value' }, { name: 'snapshot', result: 'value' }, { name: 'check', result: 'value' },
-  { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'unpublished', result: 'value' }, { name: 'publish', result: 'value' },
+  { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof ShipmentClient })[];
 
 export type Monitoring = Readonly<{
@@ -144,21 +145,38 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     ]);
     return count;
   };
-  /** Writing to Relay is background work on the shared slots; whatever fails stays in the actor's durable outbox for the next attempt. */
-  const publishPort = createCoalescer(key => { const [workspaceId, id] = key.split('\u0000'); return relayLimit(() => port(workspaceId as string, id as PortId).publish()).then(() => undefined); });
-  const publishShip = createCoalescer(key => { const [workspaceId, id] = key.split('\u0000'); return relayLimit(() => shipment(workspaceId as string, id as string).publish()).then(() => undefined); });
+  /**
+   * Writing to Relay is background work on the shared slots, done here and not inside the actor: an actor awaiting Relay would hold
+   * its own queue (deliver, check) for as long as Relay takes. Whatever fails stays in the actor's durable outbox for the next attempt.
+   */
+  const publishPort = createCoalescer(async key => {
+    const [workspaceId, id] = key.split('\u0000') as [string, PortId];
+    const outgoing = await port(workspaceId, id).unpublished();
+    if (!outgoing || outgoing.board.length + outgoing.disruptions.length === 0) return;
+    const sent = await relayLimit(() => transmit(outgoing, {
+      post: message => postBoard(outgoing.relay, message),
+      publish: disruption => attemptRelay(() => publishDisruption(outgoing.relay, disruption), 'Agent Relay publication is unavailable.'),
+    }));
+    await port(workspaceId, id).acknowledge({ board: sent.board, disruptions: sent.disruptions });
+  });
+  const publishShip = createCoalescer(async key => {
+    const [workspaceId, id] = key.split('\u0000') as [string, string];
+    const outgoing = await shipment(workspaceId, id).unpublished();
+    if (!outgoing || outgoing.board.length === 0) return;
+    const sent = await relayLimit(() => transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) }));
+    await shipment(workspaceId, id).acknowledge(sent.board);
+  });
   const shipStep = async (workspaceId: string, id: string): Promise<number> => {
-    const t = Date.now();
     await shipment(workspaceId, id).check().catch(() => undefined);
-    console.error('TIMING ship.check', id, Date.now() - t);
-    const t2 = Date.now(); const echoed = await absorb(workspaceId, { board: await shipment(workspaceId, id).unpublished().catch(() => []), disruptions: [] });
-    console.error('TIMING ship.echo', id, Date.now() - t2);
+    const outgoing = await shipment(workspaceId, id).unpublished().catch(() => null);
+    const echoed = await absorb(workspaceId, { board: outgoing?.board ?? [], disruptions: [] });
     void publishShip(`${workspaceId}\u0000${id}`);
     return echoed;
   };
   const portStep = async (workspaceId: string, id: PortId): Promise<number> => {
     await port(workspaceId, id).check().catch(() => undefined);
-    const echoed = await absorb(workspaceId, await port(workspaceId, id).unpublished().catch(() => ({ board: [], disruptions: [] })));
+    const outgoing = await port(workspaceId, id).unpublished().catch(() => null);
+    const echoed = await absorb(workspaceId, { board: outgoing?.board ?? [], disruptions: outgoing?.disruptions ?? [] });
     void publishPort(`${workspaceId}\u0000${id}`);
     return echoed;
   };
@@ -220,10 +238,9 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
         id, portId, delayHours,
         evidence: { id, source: 'simulation', title: 'Simulated port congestion', detail: `Synthetic terminal bulletin: a ${delayHours}-hour berth delay at ${ports.find(value => value.id === portId)?.name ?? portId}. Deterministic demo assessment; not live intelligence.`, observedAt: new Date().toISOString() },
       };
-      const T = Date.now(); const lap = (m: string) => console.error('TIMING', m, Date.now() - T);
-      await port(workspaceId, portId).simulate(disruption); lap('port.simulate');
+      await port(workspaceId, portId).simulate(disruption);
       if (!startup.isReady(workspaceId, portKey(portId))) return dashboard(workspaceId);
-      await absorb(workspaceId, { board: [], disruptions: [disruption] }); lap('absorb');
+      await absorb(workspaceId, { board: [], disruptions: [disruption] });
       void publishPort(`${workspaceId}\u0000${portId}`);
       await Promise.race([refresh(workspaceId), new Promise(done => setTimeout(done, simulateWaitMs))]);
       return dashboard(workspaceId);

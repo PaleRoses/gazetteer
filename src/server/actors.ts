@@ -13,7 +13,7 @@ import { toDisruption } from './sources/disruption';
 import { demoEnabled, telemetryBinding } from './telemetry/simulation';
 import type { Cursor } from './realtime/cursor';
 import { drainInbox, emptyInbox, mergeInbox, type Inbox } from './realtime/inbox';
-import { enqueue, flush } from './realtime/outbox';
+import { enqueue, transmit, without, type Outgoing } from './realtime/outbox';
 import { attemptRelay, joinChannel, publishDisruption, readDisruptionsSince, registerParticipant, relayChannel, type RelayIdentity } from './relay';
 
 const checkIntervalMs = 60_000;
@@ -133,28 +133,37 @@ export class PortAgent extends Actor {
     return watched.outcome;
   }
 
-  /** What this port has decided or been asked to say that Relay has not acknowledged yet, so the server can echo it locally. */
-  async unpublished(): Promise<Readonly<{ board: readonly BoardMessage[]; disruptions: readonly Disruption[] }>> {
-    return { board: this.state?.boardOutbox ?? [], disruptions: this.state?.outbox ?? [] };
+  /**
+   * What this port has decided or been asked to say that Relay has not acknowledged yet. The server echoes it locally at once and
+   * writes it to Relay itself: an actor that awaited Relay would hold its own queue (deliver, check) for as long as Relay takes.
+   */
+  async unpublished(): Promise<Outgoing<Disruption> | null> {
+    return this.state ? { relay: this.state.relay, board: this.state.boardOutbox ?? [], disruptions: this.state.outbox } : null;
   }
 
-  /** Writes to Relay: disruptions first, then board posts, each acknowledged before it leaves the outbox. */
+  /** Relay acknowledged these: board posts leave the outbox, disruptions move to `published`. */
+  async acknowledge(sent: Readonly<{ board: readonly string[]; disruptions: readonly string[] }>): Promise<void> {
+    if (!this.state) return;
+    const done = this.state.outbox.filter(event => sent.disruptions.includes(event.id));
+    this.state = {
+      ...this.state, ready: true, checkedAt: new Date().toISOString(),
+      outbox: without(this.state.outbox, sent.disruptions), published: [...this.state.published, ...done.map(event => event.id)],
+      boardOutbox: without(this.state.boardOutbox ?? [], sent.board),
+    };
+  }
+
+  /** The alarm's own write path, for when no server is driving: the same steps the server performs, through the same `transmit`. */
   async publish(): Promise<RelayOutcome<null>> {
-    if (!this.state) return { status: 'unavailable', message: 'Port monitoring has not been initialized.' };
-    const current = this.state;
-    const connection = await connect(current, current.portId === 'singapore');
+    const outgoing = await this.unpublished();
+    if (!outgoing || !this.state) return { status: 'unavailable', message: 'Port monitoring has not been initialized.' };
+    const connection = await connect(this.state, this.state.portId === 'singapore');
     if (connection.status === 'unavailable') return connection;
-    const publication = await attemptRelay(() => current.outbox.reduce<Promise<void>>((previous, disruption) => previous.then(async () => { await publishDisruption(current.relay, disruption); }), Promise.resolve()), 'Agent Relay publication is unavailable. The disruption remains queued for retry.');
-    if (publication.status === 'unavailable') return publication;
-    const sentIds = new Set(current.outbox.map(event => event.id));
-    const afterDisruptions = this.state ?? current;
-    this.state = { ...afterDisruptions, ready: true, outbox: afterDisruptions.outbox.filter(event => !sentIds.has(event.id)), published: [...afterDisruptions.published, ...sentIds], checkedAt: new Date().toISOString() };
-    const attempted = this.state.boardOutbox ?? [];
-    const flushed = await flush(message => postBoard(current.relay, message), attempted);
-    const stillQueued = new Set(flushed.remaining.map(message => message.id));
-    const latest = this.state;
-    this.state = { ...latest, boardOutbox: (latest.boardOutbox ?? []).filter(message => !attempted.some(sent => sent.id === message.id) || stillQueued.has(message.id)) };
-    return flushed.failure ? { status: 'unavailable', message: flushed.failure } : relaySuccess(null);
+    const sent = await transmit(outgoing, {
+      post: message => postBoard(outgoing.relay, message),
+      publish: disruption => attemptRelay(() => publishDisruption(outgoing.relay, disruption), 'Agent Relay publication is unavailable. The disruption remains queued for retry.'),
+    });
+    await this.acknowledge({ board: sent.board, disruptions: sent.disruptions });
+    return sent.failure ? { status: 'unavailable', message: sent.failure } : relaySuccess(null);
   }
 
   async onAlarm(): Promise<void> {
@@ -229,18 +238,22 @@ export class ShipmentAgent extends Actor {
     return relaySuccess(this.state.shipment);
   }
 
-  /** What this ship has decided to say that Relay has not acknowledged yet, so the server can echo it locally. */
-  async unpublished(): Promise<readonly BoardMessage[]> { return this.state?.boardOutbox ?? []; }
+  /** What this ship has decided to say that Relay has not acknowledged yet; the server echoes it locally and writes it to Relay itself. */
+  async unpublished(): Promise<Outgoing<Disruption> | null> {
+    return this.state ? { relay: this.state.relay, board: this.state.boardOutbox ?? [], disruptions: [] } : null;
+  }
 
-  /** Writes to Relay: board posts in order, each acknowledged before it leaves the outbox. */
+  async acknowledge(sent: readonly string[]): Promise<void> {
+    if (this.state) this.state = { ...this.state, boardOutbox: without(this.state.boardOutbox ?? [], sent) };
+  }
+
+  /** The alarm's own write path, for when no server is driving. */
   async publish(): Promise<RelayOutcome<null>> {
-    if (!this.state) return { status: 'unavailable', message: 'Shipment monitoring has not been initialized.' };
-    const current = this.state;
-    const flushed = await flush(message => postBoard(current.relay, message), current.boardOutbox ?? []);
-    const stillQueued = new Set(flushed.remaining.map(message => message.id));
-    const latest = this.state ?? current;
-    this.state = { ...latest, boardOutbox: (latest.boardOutbox ?? []).filter(message => !(current.boardOutbox ?? []).some(sent => sent.id === message.id) || stillQueued.has(message.id)) };
-    return flushed.failure ? { status: 'unavailable', message: flushed.failure } : relaySuccess(null);
+    const outgoing = await this.unpublished();
+    if (!outgoing) return { status: 'unavailable', message: 'Port monitoring has not been initialized.' };
+    const sent = await transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) });
+    await this.acknowledge(sent.board);
+    return sent.failure ? { status: 'unavailable', message: sent.failure } : relaySuccess(null);
   }
 
   async onAlarm(): Promise<void> {

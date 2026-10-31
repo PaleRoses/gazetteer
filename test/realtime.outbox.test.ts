@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { BoardMessage } from '../src/board';
 import type { RelayOutcome } from '../src/shared';
-import { enqueue, flush } from '../src/server/realtime/outbox';
+import { enqueue, flush, transmit, without } from '../src/server/realtime/outbox';
 
 const eta = (id: string): BoardMessage => ({
   kind: 'ship.eta', id, author: { role: 'ship', id: 's-1', vessel: 'V' }, at: '2026-10-31T20:00:00.000Z', summary: 's',
@@ -41,5 +41,24 @@ describe('outbox', () => {
     let calls = 0;
     await flush(async message => { calls += 1; return ok(message.id); }, []);
     expect(calls).toBe(0);
+  });
+
+  test('disruptions go before board posts; a failed disruption holds the board back and only what Relay acknowledged is reported sent', async () => {
+    const order: string[] = [];
+    const relay = { token: 't', channel: 'c' };
+    const effects = (failing: string | null) => ({
+      post: async (message: BoardMessage) => { order.push(`b:${message.id}`); return ok(message.id); },
+      publish: async (disruption: { id: string }): Promise<RelayOutcome<unknown>> => { order.push(`d:${disruption.id}`); return disruption.id === failing ? { status: 'unavailable', message: 'down' } : ok(disruption.id); },
+    });
+    const outgoing = { relay, board: [eta('a')], disruptions: [{ id: 'x' }, { id: 'y' }] };
+    expect(await transmit(outgoing, effects(null))).toEqual({ board: ['a'], disruptions: ['x', 'y'], failure: null });
+    expect(order).toEqual(['d:x', 'd:y', 'b:a']);
+    order.length = 0;
+    expect(await transmit(outgoing, effects('y'))).toEqual({ board: [], disruptions: ['x'], failure: 'down' });
+    expect(order).toEqual(['d:x', 'd:y']);
+  });
+
+  test('without removes exactly the acknowledged ids', () => {
+    expect(without([{ id: 'a' }, { id: 'b' }, { id: 'c' }], ['b']).map(item => item.id)).toEqual(['a', 'c']);
   });
 });
