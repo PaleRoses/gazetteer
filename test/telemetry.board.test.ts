@@ -4,7 +4,7 @@ import { demoShipments } from '../src/domain';
 import { positionAlong, voyageRoute } from '../src/sea-routes';
 import type { RelayOutcome } from '../src/shared';
 import { applyAssessment, assessNotice, type AssessableNotice, type Assessment, type AssessedShipment } from '../src/server/assessment';
-import { decideBoard, emptyBoardMemory, postDecisions, rememberBoard, selectBoardEvidence, type Outbound, type ShipBoardMemory, type Situation, type Telemetry } from '../src/server/telemetry';
+import { commitDecisions, decideBoard, emptyBoardMemory, rememberBoard, selectBoardEvidence, type Outbound, type ShipBoardMemory, type Situation, type Telemetry } from '../src/server/telemetry';
 
 const now = '2026-10-31T12:00:00.000Z';
 const [meridian, laurel] = demoShipments(new Date(now)) as [AssessedShipment, AssessedShipment, ...AssessedShipment[]];
@@ -62,32 +62,13 @@ describe('ship board decisions', () => {
   });
 });
 
-describe('posting', () => {
-  const ok = (id: string): RelayOutcome<string> => ({ status: 'ok', value: id });
+describe('deciding', () => {
   const fresh = (): readonly Outbound[] => decideBoard(emptyBoardMemory, { shipment: delayed, situation: null, now });
 
-  test('memory advances only for acknowledged posts; a retry resumes where it stopped and never reposts', async () => {
-    const posted: string[] = [];
-    let failNext = true;
-    const flaky = async (message: BoardMessage): Promise<RelayOutcome<string>> => {
-      if (message.kind === 'ship.eta' && message.portId === 'singapore' && failNext) { failNext = false; return { status: 'unavailable', message: 'relay down' }; }
-      posted.push(message.id);
-      return ok(message.id);
-    };
-    const first = await postDecisions(flaky, emptyBoardMemory, fresh());
-    expect(first.failure).toBe('relay down');
-    expect(posted).toEqual([`asm:gz-1042:${delayed.eta}:delayed`]);
-    const retry = decideBoard(first.memory, { shipment: delayed, situation: null, now });
-    expect(kinds(retry)).toEqual(['ship.eta', 'ship.eta']);
-    const second = await postDecisions(flaky, first.memory, retry);
-    expect(second.failure).toBeNull();
-    expect(new Set(posted).size).toBe(posted.length);
-    expect(decideBoard(second.memory, { shipment: delayed, situation: null, now })).toEqual([]);
-  });
-
-  test('a throwing post is data', async () => {
-    const result = await postDecisions(async () => { throw new Error('socket'); }, emptyBoardMemory, fresh());
-    expect(result).toEqual({ memory: emptyBoardMemory, failure: 'socket' });
+  test('committing advances the memory at once, so the same facts are never decided twice, and hands over the messages in order', () => {
+    const first = commitDecisions(emptyBoardMemory, fresh());
+    expect(first.messages.map(message => message.kind)).toEqual(['ship.assessment', 'ship.eta', 'ship.eta']);
+    expect(decideBoard(first.memory, { shipment: delayed, situation: null, now })).toEqual([]);
   });
 });
 

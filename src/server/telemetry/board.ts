@@ -87,17 +87,11 @@ export const decideBoard = (memory: ShipBoardMemory, input: DecisionInput): read
   ...etasOf(input, memory),
 ];
 
-/** Posts in order and remembers only what was acknowledged. Stops at the first failure and says why; never throws. */
-export async function postDecisions(
-  post: (message: BoardMessage) => Promise<RelayOutcome<string>>, memory: ShipBoardMemory, outbound: readonly Outbound[],
-): Promise<Readonly<{ memory: ShipBoardMemory; failure: string | null }>> {
-  return outbound.reduce<Promise<Readonly<{ memory: ShipBoardMemory; failure: string | null }>>>(async (previous, item) => {
-    const state = await previous;
-    if (state.failure) return state;
-    const result = await post(item.message).catch((error: unknown): RelayOutcome<string> => ({ status: 'unavailable', message: describeError(error) }));
-    return result.status === 'ok' ? { memory: item.remember(state.memory), failure: null } : { memory: state.memory, failure: result.message };
-  }, Promise.resolve({ memory, failure: null }));
-}
+/** The ship has decided: its memory moves on at once and the messages go to the durable outbox, whose delivery to Relay is retried until acknowledged. */
+export const commitDecisions = (memory: ShipBoardMemory, outbound: readonly Outbound[]): Readonly<{ memory: ShipBoardMemory; messages: readonly BoardMessage[] }> => ({
+  memory: outbound.reduce((current, item) => item.remember(current), memory),
+  messages: outbound.map(item => item.message),
+});
 
 const inHorizon = (at: string, now: string): boolean => Date.parse(now) - Date.parse(at) <= peerHorizonHours * 3_600_000 && Date.parse(at) <= Date.parse(now) + 60_000;
 

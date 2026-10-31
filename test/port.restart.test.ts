@@ -8,9 +8,9 @@ import { startLocalActors } from 'durable-actors/dev';
 import type { PortAgent } from '../src/server/actors';
 import type { Disruption } from '../src/shared';
 
-type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'queued'>;
+type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'publish' | 'queued'>;
 const methods = [
-  { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' }, { name: 'queued', result: 'value' },
+  { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' }, { name: 'publish', result: 'value' }, { name: 'queued', result: 'value' },
 ] as const;
 const disruption: Disruption = {
   id: 'restart-test-disruption', portId: 'singapore', delayHours: 6,
@@ -73,14 +73,17 @@ test('a disruption simulated before registration, across a restart, is published
       expect(relay.sent.size).toBe(0);
       expect(await port.initialize('workspace', 'singapore', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
       expect(await port.check()).toEqual({ status: 'ok', value: null });
+      expect(await port.publish()).toEqual({ status: 'ok', value: null });
       expect(relay.sent.has(disruption.id)).toBe(true);
       expect(await port.queued()).toBe(0);
       expect(await port.check()).toEqual({ status: 'ok', value: null });
+      expect(await port.publish()).toEqual({ status: 'ok', value: null });
     });
     await withPort(project, dataDir, async port => {
       expect(await port.queued()).toBe(0);
       await port.simulate(disruption);
       expect(await port.check()).toEqual({ status: 'ok', value: null });
+      expect(await port.publish()).toEqual({ status: 'ok', value: null });
       expect(await port.queued()).toBe(0);
     });
     expect([...relay.sent.keys()]).toEqual([disruption.id]);

@@ -18,15 +18,16 @@ import { fileSeqStore, startRelayLive } from './realtime/live';
 import { createHub, type Subscribe } from './realtime/sse';
 import { disruptionFrom, relayChannel, workspaceOfChannel } from './relay';
 
-type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume' | 'deliver' | 'queued'>;
-type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume' | 'deliver'>;
+type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume' | 'deliver' | 'queued' | 'unpublished' | 'publish'>;
+type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'publish'>;
 const portMethods = [
   { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' },
   { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'queued', result: 'value' },
+  { name: 'unpublished', result: 'value' }, { name: 'publish', result: 'value' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof PortClient })[];
 const shipmentMethods = [
   { name: 'initialize', result: 'value' }, { name: 'snapshot', result: 'value' }, { name: 'check', result: 'value' },
-  { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' },
+  { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'unpublished', result: 'value' }, { name: 'publish', result: 'value' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof ShipmentClient })[];
 
 export type Monitoring = Readonly<{
@@ -81,10 +82,13 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     seedsByWorkspace.set(workspaceId, seeds);
     return seeds;
   };
+  /** Ready means initialised AND synced: the actor's one Relay read (its history) is paid here, in the background, so no later check waits on Relay. */
+  const bringUp = (initialize: () => Promise<RelayOutcome<null>>, sync: () => Promise<RelayOutcome<unknown>>) => async (): Promise<boolean> =>
+    (await initialize()).status === 'ok' && (await sync()).status === 'ok';
   const tasksOf = (workspaceId: string): readonly StartupTask[] => [
-    { key: portKey('singapore'), run: async () => (await port(workspaceId, 'singapore').initialize(workspaceId, 'singapore', workspaceKey, true)).status === 'ok' },
-    ...ports.filter(value => value.id !== 'singapore').map((value): StartupTask => ({ key: portKey(value.id), after: portKey('singapore'), run: async () => (await port(workspaceId, value.id).initialize(workspaceId, value.id, workspaceKey, false)).status === 'ok' })),
-    ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: shipKey(seed.id), after: portKey('singapore'), run: async () => (await shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey)).status === 'ok' })),
+    { key: portKey('singapore'), run: bringUp(() => port(workspaceId, 'singapore').initialize(workspaceId, 'singapore', workspaceKey, true), () => port(workspaceId, 'singapore').check()) },
+    ...ports.filter(value => value.id !== 'singapore').map((value): StartupTask => ({ key: portKey(value.id), after: portKey('singapore'), run: bringUp(() => port(workspaceId, value.id).initialize(workspaceId, value.id, workspaceKey, false), () => port(workspaceId, value.id).check()) })),
+    ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: shipKey(seed.id), after: portKey('singapore'), run: bringUp(() => shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey), () => shipment(workspaceId, seed.id).check()) })),
   ];
   /** Simulated disruptions wait in their port actor's persisted state, not here: a restart cannot lose them. */
   const waitingOn = async (workspaceId: string): Promise<number> =>
@@ -111,29 +115,77 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     }
   };
 
-  // A Relay notice is a doorbell: each ready shipment actor re-reads only past its persisted cursor, then the browser is pushed the result.
-  const checkReadyShipments = (workspaceId: string): Promise<unknown> => Promise.all(seedsOf(workspaceId)
-    .filter(seed => startup.isReady(workspaceId, shipKey(seed.id)))
-    .map(seed => relayLimit(() => shipment(workspaceId, seed.id).check()).catch(() => undefined)));
+  const announce = createCoalescer(async workspaceId => { await dashboard(workspaceId); }, error => console.error('Board announcement failed:', error instanceof Error ? error.message : 'unknown error'));
+
+  /**
+   * Relay stays the bus and the record, but nothing here waits on its latency. A message is absorbed once, whether it was authored
+   * locally (echo) or heard on the stream (the Relay copy of an echo is then a no-op): into the read model and into every ready actor's
+   * inbox by local RPC. Ports are told which of them a ship's post concerns.
+   */
+  const absorbed = new Set<string>();
+  const firstSight = (key: string): boolean => {
+    if (absorbed.has(key)) return false;
+    absorbed.add(key);
+    if (absorbed.size > 5000) absorbed.delete(absorbed.values().next().value as string);
+    return true;
+  };
+  const touched = new Map<string, Set<PortId>>();
+  const absorb = async (workspaceId: string, batch: Inbox): Promise<number> => {
+    const fresh: Inbox = { board: batch.board.filter(message => firstSight(`b:${message.id}`)), disruptions: batch.disruptions.filter(item => firstSight(`d:${item.id}`)) };
+    const count = fresh.board.length + fresh.disruptions.length;
+    if (count === 0) return 0;
+    board.ingest(workspaceId, fresh.board);
+    const wake = touched.get(workspaceId) ?? new Set<PortId>();
+    fresh.board.filter(message => message.kind === 'ship.observation' || message.kind === 'ship.eta').forEach(message => concerns(message).ports.forEach(id => wake.add(id)));
+    touched.set(workspaceId, wake);
+    await Promise.all([
+      ...ports.filter(value => startup.isReady(workspaceId, portKey(value.id)) && fresh.board.length > 0).map(value => port(workspaceId, value.id).deliver(fresh).catch(() => undefined)),
+      ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, shipKey(seed.id))).map(seed => shipment(workspaceId, seed.id).deliver(fresh).catch(() => undefined)),
+    ]);
+    return count;
+  };
+  /** Writing to Relay is background work on the shared slots; whatever fails stays in the actor's durable outbox for the next attempt. */
+  const publishPort = createCoalescer(key => { const [workspaceId, id] = key.split('\u0000'); return relayLimit(() => port(workspaceId as string, id as PortId).publish()).then(() => undefined); });
+  const publishShip = createCoalescer(key => { const [workspaceId, id] = key.split('\u0000'); return relayLimit(() => shipment(workspaceId as string, id as string).publish()).then(() => undefined); });
+  const shipStep = async (workspaceId: string, id: string): Promise<number> => {
+    const t = Date.now();
+    await shipment(workspaceId, id).check().catch(() => undefined);
+    console.error('TIMING ship.check', id, Date.now() - t);
+    const t2 = Date.now(); const echoed = await absorb(workspaceId, { board: await shipment(workspaceId, id).unpublished().catch(() => []), disruptions: [] });
+    console.error('TIMING ship.echo', id, Date.now() - t2);
+    void publishShip(`${workspaceId}\u0000${id}`);
+    return echoed;
+  };
+  const portStep = async (workspaceId: string, id: PortId): Promise<number> => {
+    await port(workspaceId, id).check().catch(() => undefined);
+    const echoed = await absorb(workspaceId, await port(workspaceId, id).unpublished().catch(() => ({ board: [], disruptions: [] })));
+    void publishPort(`${workspaceId}\u0000${id}`);
+    return echoed;
+  };
+  /** The HTTP answer never waits longer than this for assessments; the SSE stream carries whatever finishes later. */
+  const simulateWaitMs = 2000;
+  const rounds = 4;
+  /** Ships and the ports they concerned react to each other until nothing new is said (bounded; the alarms resume it otherwise). */
+  const settle = async (workspaceId: string, round = 0): Promise<void> => {
+    const wake = [...(touched.get(workspaceId) ?? [])];
+    touched.delete(workspaceId);
+    const spoken = await Promise.all([
+      ...wake.filter(id => startup.isReady(workspaceId, portKey(id))).map(id => portStep(workspaceId, id)),
+      ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, shipKey(seed.id))).map(seed => shipStep(workspaceId, seed.id).then(count => { if (hub.subscribers(workspaceId) > 0) void announce(workspaceId); return count; })),
+    ]);
+    if (spoken.some(count => count > 0) && round + 1 < rounds) return settle(workspaceId, round + 1);
+  };
   const refresh = createCoalescer(async workspaceId => {
     startup.ensure(workspaceId);
-    await checkReadyShipments(workspaceId);
+    await settle(workspaceId);
     await dashboard(workspaceId);
   }, error => console.error('Realtime refresh failed:', error instanceof Error ? error.message : 'unknown error'));
-  const announce = createCoalescer(async workspaceId => { await dashboard(workspaceId); }, error => console.error('Board announcement failed:', error instanceof Error ? error.message : 'unknown error'));
-  /** A port actor that just became ready has adopted what waited for it: publish it now instead of at the next alarm. */
+  /** A port actor that just became ready has adopted what waited for it: say so now instead of at the next alarm. */
   const deliverQueued = async (workspaceId: string, id: PortId): Promise<void> => {
     if (await port(workspaceId, id).queued() === 0) return;
-    await relayLimit(() => port(workspaceId, id).check());
+    await portStep(workspaceId, id);
+    await refresh(workspaceId);
   };
-  /** One Relay stream per process feeds every actor by local RPC: actors read Relay only at start, never per alarm. */
-  const fanOut = (workspaceId: string, batch: Inbox): Promise<unknown> => Promise.all([
-    ...ports.filter(value => startup.isReady(workspaceId, portKey(value.id)) && batch.board.length > 0).map(value => port(workspaceId, value.id).deliver(batch).catch(() => undefined)),
-    ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, shipKey(seed.id))).map(seed => shipment(workspaceId, seed.id).deliver(batch).catch(() => undefined)),
-  ]);
-  const checkPorts = (workspaceId: string, ids: readonly PortId[]): Promise<unknown> => Promise.all(ids
-    .filter(id => startup.isReady(workspaceId, portKey(id)))
-    .map(id => relayLimit(() => port(workspaceId, id).check()).catch(() => undefined)));
   const startup = createStartup({
     tasksOf, limit: relayLimit,
     onReady: (workspaceId, key) => {
@@ -154,11 +206,8 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       const post = boardFrom(message);
       const disruption = disruptionFrom(message);
       if (!post && !disruption) return;
-      const changed = post ? board.ingest(workspaceId, [post]) : false;
-      void fanOut(workspaceId, { board: post ? [post] : [], disruptions: disruption ? [disruption] : [] }).then(() => {
-        if (post && post.kind !== 'port.bulletin') void checkPorts(workspaceId, concerns(post).ports);
-        return changed || disruption ? refresh(workspaceId) : undefined;
-      });
+      void absorb(workspaceId, { board: post ? [post] : [], disruptions: disruption ? [disruption] : [] })
+        .then(count => (count > 0 ? refresh(workspaceId) : undefined));
     },
   });
   if (live.status === 'unavailable') console.warn(live.message);
@@ -171,11 +220,12 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
         id, portId, delayHours,
         evidence: { id, source: 'simulation', title: 'Simulated port congestion', detail: `Synthetic terminal bulletin: a ${delayHours}-hour berth delay at ${ports.find(value => value.id === portId)?.name ?? portId}. Deterministic demo assessment; not live intelligence.`, observedAt: new Date().toISOString() },
       };
-      await port(workspaceId, portId).simulate(disruption);
+      const T = Date.now(); const lap = (m: string) => console.error('TIMING', m, Date.now() - T);
+      await port(workspaceId, portId).simulate(disruption); lap('port.simulate');
       if (!startup.isReady(workspaceId, portKey(portId))) return dashboard(workspaceId);
-      const publication = await relayLimit(() => port(workspaceId, portId).check());
-      if (publication.status === 'unavailable') return publication;
-      await checkReadyShipments(workspaceId);
+      await absorb(workspaceId, { board: [], disruptions: [disruption] }); lap('absorb');
+      void publishPort(`${workspaceId}\u0000${portId}`);
+      await Promise.race([refresh(workspaceId), new Promise(done => setTimeout(done, simulateWaitMs))]);
       return dashboard(workspaceId);
     },
     subscribe: hub.subscribe,
