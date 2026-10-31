@@ -27,6 +27,8 @@ Canonical checkout: `/Users/bluerose/Developer/gazetteer`, moved from the initia
 
 Cold initialization took roughly 90 seconds. Live Relay provisioning exposed upstream overload/rate limits. Registration was serialized, retries bounded, and partial initialization retained. Browser polling now waits for settlement instead of piling up requests; HTTP allows a 120-second cold-start window. Provider availability remains a real prerequisite, not hidden by a local fake.
 
+Browser account creation succeeded. Final map interaction/visual QA was not completed: after relocating the checkout, the in-app browser remained on its connection-error page. The relocated server returned HTTP 200 and was stopped after the check; use `npm start` to run it again. Do not describe the UI as browser-verified end-to-end.
+
 ## Boundaries and next work
 
 - All logistics data and impact calculations are synthetic and deterministic, not live feeds or LLM reasoning. External source ingestion, evidence grounding and AI assessment remain unimplemented.
