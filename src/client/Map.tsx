@@ -16,10 +16,11 @@ import { WarningGroup } from './WarningGroup';
 import { clusterWarnings } from './warning-clusters';
 import { warningLabel, warningTone } from './warning-severity';
 import { PortDetails } from './PortDetails';
+import './warning-markers.css';
 
 type MapLibre = typeof import('maplibre-gl');
 type Runtime = Readonly<{ lib: MapLibre; map: MapLibreMap }>;
-type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; showPopup: boolean; inspected: Diversion | null; corridor?: MonitoredRoute; routeMode?: boolean; onRoute: (id: string) => void }>;
+type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; onClear: () => void; showPopup: boolean; inspected: Diversion | null; corridor?: MonitoredRoute; routeMode?: boolean; onRoute: (id: string) => void }>;
 type Projection = 'mercator' | 'globe';
 const COLOURS = { ocean: '#0b0b0b', land: '#2a2a2a', coast: '#3a3a3a', route: '#5fe3c0', corridor: '#d8d8d8', alternative: '#b9a7d6' } as const;
 const FRAME_PADDING = { top: 90, bottom: 75, left: 70, right: 70 } as const;
@@ -112,9 +113,18 @@ export function ShipmentMap(props: Selection) {
       const base = style(window.location.origin);
       const map = new lib.Map({ container: host, style: { ...base, sources: { ...base.sources, sailed: { type: 'geojson', data: empty }, ahead: { type: 'geojson', data: empty }, corridors: { type: 'geojson', data: empty }, alternative: { type: 'geojson', data: empty } } }, center: [15, 18], zoom: 0.8, minZoom: 0, maxZoom: 9, attributionControl: false, dragRotate: false, pitchWithRotate: false });
       created = map;
+      const updatePortLabels = () => host.classList.toggle('port-labels-visible', map.getZoom() >= 4);
+      updatePortLabels();
+      map.on('zoom', updatePortLabels);
       map.touchZoomRotate.disableRotation();
       map.addControl(new lib.AttributionControl({ compact: true, customAttribution: 'Natural Earth · SeaRoute lanes · positions simulated' }), 'bottom-right');
       map.on('load', () => {
+        map.on('click', event => {
+          // HTML markers, popovers and controls keep their own click behavior.
+          if (event.originalEvent.target !== map.getCanvas() || map.queryRenderedFeatures(event.point, { layers: ['corridor-hit'] }).length) return;
+          clearDetails();
+          props.onClear();
+        });
         map.on('click', 'corridor-hit', event => { const id = event.features?.[0]?.properties?.id; if (typeof id === 'string') props.onRoute(id); });
         map.on('mouseenter', 'corridor-hit', () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', 'corridor-hit', () => { map.getCanvas().style.cursor = ''; });
@@ -149,6 +159,7 @@ export function ShipmentMap(props: Selection) {
     setRegion(undefined);
     current.map.fitBounds(lngLatBounds(bounds), { padding: FRAME_PADDING, maxZoom: 4.2, duration: 700 });
   });
+
   createEffect(() => {
     const current = ready();
     if (!current) return;
@@ -195,8 +206,8 @@ export function ShipmentMap(props: Selection) {
     for (const option of [...new Map(alternatives.map(d => [d.name, d])).values()]) {
       const node = element('button', 'alternative-port');
       node.setAttribute('type', 'button'); node.setAttribute('aria-label', `${option.name} alternative port details`); node.setAttribute('aria-haspopup', 'dialog'); node.dataset.portId = option.id;
-      node.addEventListener('click', event => { event.stopPropagation(); props.onDismiss(); setWarningGroup(null); setWarningId(null); warningTrigger = node; setPortPlace(option); current.map.panTo([...option.coordinates], { duration: 250 }); });
-      node.append(element('span', 'alternative-dot'), element('span', '', option.name));
+      node.addEventListener('click', event => { event.stopPropagation(); props.onDismiss(); setWarningGroup(null); setWarningId(null); warningTrigger = node; setPortPlace(option); current.map.panTo([...option.coordinates], { duration: 250, offset: [0, current.map.getContainer().clientHeight / 2 - 32] }); });
+      node.append(element('span', 'alternative-dot'), element('span', 'port-label', option.name));
       owned.push(new current.lib.Marker({ element: node }).setLngLat([...option.coordinates]).addTo(current.map));
     }
     const option = props.inspected;
@@ -221,7 +232,15 @@ export function ShipmentMap(props: Selection) {
         const item = group.items[0]!;
         const location = map.unproject([group.center.x, group.center.y]);
         const coordinates: readonly [number, number] = [location.lng, location.lat];
-        const node = element('button', `news-marker warning-${warningTone(group.severity)}${multi ? ' news-cluster' : ''}`, multi ? String(group.items.length) : '!');
+        const node = element('button', `news-marker warning-${warningTone(group.severity)}${multi ? ' news-cluster' : ''}`);
+        const glyph = element('span', 'warning-mark', '!');
+        glyph.setAttribute('aria-hidden', 'true');
+        node.append(glyph);
+        if (multi) {
+          const count = element('span', 'warning-count', String(group.items.length));
+          count.setAttribute('aria-hidden', 'true');
+          node.append(count);
+        }
         node.setAttribute('type', 'button'); node.setAttribute('aria-haspopup', 'dialog');
         node.setAttribute('aria-label', multi ? `${group.items.length} warnings in this area; highest: ${warningLabel(group.severity)}` : `${warningLabel(group.severity)} warning: ${item.evidence.title}`);
         node.title = multi ? `${group.items.length} warnings · Highest: ${warningLabel(group.severity)} — click to explore` : `${warningLabel(group.severity)} · ${item.evidence.title}`;
@@ -250,8 +269,8 @@ export function ShipmentMap(props: Selection) {
     const position = detailPosition();
     if (!current || !position) { warningPopup?.remove(); warningPopup = undefined; setWarningHost(undefined); return; }
     const host = document.createElement('div');
-    host.style.setProperty('--warning-max-height', `${Math.max(180, Math.min(330, current.map.getContainer().clientHeight / 2 - 40))}px`);
-    const created = new current.lib.Popup({ closeButton: false, closeOnClick: false, offset: 18, maxWidth: '340px', className: 'warning-popup' })
+    host.style.setProperty('--warning-max-height', `${Math.max(180, portPlace() ? Math.min(330, current.map.getContainer().clientHeight - 80) : Math.min(330, current.map.getContainer().clientHeight / 2 - 40))}px`);
+    const created = new current.lib.Popup({ closeButton: false, closeOnClick: false, offset: 18, ...(portPlace() ? { anchor: 'bottom' as const } : {}), maxWidth: '340px', className: 'warning-popup' })
       .setLngLat([...position]).setDOMContent(host).addTo(current.map);
     warningPopup = created; setWarningHost(host);
     onCleanup(() => created.remove());
@@ -262,7 +281,8 @@ export function ShipmentMap(props: Selection) {
     if (!place) return;
     props.onDismiss(); setWarningGroup(null); setWarningId(null);
     warningTrigger = event.currentTarget; setPortPlace(place);
-    ready()?.map.panTo([...place.coordinates], { duration: 250 });
+    const map = ready()?.map;
+    map?.panTo([...place.coordinates], { duration: 250, offset: [0, map.getContainer().clientHeight / 2 - 32] });
   };
   return <div class="map-canvas operating-map gz-map">
     <Show keyed when={warningHost()}>{host => <Portal mount={host}>
@@ -286,8 +306,9 @@ export function ShipmentMap(props: Selection) {
     </Menu.Root>
     <Show when={ready()}>{runtime => <div class="gz-map-staging">
       <Index each={ports()}>{port => <MapMarker runtime={runtime()} position={port().geometry.coordinates}>
-        <button type="button" class={`gz-city ${port().properties.risk}`} data-port-id={port().properties.id} aria-haspopup="dialog" title={port().properties.label.replace('\n', ': ')} aria-label={`${port().properties.label.replace('\n', ': ')} port details`} onClick={event => openPort(event, port().properties.id)}>
+        <button type="button" class={`gz-city ${port().properties.risk}`} data-port-id={port().properties.id} aria-haspopup="dialog" title={port().properties.label.replace('\n', ': ')} aria-label={`${port().properties.name} port details`} onClick={event => openPort(event, port().properties.id)}>
           <Show when={port().properties.anchored !== null}><span class="gz-city-count">{port().properties.anchored}</span></Show>
+          <span class="port-label city-name">{port().properties.name}</span>
           <Show when={props.selected?.destination === port().properties.id}><span class="gz-city-pill">{port().properties.name}</span></Show>
         </button>
       </MapMarker>}</Index>

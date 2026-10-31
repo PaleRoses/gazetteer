@@ -1,0 +1,6 @@
+/* Bare marks share the fleet map's warm yellow/red palette; the hit area stays generous. */
+.map-gl button.news-marker,.map-gl button.news-marker.news-cluster{display:inline-flex;align-items:center;justify-content:center;gap:3px;width:auto;height:28px;min-width:28px;min-height:28px;padding:2px 4px;border:0;border-radius:0;background:transparent;box-shadow:none;color:#e0a03a;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1;text-shadow:0 1px 2px #111315;cursor:pointer}
+.map-gl button.news-marker.warning-red{color:#e5603f}.map-gl button.news-marker.warning-unknown{color:#aaa99e}
+.map-gl .warning-mark{font-size:25px;font-weight:800}.map-gl .warning-count{font-size:12px;font-weight:650;font-variant-numeric:tabular-nums}
+.map-gl button.news-marker:hover,.map-gl button.news-marker.news-cluster:hover{background:transparent;box-shadow:none;filter:brightness(1.25)}
+.map-gl button.news-marker:focus-visible{outline:1px solid currentColor;outline-offset:2px}

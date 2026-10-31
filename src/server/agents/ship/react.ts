@@ -2,7 +2,8 @@ import type { BoardMessage, ShipObservation } from '../../../core/board';
 import { portById, type PortId } from '../../../core/ports';
 import { shiftEta } from '../../../core/eta';
 import type { AssessedShipment } from '../../assessment/apply';
-import { inHorizon, portReportOf, remainingCalls, type PortReport } from './board';
+import { inHorizon, portReportOf, type PortReport } from './board';
+import { remainingCalls } from '../../../core/port-calls';
 import type { ReactionSummary } from './risk-floor';
 
 /** Declared, not tuned. The queue-drain delay is the queue ahead divided by the port's service rate; the band and cap say how far that estimate may be trusted. */
