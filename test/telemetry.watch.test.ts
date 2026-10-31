@@ -85,7 +85,7 @@ describe('watch cycle', () => {
 
   test('when the feed drops, the persisted last position ages into an AIS-dark signal', async () => {
     const healthy = await watchShipment({ source: sourceOf(report({ sogKnots: 14 })), assess: assessOf(null), now: () => now }, shipment, '563012345', emptyTelemetryState, {});
-    const later = new Date(Date.parse(now) + 2 * 3_600_000).toISOString();
+    const later = new Date(Date.parse(now) + 13 * 3_600_000).toISOString();
     const step = await watchShipment({ source: sourceOf('digitraffic is unreachable'), assess: assessOf(null), now: () => later }, healthy.shipment, '563012345', healthy.state, healthy.cache);
     expect(step.report).toMatchObject({ status: 'watched', fetch: 'stale', fetchMessage: 'digitraffic is unreachable', signals: 1 });
     expect(step.shipment.signals?.[0]?.kind).toBe('ais-dark');

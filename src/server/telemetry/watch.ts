@@ -3,10 +3,11 @@ import { voyageRoute } from '../../sea-routes';
 import { assessTelemetry, type AssessDeps, type AssessmentCache, type AssessmentOutcome } from '../assessment/assess';
 import type { AssessedShipment } from '../assessment/apply';
 import { describeError, type Telemetry, type TelemetrySource } from './telemetry';
+import { emptyTrack, type Track } from './gfw';
 import { defaultThresholds, nextSituation, observe, type Situation, type Thresholds } from './watcher';
 
-export type TelemetryState = Readonly<{ latest: Telemetry | null; situation: Situation | null }>;
-export const emptyTelemetryState: TelemetryState = { latest: null, situation: null };
+export type TelemetryState = Readonly<{ latest: Telemetry | null; situation: Situation | null; track?: Track }>;
+export const emptyTelemetryState: TelemetryState = { latest: null, situation: null, track: emptyTrack };
 export type WatchDeps = Readonly<{ source: TelemetrySource; assess: AssessDeps; thresholds?: Thresholds; now?: () => string }>;
 export type WatchReport =
   | Readonly<{ status: 'untracked' }>
@@ -24,10 +25,10 @@ export async function watchShipment(deps: WatchDeps, shipment: AssessedShipment,
   const latest = fetched.status === 'ok' ? newer(state.latest, fetched.value) : state.latest;
   if (!latest) return { shipment, state, cache, report: { status: 'no-position', message: fetched.status === 'unavailable' ? fetched.message : 'no position' } };
   const plan = { route: voyageRoute(shipment) ?? shipment.route, eta: shipment.eta, ports: ports.map(({ name, coordinates }) => ({ name, coordinates })) };
-  const observation = observe(plan, latest, now, deps.thresholds ?? defaultThresholds);
+  const observation = observe(plan, latest, now, deps.thresholds ?? defaultThresholds, state.track ?? emptyTrack);
   const situation = nextSituation(state.situation, observation.signals, shipment.id, now);
   const watched: AssessedShipment = { ...shipment, telemetry: latest, signals: observation.signals };
-  const nextState: TelemetryState = { latest, situation };
+  const nextState: TelemetryState = { latest, situation, track: observation.track };
   const report = (assessment: AssessmentOutcome | null): WatchReport => ({
     status: 'watched', fetch: fetched.status === 'ok' ? 'fresh' : 'stale', fetchMessage: fetched.status === 'unavailable' ? fetched.message : null, signals: observation.signals.length, assessment,
   });
