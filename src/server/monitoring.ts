@@ -30,7 +30,7 @@ const sequenceRelay = <A>(operations: readonly (() => Promise<RelayOutcome<A>>)[
     return next.status === 'unavailable' ? next : relaySuccess([...outcome.value, next.value]);
   }), Promise.resolve(relaySuccess([])));
 
-export async function createMonitoring(options: Readonly<{ dataDir?: string; workspaceIds?: readonly string[] }> = {}): Promise<Monitoring> {
+export async function createMonitoring(options: Readonly<{ dataDir?: string; workspaceIds: readonly string[] }>): Promise<Monitoring> {
   const workspaceKey = process.env.RELAY_WORKSPACE_KEY;
   if (!workspaceKey) throw new Error('Agent Relay is not configured. Run npm run setup:relay first.');
   const project = resolve(import.meta.dir, '../..');
@@ -49,7 +49,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const shipment = (workspaceId: string, id: string): ShipmentClient => createActorStub<ShipmentClient>('ShipmentAgent', `${workspaceId}-shipment-${id}`, shipmentMethods, transport);
 
   // Restore native alarms once at process startup, never from dashboard polling.
-  await (options.workspaceIds ?? []).flatMap(workspaceId => [
+  await options.workspaceIds.flatMap(workspaceId => [
     ...ports.map(value => () => port(workspaceId, value.id).resume()),
     ...demoShipments().map(value => () => shipment(workspaceId, value.id).resume()),
   ]).reduce<Promise<void>>((previous, resume) => previous.then(resume), Promise.resolve()).catch(async error => {
