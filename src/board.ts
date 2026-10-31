@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const portId = z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']);
+const portId = z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles', 'jebel-ali']);
 const instant = z.iso.datetime();
 const position = z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90)]);
 const risk = z.enum(['on-track', 'watch', 'delayed']);

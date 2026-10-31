@@ -85,6 +85,10 @@ export function ShipmentMap(props: Selection) {
   const [portPlace, setPortPlace] = createSignal<Port | Diversion | null>(null);
   let warningTrigger: HTMLElement | null = null;
   const warning = createMemo(() => (props.corridor?.intelligence ?? props.dashboard?.intelligence)?.items.find(item => item.evidence.id === warningId()));
+  // Preserve the popup's DOM host across live dashboard refreshes at the same location.
+  const detailPosition = createMemo(() => warning()?.coordinates ?? portPlace()?.coordinates, undefined, {
+    equals: (left, right) => left?.[0] === right?.[0] && left?.[1] === right?.[1],
+  });
   const [frameWidth, setFrameWidth] = createSignal(0);
   const [popupHost, setPopupHost] = createSignal<HTMLElement | undefined>();
   let popup: import('maplibre-gl').Popup | undefined;
@@ -235,18 +239,18 @@ export function ShipmentMap(props: Selection) {
   };
   createEffect(() => {
     const current = ready();
-    const item = warning() ?? portPlace();
-    if (!current || !item?.coordinates) { warningPopup?.remove(); warningPopup = undefined; setWarningHost(undefined); return; }
+    const position = detailPosition();
+    if (!current || !position) { warningPopup?.remove(); warningPopup = undefined; setWarningHost(undefined); return; }
     const host = document.createElement('div');
     host.style.setProperty('--warning-max-height', `${Math.max(180, Math.min(330, current.map.getContainer().clientHeight / 2 - 40))}px`);
     const created = new current.lib.Popup({ closeButton: false, closeOnClick: false, offset: 18, maxWidth: '340px', className: 'warning-popup' })
-      .setLngLat([...item.coordinates]).setDOMContent(host).addTo(current.map);
+      .setLngLat([...position]).setDOMContent(host).addTo(current.map);
     warningPopup = created; setWarningHost(host);
     onCleanup(() => created.remove());
   });
 
   return <div class="map-canvas">
-    <Show when={warningHost()}>{host => <Portal mount={host()}><Show when={portPlace()} fallback={<WarningDetails item={warning()} dashboard={props.dashboard} onClose={closeWarning} onShip={props.onSelect} onLayout={() => { const position = warning()?.coordinates; if (position) warningPopup?.setLngLat([...position]); }} />}>{place => <PortDetails place={place()} dashboard={props.dashboard} onClose={closeWarning} onShip={props.onSelect} onLayout={() => warningPopup?.setLngLat([...place().coordinates])} />}</Show></Portal>}</Show>
+    <Show keyed when={warningHost()}>{host => <Portal mount={host}><Show when={portPlace()} fallback={<WarningDetails item={warning()} dashboard={props.dashboard} onClose={closeWarning} onShip={props.onSelect} onLayout={() => { const position = warning()?.coordinates; if (position) warningPopup?.setLngLat([...position]); }} />}>{place => <PortDetails place={place()} dashboard={props.dashboard} onClose={closeWarning} onShip={props.onSelect} onLayout={() => warningPopup?.setLngLat([...place().coordinates])} />}</Show></Portal>}</Show>
     <div ref={container} class="map-gl" tabIndex={-1} role="group" aria-label="Shipment map. Select a vessel with the markers or the shipment list." />
     <Show when={popupHost()}>{host => <Portal mount={host()}><button class="popup-dismiss" aria-label="Close ship popup" onClick={props.onDismiss}>×</button><button class="popup-open" onClick={props.onOpen}><span class="reference">{props.selected?.reference}</span><strong>{props.selected?.vessel}</strong><span class="popup-eta">ETA {props.selected && new Date(props.selected.eta).toLocaleString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} UTC</span><span class={`risk-badge ${props.selected?.risk}`}>{props.selected && riskLabel[props.selected.risk]}</span><span class="popup-brief">{props.selected && shipmentBrief(props.selected).text}</span><span class="popup-source">{props.selected && shipmentBrief(props.selected).source}</span><span class="popup-cta">Open voyage briefing →</span></button></Portal>}</Show>
     <Show when={props.inspected}><div class="alternative-map-caption">{props.inspected?.name} · indicative connection; revised ETA unconfirmed</div></Show>

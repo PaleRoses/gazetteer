@@ -8,6 +8,7 @@ const round = (value: number, digits: number): number => Math.round(value * 10 *
 const roundPosition = (digits: number) => (position: Position): Position => [round(position[0] ?? 0, digits), round(position[1] ?? 0, digits)];
 const roundRings = (digits: number) => (rings: Position[][]): Position[][] => rings.map(ring => ring.map(roundPosition(digits)));
 
+if (!Bun.argv.includes('--lanes-only')) {
 const NATURAL_EARTH = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/ca96624a56bd078437bca8184e78163e5039ad19/geojson/ne_50m_land.geojson';
 const land = await fetch(NATURAL_EARTH).then(response => response.json()) as FeatureCollection<Polygon | MultiPolygon>;
 const quantised: FeatureCollection<Polygon | MultiPolygon> = {
@@ -20,6 +21,7 @@ const quantised: FeatureCollection<Polygon | MultiPolygon> = {
   })),
 };
 await Bun.write(new URL('../../../public/geo/land.geojson', import.meta.url), JSON.stringify(quantised));
+}
 
 const point = (coordinates: readonly [number, number]) => ({ type: 'Feature' as const, properties: {}, geometry: { type: 'Point' as const, coordinates: [...coordinates] } });
 const pairs = ports.flatMap((from, index) => ports.slice(index + 1).map(to => [from, to] as const));

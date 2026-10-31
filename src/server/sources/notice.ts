@@ -1,8 +1,8 @@
-import type { PortId } from '../../shared';
+import type { PortId, ReportContext } from '../../shared';
 
-export type NoticeKind = 'cyclone' | 'flood' | 'volcano' | 'earthquake' | 'weather';
+export type NoticeKind = 'cyclone' | 'flood' | 'volcano' | 'earthquake' | 'weather' | 'security';
 export type NoticeSeverity = 'minor' | 'moderate' | 'severe' | 'extreme';
-export type NoticeProvider = 'gdacs' | 'nws' | 'usgs';
+export type NoticeProvider = 'gdacs' | 'nws' | 'usgs' | 'ap' | 'marad';
 export type LonLat = readonly [number, number];
 
 export type NoticeGeometry =
@@ -13,7 +13,7 @@ export type NoticeGeometry =
 export type Notice = Readonly<{
   id: string; provider: NoticeProvider; kind: NoticeKind; severity: NoticeSeverity;
   title: string; detail: string; observedAt: string; expiresAt: string | null;
-  geometry: NoticeGeometry; url: string; fetchedAt: string; provenance: 'live';
+  geometry: NoticeGeometry; url: string; fetchedAt: string; provenance: 'live'; report?: ReportContext;
 }>;
 
 export type FetchResult =

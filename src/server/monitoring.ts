@@ -7,6 +7,7 @@ import { createActorStub, createActorTransport, type ActorRpcMethod } from 'dura
 import { buildIntelligence } from './intelligence';
 import { buildRouteMonitoring } from './routes';
 import { liveSweep, type Sweep } from './sources';
+import { securityReports } from './sources/security';
 import { demoShipments, ports } from '../domain';
 import { relaySuccess, type Comment, type Dashboard, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import type { PortAgent, ShipmentAgent } from './actors';
@@ -125,8 +126,9 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       const now = new Date();
       const enabled = process.env.GAZETTEER_LIVE_SOURCES !== 'off';
       const failures = coverage?.failures.map(f => f.provider) ?? (enabled ? ['News feeds starting'] : []);
-      const intelligence = buildIntelligence(retained, coverage?.notices ?? [], now, failures, enabled);
-      const routes = buildRouteMonitoring(retained, coverage?.notices ?? [], now, failures, enabled);
+      const notices = [...(coverage?.notices ?? []), ...(enabled ? securityReports(now) : [])];
+      const intelligence = buildIntelligence(retained, notices, now, failures, enabled);
+      const routes = buildRouteMonitoring(retained, notices, now, failures, enabled);
       const built: Dashboard = {
         intelligence: { ...intelligence, checkedAt: checkedAt ?? now.toISOString() },
         routes: routes.map(route => ({ ...route, intelligence: route.intelligence && { ...route.intelligence, checkedAt: checkedAt ?? now.toISOString() } })),

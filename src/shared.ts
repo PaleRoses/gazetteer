@@ -2,10 +2,11 @@ import type { BoardMessage, PortStatus } from './board.js';
 export type Risk = 'on-track' | 'watch' | 'delayed';
 export type RelayOutcome<A> = Readonly<{ status: 'ok'; value: A }> | Readonly<{ status: 'unavailable'; message: string }>;
 export const relaySuccess = <A>(value: A): RelayOutcome<A> => ({ status: 'ok', value });
-export type PortId = 'singapore' | 'rotterdam' | 'shanghai' | 'los-angeles';
+export type PortId = 'singapore' | 'rotterdam' | 'shanghai' | 'los-angeles' | 'jebel-ali';
 export type Port = Readonly<{ id: PortId; name: string; country: string; coordinates: readonly [number, number] }>;
 type EvidenceBody = Readonly<{ id: string; title: string; detail: string; observedAt: string }>;
-export type Evidence = EvidenceBody & (Readonly<{ source: 'simulation' }> | Readonly<{ source: 'live'; provider: string; url: string }>);
+export type ReportContext = Readonly<{ kind: 'news' | 'advisory'; region: string; reviewedAt: string; validUntil?: string }>;
+export type Evidence = EvidenceBody & (Readonly<{ source: 'simulation' }> | Readonly<{ source: 'live'; provider: string; url: string; report?: ReportContext }>);
 export type Milestone = Readonly<{ label: string; at: string; status: 'complete' | 'current' | 'upcoming' }>;
 export type Shipment = Readonly<{
   id: string; vessel: string; reference: string; cargo: string; containers: number;

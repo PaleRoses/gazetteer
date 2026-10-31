@@ -6,6 +6,7 @@ export const ports: readonly Port[] = [
   { id: 'rotterdam', name: 'Rotterdam', country: 'Netherlands', coordinates: [4.48, 51.92] },
   { id: 'shanghai', name: 'Shanghai', country: 'China', coordinates: [121.5, 31.2] },
   { id: 'los-angeles', name: 'Los Angeles', country: 'United States', coordinates: [-118.26, 33.74] },
+  { id: 'jebel-ali', name: 'Jebel Ali', country: 'United Arab Emirates', coordinates: [55.06, 24.99] },
 ];
 
 const afterHours = (at: string, hours: number): string => new Date(Date.parse(at) + hours * 3_600_000).toISOString();
@@ -41,6 +42,7 @@ export function demoShipments(now: Date = new Date()): readonly Shipment[] {
     lane({ id: 'gz-1050', vessel: 'Nordic Pioneer', reference: 'GZ-1050', cargo: 'Almonds & dried fruit', containers: 40, origin: 'los-angeles', destination: 'rotterdam' }, 44, 460),
     lane({ id: 'gz-1051', vessel: 'Meridian Crest', reference: 'GZ-1051', cargo: 'Cold-chain pharmaceuticals', containers: 14, origin: 'rotterdam', destination: 'singapore' }, 120, 400),
     lane({ id: 'gz-1052', vessel: 'Pacific Dawn', reference: 'GZ-1052', cargo: 'Consumer appliances', containers: 26, origin: 'shanghai', destination: 'los-angeles' }, 230, 250),
+    lane({ id: 'gz-1053', vessel: 'Gulf Horizon', reference: 'GZ-1053', cargo: 'Aluminium & industrial components', containers: 20, origin: 'jebel-ali', destination: 'singapore' }, 192, 2),
   ];
 }
 

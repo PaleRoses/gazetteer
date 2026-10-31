@@ -29,7 +29,7 @@ const email = z.string().trim().email().max(254);
 const password = z.string().min(12).max(1024);
 const signupSchema = z.object({ email, password, name: z.string().trim().min(1).max(80), workspaceName: z.string().trim().min(1).max(100).optional() });
 const loginSchema = z.object({ email, password: z.string().max(1024) });
-const disruptionSchema = z.object({ portId: z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']), delayHours: z.number().int().min(1).max(168) });
+const disruptionSchema = z.object({ portId: z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles', 'jebel-ali']), delayHours: z.number().int().min(1).max(168) });
 const mailReceiptSchema = z.object({ id: z.string().trim().min(1) });
 
 /** A body is JSON or it is refused before it is read; a JSON body that fails its schema is one answer, whatever the failure. */

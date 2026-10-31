@@ -19,6 +19,12 @@ These are acceptance requirements, not a claim that every integration has been v
 
 The seeded shipments, positions and cargo are synthetic. **Terse Durable Actors and Agent Relay are real integrations**, including retained shipment state and native scheduled checks. Public NWS, GDACS and USGS notices carry live provenance and source links. AI assessment uses the existing server-side Anthropic adapter when configured; without a model key, simulated disruptions use a labelled deterministic fallback and live notices do not acquire an invented delay. The telemetry watcher can be configured separately; an interpolated position is not an AIS fix.
 
+### Maritime security coverage
+
+The News tab includes curated AP reporting from October 30, 2026 on Hormuz and Aden, plus MARAD advisories 2026-011 and 2026-013. Sources, publication dates, review dates and scheduled advisory expiry are shown on cards and regional map popovers. This selection is **not an automatic news feed**: maintain `src/server/sources/security.ts` by checking original sources and updating the review window. News ages out after seven days; advisory snapshots require re-review within seven days even if their scheduled expiry is later.
+
+Security reports enter only the dashboard read model, never port-actor disruption polling. They cannot change ship risk or ETA. The Gulf Horizon demo shipment runs Jebel Ali–Singapore through Hormuz, with a real monitored corridor, durable shipment/port actors and source-linked news. All security reports require geographic relevance to a tracked voyage or monitored corridor; unrelated reports are omitted. Pins are approximate regional locations, not exact attack coordinates or hazard boundaries. Onshore reports and unverified claims retain those qualifications.
+
 ### Map, briefing and news
 
 - Popup risk labels map the retained server values to **low**, **moderate**, and **high**. The brief preserves AI versus scenario provenance; the browser does not calculate another risk score.

@@ -24,7 +24,7 @@ export const relayChannel = (workspaceId: string): string => `${channelPrefix}${
 export const workspaceOfChannel = (channel: string): string | undefined => channel.startsWith(channelPrefix) ? channel.slice(channelPrefix.length) : undefined;
 
 const disruptionSchema = z.object({
-  id: z.string(), portId: z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']),
+  id: z.string(), portId: z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles', 'jebel-ali']),
   delayHours: z.number().positive().max(168).nullable(),
   evidence: z.discriminatedUnion('source', [
     z.object({ id: z.string(), source: z.literal('simulation'), title: z.string(), detail: z.string(), observedAt: z.iso.datetime() }),

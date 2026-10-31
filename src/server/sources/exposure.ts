@@ -4,12 +4,12 @@ import type { LonLat, Notice, NoticeKind } from './notice';
 
 /** Declared reach of each hazard, in kilometres. Cyclone: gale-force wind field plus margin. Flood: GDACS places a flood at a regional centroid. */
 export const radiusKm: Readonly<Record<NoticeKind, number>> = {
-  cyclone: 600, flood: 150, volcano: 200, earthquake: 150, weather: 0,
+  cyclone: 600, flood: 150, volcano: 200, earthquake: 150, weather: 0, security: 100,
 };
 
 /** A notice with no feed-declared end stays relevant this long after it was last observed. */
 export const relevanceHours: Readonly<Record<NoticeKind, number>> = {
-  cyclone: 48, flood: 72, volcano: 72, earthquake: 72, weather: 12,
+  cyclone: 48, flood: 72, volcano: 72, earthquake: 72, weather: 12, security: 168,
 };
 
 export type Place = Readonly<{ id: PortId; name: string; coordinates: LonLat }>;

@@ -3,10 +3,10 @@ import { boardMessage, portStatus } from '../board';
 import type { Comment, Dashboard, Shipment, User, Workspace } from '../shared';
 
 const coordinate = z.tuple([z.number(), z.number()]);
-const portId = z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']);
+const portId = z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles', 'jebel-ali']);
 export const evidenceSchema = z.discriminatedUnion('source', [
   z.object({ id: z.string(), source: z.literal('simulation'), title: z.string(), detail: z.string(), observedAt: z.string() }),
-  z.object({ id: z.string(), source: z.literal('live'), provider: z.string(), url: z.string().url().refine(value => /^https?:/.test(value)), title: z.string(), detail: z.string(), observedAt: z.string() }),
+  z.object({ id: z.string(), source: z.literal('live'), provider: z.string(), url: z.string().url().refine(value => /^https?:/.test(value)), title: z.string(), detail: z.string(), observedAt: z.string(), report: z.object({ kind: z.enum(['news', 'advisory']), region: z.string(), reviewedAt: z.string(), validUntil: z.string().optional() }).optional() }),
 ]);
 const shipment: z.ZodType<Shipment> = z.object({
   id: z.string(), vessel: z.string(), reference: z.string(), cargo: z.string(), containers: z.number(),
