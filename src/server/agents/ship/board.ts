@@ -51,7 +51,6 @@ export const noSociety: Society = { floor: null, queues: [] };
 export type PortReport = Readonly<{ id: string; kind: BoardMessage['kind']; summary: string; at: string; portId: PortId; element: 'traffic' | 'hazards'; risk: PortRisk; anchored: number; arrivals48h: number; evidenceIds: readonly string[] }>;
 export const portReportOf = (message: BoardMessage): PortReport | null => {
   switch (message.kind) {
-    case 'port.bulletin': return { id: message.id, kind: message.kind, summary: message.summary, at: message.at, portId: message.portId, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
     case 'city.traffic': return { id: message.id, kind: message.kind, summary: message.summary, at: message.at, portId: message.author.city, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
     case 'city.hazards': return { id: message.id, kind: message.kind, summary: message.summary, at: message.at, portId: message.author.city, element: 'hazards', risk: message.risk, anchored: 0, arrivals48h: 0, evidenceIds: message.evidenceIds };
     default: return null;
