@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { bookingKey, type RecoveryMessage } from '../../../../src/core/recovery';
-import { emptyHaulierMemory, hear, truckResource, withdrawTruck, type HaulierContext, type HaulierMemory } from '../../../../src/server/agents/haulier/decide';
+import { emptyHaulierMemory, hear, truckOfferId, withdrawTruck, type HaulierContext } from '../../../../src/server/agents/haulier/decide';
 import type { Truck } from '../../../../src/server/agents/haulier/truck';
 import { createBookings } from '../../../../src/server/booking/ledger';
 
@@ -14,13 +14,18 @@ const cargo = { role: 'cargo', id: 'cargo-1', vessel: 'Meridian Star' } as const
 const haulier = { role: 'haulier', city: 'rotterdam' } as const;
 const request = (caseId: string, after?: string, id = `request:${caseId}:${after ?? 'first'}`): RecoveryMessage =>
   ({ id, kind: 'recovery.request', author: cargo, at: now, summary: 'A truck, please.', caseId, answers: [], to: haulier, service: 'truck', ...(after ? { after } : {}) });
-const holdOf = (caseId: string, offerId: string, expiresAt = '2026-10-31T17:00:00.000Z'): RecoveryMessage =>
-  ({ id: `hold:${caseId}:${offerId}`, kind: 'recovery.hold', author: cargo, at: now, summary: 'Holding.', caseId, answers: [`offer:${offerId}`], offerId, key: bookingKey(caseId, offerId), expiresAt });
-const fresh = (at = now) => {
-  const time = { ms: Date.parse(at) };
-  const ledger = createBookings(':memory:', () => time.ms);
-  const context = (overrides: Partial<HaulierContext> = {}): HaulierContext => ({ city: 'rotterdam', workspaceId: 'w1', trucks, now: new Date(time.ms).toISOString(), ledger, ...overrides });
-  return { ledger, context, time };
+const offerFor = (id: string) => truckOfferId('rotterdam', id);
+const fresh = () => {
+  const ledger = createBookings(':memory:', () => Date.parse(now));
+  const context = (overrides: Partial<HaulierContext> = {}): HaulierContext => ({ city: 'rotterdam', trucks, now, ledger, ...overrides });
+  return { ledger, context };
+};
+/** What the cargo agent's ledger step does with an offer it accepts: books the truck's id as the resource over the haul. */
+const book = (ledger: ReturnType<typeof fresh>['ledger'], caseId: string, truck: Truck, hours = 3) => {
+  const offerId = offerFor(truck.id);
+  const held = ledger.hold({ key: bookingKey(caseId, offerId), workspaceId: 'w1', caseId, resource: offerId, start: truck.departs, end: new Date(Date.parse(truck.departs) + hours * 3_600_000).toISOString(), priceEur: truck.priceEur, expiresAt: '2026-10-31T17:00:00.000Z', heldBy: 'cargo' });
+  if (!held.ok) throw new Error(held.error);
+  return held.value;
 };
 const offers = (posts: readonly RecoveryMessage[]) => posts.flatMap(post => post.kind === 'recovery.offer' ? [post.offer] : []);
 
@@ -28,15 +33,15 @@ describe('answering a request', () => {
   test('offers the earliest truck that has not left, and a later one when asked for a later one', () => {
     const { context } = fresh();
     const first = hear(context(), emptyHaulierMemory, [request('case-1')]);
-    expect(offers(first.posts)).toMatchObject([{ service: 'truck', id: 'truck:rtm-1700:case-1', departs: '2026-10-31T17:00:00.000Z', priceEur: 210, provider: haulier, expiresAt: '2026-10-31T17:00:00.000Z' }]);
+    expect(offers(first.posts)).toMatchObject([{ service: 'truck', id: 'rotterdam:truck:rtm-1700', departs: '2026-10-31T17:00:00.000Z', priceEur: 210, provider: haulier, expiresAt: '2026-10-31T17:00:00.000Z' }]);
     const later = hear(context(), first.memory, [request('case-1', '2026-10-31T18:00:00.000Z')]);
-    expect(offers(later.posts)).toMatchObject([{ id: 'truck:rtm-1930:case-1', departs: '2026-10-31T19:30:00.000Z' }]);
+    expect(offers(later.posts)).toMatchObject([{ id: 'rotterdam:truck:rtm-1930', departs: '2026-10-31T19:30:00.000Z' }]);
     expect(later.posts[0]).toMatchObject({ kind: 'recovery.offer', caseId: 'case-1', answers: ['request:case-1:2026-10-31T18:00:00.000Z'], author: haulier });
   });
 
   test('a truck that has already left is never offered', () => {
-    const { context } = fresh('2026-10-31T17:30:00.000Z');
-    expect(offers(hear(context(), emptyHaulierMemory, [request('case-1')]).posts)[0]?.id).toBe('truck:rtm-1930:case-1');
+    const { context } = fresh();
+    expect(offers(hear(context({ now: '2026-10-31T17:30:00.000Z' }), emptyHaulierMemory, [request('case-1')]).posts)[0]?.id).toBe(offerFor('rtm-1930'));
   });
 
   test('a replayed board is answered once; messages for another city or service are ignored', () => {
@@ -48,10 +53,18 @@ describe('answering a request', () => {
     expect(hear(context(), emptyHaulierMemory, [elsewhere, storage]).posts).toEqual([]);
   });
 
-  test('a truck another case holds is not offered', () => {
+  test('the same truck can be offered to two cases, under distinct message ids', () => {
+    const { context } = fresh();
+    const one = hear(context(), emptyHaulierMemory, [request('case-1')]);
+    const two = hear(context(), one.memory, [request('case-2')]);
+    expect(offers(two.posts)[0]?.id).toBe(offerFor('rtm-1700'));
+    expect(new Set([one.posts[0]!.id, two.posts[0]!.id]).size).toBe(2);
+  });
+
+  test('a truck the ledger already holds for a case is not offered to another', () => {
     const { context, ledger } = fresh();
-    ledger.hold({ key: 'other', workspaceId: 'w1', caseId: 'case-9', resource: truckResource('rotterdam', 'rtm-1700'), start: '2026-10-31T17:00:00.000Z', end: '2026-10-31T18:00:00.000Z', priceEur: 210, expiresAt: '2026-10-31T17:00:00.000Z', heldBy: 'x' });
-    expect(offers(hear(context(), emptyHaulierMemory, [request('case-1')]).posts)[0]?.id).toBe('truck:rtm-1930:case-1');
+    book(ledger, 'case-9', trucks[1]!);
+    expect(offers(hear(context(), emptyHaulierMemory, [request('case-1')]).posts)[0]?.id).toBe(offerFor('rtm-1930'));
   });
 
   test('says nothing when it has no truck to give', () => {
@@ -60,72 +73,34 @@ describe('answering a request', () => {
   });
 });
 
-describe('holds, confirms and releases', () => {
-  const offered = (): { memory: HaulierMemory; offerId: string } & ReturnType<typeof fresh> => {
-    const world = fresh();
-    const answered = hear(world.context(), emptyHaulierMemory, [request('case-1')]);
-    return { ...world, memory: answered.memory, offerId: offers(answered.posts)[0]!.id };
-  };
-
-  test('a hold on the offer is recorded in the ledger, once, under the cargo agent\'s key', () => {
-    const { context, memory, offerId, ledger } = offered();
-    const message = holdOf('case-1', offerId);
-    const held = hear(context(), memory, [message]);
-    expect(held.posts).toEqual([]);
-    expect(ledger.find(bookingKey('case-1', offerId))).toMatchObject({ status: 'held', resource: 'rotterdam:truck:rtm-1700', priceEur: 210, heldBy: 'haulier:rotterdam', caseId: 'case-1' });
-    hear(context(), held.memory, [{ ...message, id: 'hold:again' }]);
-    expect(ledger.list('w1')).toHaveLength(1);
-  });
-
-  test('a confirm makes the booking confirmed; a release frees the truck', () => {
-    const { context, memory, offerId, ledger } = offered();
-    const held = hear(context(), memory, [holdOf('case-1', offerId)]);
-    const key = bookingKey('case-1', offerId);
-    const confirm: RecoveryMessage = { id: 'confirm:1', kind: 'recovery.confirm', author: cargo, at: now, summary: 'Confirm.', caseId: 'case-1', answers: [], offerId, key };
-    const confirmed = hear(context(), held.memory, [confirm]);
-    expect(ledger.find(key)?.status).toBe('confirmed');
-    hear(context(), confirmed.memory, [{ id: 'release:1', kind: 'recovery.release', author: cargo, at: now, summary: 'Release.', caseId: 'case-1', answers: [], offerId, key }]);
-    expect(ledger.find(key)?.status).toBe('released');
-    expect(ledger.free(truckResource('rotterdam', 'rtm-1700'), '2026-10-31T17:00:00.000Z', '2026-10-31T18:00:00.000Z')).toBe(true);
-  });
-
-  test('a confirm after the hold lapsed makes the haulier withdraw the offer, and says why', () => {
-    const { context, memory, offerId, ledger, time } = offered();
-    const held = hear(context(), memory, [holdOf('case-1', offerId, '2026-10-31T16:45:00.000Z')]);
-    time.ms += 20 * 60_000;
-    const key = bookingKey('case-1', offerId);
-    const late = hear(context(), held.memory, [{ id: 'confirm:late', kind: 'recovery.confirm', author: cargo, at: now, summary: 'Confirm.', caseId: 'case-1', answers: [], offerId, key }]);
-    expect(late.posts).toMatchObject([{ kind: 'recovery.withdraw', offerId, reason: 'the hold expired before it was confirmed' }]);
-    expect(ledger.find(key)?.status).toBe('expired');
-  });
-
-  test('a hold on an offer that has expired, or on a truck taken meanwhile, is answered with a withdrawal', () => {
-    const { context, memory, offerId, ledger } = offered();
-    ledger.hold({ key: 'other', workspaceId: 'w1', caseId: 'case-9', resource: truckResource('rotterdam', 'rtm-1700'), start: '2026-10-31T17:00:00.000Z', end: '2026-10-31T18:00:00.000Z', priceEur: 210, expiresAt: '2026-10-31T16:50:00.000Z', heldBy: 'x' });
-    const taken = hear(context(), memory, [holdOf('case-1', offerId, '2026-10-31T16:45:00.000Z')]);
-    expect(taken.posts).toMatchObject([{ kind: 'recovery.withdraw', reason: 'the truck is already held for another case' }]);
-    const stale = fresh();
-    const answered = hear(stale.context(), emptyHaulierMemory, [request('case-1')]);
-    stale.time.ms += 40 * 60_000;
-    const expired = hear(stale.context(), answered.memory, [holdOf('case-1', offers(answered.posts)[0]!.id, '2026-10-31T18:00:00.000Z')]);
-    expect(expired.posts).toMatchObject([{ kind: 'recovery.withdraw', reason: 'the offer had expired before it was held' }]);
-  });
-});
-
 describe('withdrawing a truck', () => {
-  test('releases what the ledger holds for it, posts the withdrawal citing the offer, and is a no-op once done', () => {
-    const world = fresh();
-    const first = hear(world.context(), emptyHaulierMemory, [request('case-1')]);
-    const second = hear(world.context(), first.memory, [request('case-1', '2026-10-31T18:00:00.000Z')]);
-    const offerId = offers(second.posts)[0]!.id;
-    const held = hear(world.context(), second.memory, [holdOf('case-1', offerId)]);
-    const done = withdrawTruck(world.context(), held.memory, 'Simulated: withdrawn by the demo control.');
-    expect(done.withdrawn?.offer.id).toBe(offerId);
-    expect(done.posts).toMatchObject([{ kind: 'recovery.withdraw', offerId, caseId: 'case-1', answers: [`offer:${offerId}`], reason: 'Simulated: withdrawn by the demo control.' }]);
-    expect(world.ledger.find(bookingKey('case-1', offerId))?.status).toBe('released');
-    expect(done.memory.offers[offerId]?.status).toBe('withdrawn');
-    expect(done.memory.offers['truck:rtm-1700:case-1']?.status).toBe('open');
-    const again = withdrawTruck(world.context(), done.memory, 'x', offerId);
-    expect(again).toMatchObject({ posts: [], withdrawn: null });
+  test('cancels what the ledger holds for it, posts the withdrawal citing the offer, frees the truck, and is a no-op once done', () => {
+    const { context, ledger } = fresh();
+    const first = hear(context(), emptyHaulierMemory, [request('case-1')]);
+    const second = hear(context(), first.memory, [request('case-1', '2026-10-31T18:00:00.000Z')]);
+    const offerId = offerFor('rtm-1930');
+    const booking = book(ledger, 'case-1', trucks[0]!);
+    const done = withdrawTruck(context(), second.memory, 'Simulated: withdrawn by the demo control.');
+    expect(done.withdrawn).toBe(offerId);
+    expect(done.posts).toMatchObject([{ kind: 'recovery.withdraw', offerId, caseId: 'case-1', answers: [second.posts[0]!.id], reason: 'Simulated: withdrawn by the demo control.' }]);
+    expect(ledger.get(booking.id)?.status).toBe('released');
+    expect(ledger.free(offerId, trucks[0]!.departs, '2026-10-31T21:00:00.000Z')).toBe(true);
+    expect(done.memory.offers[bookingKey('case-1', offerId)]?.status).toBe('withdrawn');
+    expect(done.memory.offers[bookingKey('case-1', offerFor('rtm-1700'))]?.status).toBe('open');
+    expect(withdrawTruck(context(), done.memory, 'x', offerId)).toMatchObject({ posts: [], withdrawn: null });
+  });
+
+  test('withdraws the truck from every case it was offered to, each withdrawal citing its own offer', () => {
+    const { context } = fresh();
+    const one = hear(context(), emptyHaulierMemory, [request('case-1')]);
+    const two = hear(context(), one.memory, [request('case-2')]);
+    const done = withdrawTruck(context(), two.memory, 'driver unavailable', offerFor('rtm-1700'));
+    expect(done.posts.map(post => post.caseId).sort()).toEqual(['case-1', 'case-2']);
+    expect(done.posts.map(post => post.answers[0]).sort()).toEqual([one.posts[0]!.id, two.posts[0]!.id].sort());
+  });
+
+  test('with nothing offered there is nothing to withdraw', () => {
+    const { context } = fresh();
+    expect(withdrawTruck(context(), emptyHaulierMemory, 'x')).toMatchObject({ posts: [], withdrawn: null });
   });
 });

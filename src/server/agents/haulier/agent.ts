@@ -28,11 +28,11 @@ const ledgers = new Map<string, Bookings>();
 const ledgerAt = (path: string): Bookings => ledgers.get(path) ?? (() => { const opened = createBookings(path); ledgers.set(path, opened); return opened; })();
 
 const contextOf = (state: HaulierState): HaulierContext =>
-  ({ city: state.city, workspaceId: state.workspaceId, trucks: state.trucks, now: new Date().toISOString(), ledger: ledgerAt(state.bookingsPath) });
+  ({ city: state.city, trucks: state.trucks, now: new Date().toISOString(), ledger: ledgerAt(state.bookingsPath) });
 
 const isRecovery = (message: BoardMessage): message is RecoveryMessage => recoveryMessage.safeParse(message).success;
 
-/** A city's haulier: answers requests for a truck from its schedule, keeps the booking ledger in step with the holds, confirms and releases it hears, and withdraws a truck on the demo's say-so. */
+/** A city's haulier: answers requests for a truck from its schedule and withdraws a truck, with its ledger bookings, on the demo's say-so. The cargo agent does the booking. */
 export class HaulierAgent extends Actor {
   @Persisted private state: HaulierState | null = null;
   @Persisted private nextCheckAt: number | null = null;
@@ -88,7 +88,7 @@ export class HaulierAgent extends Actor {
     if (!this.state) return { status: 'unavailable', message: 'The haulier has not been initialized.' };
     const done = withdrawTruck(contextOf(this.state), this.state.memory, reason, offerId ?? undefined);
     this.state = { ...this.state, memory: done.memory, outbox: enqueue(this.state.outbox, done.posts) };
-    return relaySuccess(done.withdrawn?.offer.id ?? null);
+    return relaySuccess(done.withdrawn);
   }
 
   /** What this haulier has decided that Relay has not acknowledged yet; the server echoes it at once and writes it to Relay itself. */
