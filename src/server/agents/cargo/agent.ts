@@ -4,20 +4,20 @@ import type { BoardMessage } from '../../../core/board';
 import { recoveryMessage, type Commitments, type Plan, type RecoveryMessage } from '../../../core/recovery';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/types';
 import { phraseFromEnv } from '../../assessment/mind';
-import { createBookings, type Bookings } from '../../booking/ledger';
+import { ledgerAt } from '../../booking/ledger';
 import { postBoard, readBoard } from '../../relay/board';
 import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } from '../../relay/client';
 import { connect } from '../../relay/connect';
 import { drainInbox, emptyInbox, mergeInbox, type Inbox } from '../../relay/inbox';
 import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
 import { checkIntervalMs } from '../alarm';
-import { cycle, executeOn } from './cycle.js';
+import { cycle } from './cycle.js';
 import { hear, openCase, reconcile, type Booking, type CaseState } from './negotiate.js';
 import { wordPlans } from './voice.js';
 
 type CargoState = Readonly<{
   workspaceId: string; relay: RelayIdentity; ready: boolean;
-  /** The ledger file, given by the server at initialization; the cargo agent writes its holds, confirms and releases there. */
+  /** The ledger file, given by the server at initialization; the cargo agent only reads it, the providers write it. */
   bookingsPath: string;
   /** The commitments and the whole case: durable, so a restarted agent resumes mid-negotiation and re-decides the same ids and keys. */
   recovery: CaseState;
@@ -29,8 +29,6 @@ type CargoState = Readonly<{
 }>;
 export type CargoCase = Readonly<{ caseId: string; method: 'rule-based'; plan: Plan | null; bookings: readonly Booking[]; delivered: string | null }>;
 
-const ledgers = new Map<string, Bookings>();
-const ledgerAt = (path: string): Bookings => ledgers.get(path) ?? (() => { const opened = createBookings(path); ledgers.set(path, opened); return opened; })();
 /** The cargo mind words plans when the workspace id exists; without it nothing spawns and the rule-based words stand. */
 const phrase = phraseFromEnv(process.env, query);
 const isRecovery = (message: BoardMessage): message is RecoveryMessage => recoveryMessage.safeParse(message).success;
@@ -38,7 +36,8 @@ const isRecovery = (message: BoardMessage): message is RecoveryMessage => recove
 
 /**
  * The refrigerated container's own agent: it remembers its commitments and negotiates its recovery on the board. The decisions are the
- * deterministic solver's; its mind, when the workspace id exists, only words its plans (labelled ai-assessed when it did). It owns the ledger writes (hold, confirm, release by caseId:offerId) and reads the ledger back each cycle as the truth.
+ * deterministic solver's; its mind, when the workspace id exists, only words its plans (labelled ai-assessed when it did). It posts holds, confirms and
+ * releases keyed by caseId:offerId; the providers write the ledger, and the cargo agent only reads it back each check as the truth.
  */
 export class CargoAgent extends Actor {
   @Persisted private state: CargoState | null = null;
@@ -91,7 +90,7 @@ export class CargoAgent extends Actor {
     const messages = [...new Map([...read.value.messages, ...heard].map(message => [message.id, message] as const)).values()].filter(isRecovery);
     const ledger = ledgerAt(committed.bookingsPath);
     const known = reconcile(hear(committed.recovery, messages), key => ledger.find(key)?.status);
-    const done = cycle(known, new Date().toISOString(), executeOn(ledger, committed.workspaceId, this.id));
+    const done = cycle(known, new Date().toISOString());
     const voiced = await wordPlans(done.state, done.messages, phrase, committed.mind ?? null);
     const latest = this.state ?? committed;
     this.state = {
