@@ -29,6 +29,7 @@ src/
       connect.ts           the join-the-channel step both actors share
     sources/               live disruption feeds (GDACS, NWS, USGS) and their exposure
     telemetry/             live AIS feeds and the watcher (Global Fishing Watch event definitions)
+    ingest/                the one AIS reader per process: feeds on Effect at the edge (pipeline, Digitraffic MQTT), a synchronous core (H3 port-zone routing, conflation, rings, per-port anchorage counters)
     assessment/            the evidence-grounded model assessment and its labelled fallback
   client/                  the web app; imports src/core only
 scripts/                   setup-relay, build-geodata, the probes
@@ -37,7 +38,7 @@ test/                      mirrors src/ path for path
 
 ## Laws
 
-1. Dependencies point one way: `core` ← `sources | telemetry | assessment | relay` ← `agents` ← `runtime` ← `http` ← `main`. `client` imports `core` and nothing under `server`. dependency-cruiser enforces this.
+1. Dependencies point one way: `core` ← `sources | telemetry | assessment | relay` ← `agents` ← `runtime` ← `http` ← `main`. `ingest` sits beside the leaf layers: it reads `sources/geo` and `telemetry/gfw`, nothing imports it but `runtime`. `effect` is imported only by `ingest/pipeline.ts`, `ingest/digitraffic.ts`, `runtime` and `scripts`; the core files (`hub`, `anchorage`, `ring`, `zones`, `frame`) and every actor-reachable layer stay free of it. `client` imports `core` and nothing under `server`. dependency-cruiser enforces this.
 2. Actor classes are thin. State lives in actor fields, decisions are pure functions in the same folder, and effects (Relay, fetch, the model) are passed in. Provider failures are values (`RelayOutcome`), never throws inside an actor. One alarm per actor, restored once by `resume()` at startup.
 3. One home per algorithm. Geodesy is turf; routes live in `core/routes.ts`; the board protocol lives in `core/board.ts`. A second implementation is a defect.
 4. No barrels. Import from the module that defines the thing. The only index is `agents/index.ts`, because Terse needs one entrypoint.
