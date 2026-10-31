@@ -3,7 +3,7 @@ import { demoShipments } from '../../src/core/demo';
 import { ports } from '../../src/core/ports';
 import type { PortBulletin, PortStatus, TrafficReport } from '../../src/core/board';
 import { distanceKm, routeLengthKm, voyageRoute } from '../../src/core/routes';
-import { boundsOf, cameraFor, fleetPorts, regions, portFeatures, routeLayers, statusLine, vesselView, vesselViews } from '../../src/client/map-model';
+import { boundsOf, cameraFor, fleetPorts, globeZoom, regions, portFeatures, routeLayers, statusLine, vesselView, vesselViews } from '../../src/client/map-model';
 
 const now = new Date('2026-10-31T12:00:00Z');
 const shipments = demoShipments(now);
@@ -135,6 +135,10 @@ describe('geometry helpers', () => {
     const tall = cameraFor(world, 600, 300, 25);
     expect(512 * 2 ** tall.zoom).toBeLessThan(550);
     expect(cameraFor([-10, -10, 10, 10], 800, 800, 0).center).toEqual([0, expect.closeTo(0, 9)]);
+  });
+  test('the globe disc spans the shorter side, so a whole-world globe is framed closer than the flat world', () => {
+    expect(512 * 2 ** globeZoom(1206, 691, 25) / Math.PI).toBeCloseTo(641, 6);
+    expect(globeZoom(1206, 691, 25)).toBeGreaterThan(cameraFor([-180, -56, 180, 76], 1206, 691, 25).zoom);
   });
 
   test('bounds of a date-line route extend beyond 180 so the camera frames the Pacific', () => {

@@ -8,6 +8,7 @@ import { AgentRelay } from '@agent-relay/sdk';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { chmod, mkdir } from 'node:fs/promises';
+import { scenarioEpoch } from './epoch';
 import { startLocalActors } from 'durable-actors/dev';
 import { createActorStub, createActorTransport, type ActorRpcMethod } from 'durable-actors/backend';
 import { activePorts } from '../../core/demo';
@@ -70,7 +71,9 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const dataDir = resolve(project, options.dataDir ?? resolve(process.env.DATA_DIR ?? '.data', 'actors'));
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
-  const operations = createOperations(resolve(dataDir, '..', 'operations.sqlite'));
+  /** The scenario is dated once per data directory: a restart re-derives the seeds the persisted actors already hold. */
+  const scenarioNow = await scenarioEpoch(resolve(dataDir, '..', 'scenario-epoch'));
+  const operations = createOperations(resolve(dataDir, '..', 'operations.sqlite'), scenarioNow);
   // The ship minds' SDK transcripts live beside the actor data, never in ~/.claude; the actor host inherits this environment.
   process.env.GAZETTEER_MINDS_DIR = resolve(dataDir, 'minds');
   const runtime = await startLocalActors({

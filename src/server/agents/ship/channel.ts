@@ -1,4 +1,3 @@
-import type { RelayOutcome } from '../../../core/types';
 import type { ChannelRead } from '../../relay/board';
 import type { Cursor } from '../../relay/cursor';
 import type { Inbox } from '../../relay/inbox';
@@ -20,14 +19,12 @@ const unionHeard = (read: ChannelRead, heard: Inbox): ChannelRead => ({
 });
 
 /**
- * What a ship hears this cycle. A synced ship hears its inbox. An unsynced ship also reads the Relay history once; when that read (or the
- * connection it needs) is unavailable it still reacts to its inbox and stays unsynced, so a disruption the server delivered is never ignored
- * for as long as Relay keeps failing.
+ * What a ship hears this cycle, without waiting on anyone. A synced ship hears its inbox. An unsynced ship hears its inbox plus the Relay
+ * history if that has arrived by now (`arrived`); otherwise it acts on the inbox alone, stays unsynced, and says why. A disruption the server
+ * delivered is therefore never ignored while Relay is slow or down.
  */
-export async function hear(state: Readonly<{ synced?: boolean; cursor?: Cursor | null }>, heard: Inbox, connection: RelayOutcome<unknown>, history: () => Promise<RelayOutcome<ChannelRead>>): Promise<Hearing> {
+export function hear(state: Readonly<{ synced?: boolean; cursor?: Cursor | null }>, heard: Inbox, arrived: ChannelRead | null, pending: string | null): Hearing {
   const local: ChannelRead = { board: heard.board, disruptions: heard.disruptions, cursor: state.cursor ?? null };
   if (state.synced) return { channel: local, synced: true, unavailable: null };
-  if (connection.status === 'unavailable') return { channel: local, synced: false, unavailable: connection.message };
-  const read = await history();
-  return read.status === 'ok' ? { channel: unionHeard(read.value, heard), synced: true, unavailable: null } : { channel: local, synced: false, unavailable: read.message };
+  return arrived ? { channel: unionHeard(arrived, heard), synced: true, unavailable: null } : { channel: local, synced: false, unavailable: pending ?? 'Relay history is still being read.' };
 }

@@ -1,4 +1,4 @@
-import { Actor, Persisted } from 'durable-actors';
+import { Actor, Ephemeral, Persisted } from 'durable-actors';
 import { relaySuccess, type Disruption, type RelayOutcome, type Risk, type Shipment } from '../../../core/types';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { shipAskerFromEnv, shipMindFromEnv } from '../../assessment/mind';
@@ -32,10 +32,18 @@ export class ShipmentAgent extends Actor {
   @Persisted private paused = false;
   @Persisted private state: ShipmentState | null = null;
   @Persisted private nextCheckAt: number | null = null;
+  /** The Relay history is read in the background, once, retried with backoff; the result is kept here and never persisted, so a lost one is simply read again. */
+  @Ephemeral private history: ChannelRead | null = null;
+  @Ephemeral private reading = false;
+  @Ephemeral private failures = 0;
+  @Ephemeral private retryAt = 0;
+  @Ephemeral private failure: string | null = null;
 
   async resume(): Promise<void> {
     if (!this.state || this.state.paused || this.paused) return;
     this.state = { ...this.state, shipment: named(this.state.shipment, demoShipments().map(item => item.id)), synced: false };
+    this.history = null;
+    this.retryAt = 0;
     this.nextCheckAt = this.nextCheckAt ?? Date.now();
     this.alarm.set(this.nextCheckAt);
   }
@@ -85,6 +93,17 @@ export class ShipmentAgent extends Actor {
     if (this.state && !this.state.paused && !this.paused) this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, batch) };
   }
 
+  /** The one background read of the Relay history, unless it is under way, done, or backing off. Started by a check and never awaited by one. */
+  private async readHistory(start: ShipmentState): Promise<void> {
+    if (this.reading || this.history || Date.now() < this.retryAt) return;
+    this.reading = true;
+    const connection = await connect(start, false).catch((): RelayOutcome<null> => ({ status: 'unavailable', message: 'Agent Relay channel is unavailable. Monitoring will retry.' }));
+    const read = connection.status === 'unavailable' ? connection : await readChannel(start.relay, start.cursor ?? null).catch((): RelayOutcome<ChannelRead> => ({ status: 'unavailable', message: 'Agent Relay history is unavailable. Monitoring will retry.' }));
+    if (read.status === 'ok') { this.history = read.value; this.failures = 0; this.failure = null; }
+    else { this.failures += 1; this.failure = read.message; this.retryAt = Date.now() + Math.min(60_000, 2_000 * 2 ** this.failures); }
+    this.reading = false;
+  }
+
   async check(): Promise<RelayOutcome<Shipment>> {
     if (this.paused || this.state?.paused) return this.state ? relaySuccess(this.state.shipment) : { status: 'unavailable', message: 'Vessel removed from fleet.' };
     await this.scheduleCheck();
@@ -92,9 +111,9 @@ export class ShipmentAgent extends Actor {
     if (this.state.shipment.voyage?.status === 'planned' || this.state.shipment.voyage?.status === 'arrived') return relaySuccess(this.state.shipment);
     const start = this.state;
     const now = new Date().toISOString();
-    const connection = await connect(start, false);
     const heard = start.inbox ?? emptyInbox;
-    const hearing = await hear(start, heard, connection, () => readChannel(start.relay, start.cursor ?? null));
+    if (!start.synced) void this.readHistory(start);
+    const hearing = hear(start, heard, this.history, this.failure);
     const thought = await think({ assess: assessment, binding: (shipment, mmsi) => telemetryBinding(shipment, mmsi, demo, telemetrySource) }, start, hearing.channel, now);
     if (this.paused || this.state?.paused) return this.state ? relaySuccess(this.state.shipment) : { status: 'unavailable', message: 'Vessel removed from fleet.' };
     const latest = this.state ?? start;
