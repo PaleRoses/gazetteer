@@ -1,4 +1,4 @@
-import { ports } from '../../core/demo';
+import { ports } from '../../core/ports';
 import type { Evidence, Shipment } from '../../core/types';
 import type { Observation, Signal } from '../telemetry/watcher';
 import type { AssessableNotice } from './exposure';

@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { demoShipments, ports } from '../../../src/core/demo';
+import { demoShipments } from '../../../src/core/demo';
+import { ports } from '../../../src/core/ports';
 import { evidenceLine, exposure, isActive, radiusKm, type Lane, type Place } from '../../../src/server/sources/exposure';
 import { fetchGdacs, gdacsUrl, normalizeGdacs } from '../../../src/server/sources/gdacs';
 import { fetchNws, normalizeNws } from '../../../src/server/sources/nws';
@@ -135,8 +136,8 @@ describe('exposure', () => {
 
 describe('activity window', () => {
   const champi = byId(gdacs, champiId(gdacs));
-  test('recorded Typhoon Champi came within reach of Shanghai while it lasted, and not after', () => {
-    expect(exposure(champi, places, []).ports.map(hit => hit.portId)).toEqual(['shanghai']);
+  test('recorded Typhoon Champi came within reach of Shanghai, Ningbo-Zhoushan and Busan while it lasted, and not after', () => {
+    expect(exposure(champi, places, []).ports.map(hit => hit.portId)).toEqual(['shanghai', 'ningbo-zhoushan', 'busan']);
     expect(isActive(champi, new Date('2026-10-24T12:00:00Z'))).toBe(true);
     expect(isActive(champi, new Date('2026-10-31T20:00:00Z'))).toBe(false);
   });
@@ -212,35 +213,35 @@ describe('lane-only notices', () => {
   const portIds = places.map(place => place.id);
   const reporters = (notice: Notice) => portIds.filter(id => noticesForPort([notice], id, now).length > 0);
 
-  test('recorded IN-FA-26 touches the Los Angeles to Shanghai lane and is reported by Shanghai alone', () => {
+  test('recorded IN-FA-26 touches the Los Angeles to Shanghai lane and is reported by Busan alone, the nearest port', () => {
     const typhoon = byId(gdacs, 'gdacs:TC:1001343');
-    expect(reporters(typhoon)).toEqual(['shanghai']);
-    const [entry] = noticesForPort([typhoon], 'shanghai', now);
+    expect(reporters(typhoon)).toEqual(['busan']);
+    const [entry] = noticesForPort([typhoon], 'busan', now);
     expect(entry?.hit.basis).toBe('nearest-to-lane');
     expect(entry?.lanes.map(lane => lane.laneId)).toEqual(['gz-1045']);
   });
 
-  test('the nearest port decides: a storm mid-Pacific near the American side belongs to Los Angeles, near the Asian side to Shanghai', () => {
+  test('the nearest port decides: a storm mid-Pacific near the American side belongs to Los Angeles, near the Asian side to Busan', () => {
     expect(reporters(synthetic('cyclone', pointAt(-170, 32)))).toEqual(['los-angeles']);
-    expect(reporters(synthetic('cyclone', pointAt(170, 31)))).toEqual(['shanghai']);
+    expect(reporters(synthetic('cyclone', pointAt(170, 31)))).toEqual(['busan']);
   });
 
   test('a notice that touches no port and no lane is reported by nobody', () => {
     expect(reporters(synthetic('cyclone', pointAt(-160, 0)))).toEqual([]);
   });
 
-  test('a notice that reaches a port is reported by that port, never also by the nearest', () => {
-    expect(reporters(synthetic('cyclone', pointAt(4.48, 51.92 + 2)))).toEqual(['rotterdam']);
+  test('a notice that reaches ports is reported by them, never also by the nearest', () => {
+    expect(reporters(synthetic('cyclone', pointAt(4.48, 51.92 + 2)))).toEqual(['rotterdam', 'antwerp']);
   });
 
   test('the disruption carries the reach as geometry, names the lane, and keeps one id whichever port reports it', () => {
     const typhoon = byId(gdacs, 'gdacs:TC:1001343');
-    const [entry] = noticesForPort([typhoon], 'shanghai', now);
+    const [entry] = noticesForPort([typhoon], 'busan', now);
     const disruption = toDisruption(entry!);
-    expect(disruption).toMatchObject({ portId: 'shanghai', delayHours: null, geometry: { center: [143.5, 22.8], radiusKm: radiusKm.cyclone } });
+    expect(disruption).toMatchObject({ portId: 'busan', delayHours: null, geometry: { center: [143.5, 22.8], radiusKm: radiusKm.cyclone } });
     expect(disruption.evidence.detail).toContain('gz-1045');
     expect(disruption.evidence.detail).toContain('nearest port');
     expect(toDisruption({ ...entry!, hit: { ...entry!.hit, portId: 'los-angeles' } }).id).toBe(disruption.id);
-    expect(disruption.id).not.toContain('shanghai');
+    expect(disruption.id).not.toContain('busan');
   });
 });

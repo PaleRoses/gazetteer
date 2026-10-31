@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { PortId } from '../../core/types';
+import type { PortId } from '../../core/ports';
 import { getJson, type Fetcher } from './http';
 import { userAgent, type FetchResult, type Notice, type NoticeGeometry, type NoticeSeverity } from './notice';
 

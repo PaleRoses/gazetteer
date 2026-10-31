@@ -1,5 +1,5 @@
 import type { PortBulletin } from '../../../core/board';
-import type { PortId } from '../../../core/types';
+import type { PortId } from '../../../core/ports';
 import type { PortAssessment } from './risk';
 
 const clip = (text: string, limit: number): string => text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;

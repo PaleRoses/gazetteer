@@ -1,5 +1,5 @@
 import type { BoardMessage, EtaNotice, PortBulletin, ShipObservation } from '../../../core/board';
-import type { PortId } from '../../../core/types';
+import type { PortId } from '../../../core/ports';
 import type { RelayCursor } from '../../relay/board';
 import { latestBy, type Previous } from './risk';
 

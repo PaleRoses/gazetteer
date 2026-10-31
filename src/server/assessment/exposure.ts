@@ -1,6 +1,6 @@
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import { lineString, point } from '@turf/helpers';
-import { ports } from '../../core/demo';
+import { ports } from '../../core/ports';
 import { voyageRoute } from '../../core/routes';
 import type { Disruption, Shipment } from '../../core/types';
 

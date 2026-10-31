@@ -1,5 +1,5 @@
-import { demoShipments, ports } from '../../core/demo';
-import type { PortId } from '../../core/types';
+import { demoShipments } from '../../core/demo';
+import { ports, type PortId } from '../../core/ports';
 import { exposure, isActive, nearestPort, type Lane, type LaneHit, type Place, type PortHit } from './exposure';
 import { fetchGdacs } from './gdacs';
 import type { Fetcher } from './http';

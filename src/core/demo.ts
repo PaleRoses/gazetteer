@@ -1,12 +1,6 @@
 import { positionAlong, progressAt, voyageRoute } from './routes.js';
-import type { Disruption, Port, PortId, Shipment } from './types.js';
-
-export const ports: readonly Port[] = [
-  { id: 'singapore', name: 'Singapore', country: 'Singapore', coordinates: [103.82, 1.26] },
-  { id: 'rotterdam', name: 'Rotterdam', country: 'Netherlands', coordinates: [4.48, 51.92] },
-  { id: 'shanghai', name: 'Shanghai', country: 'China', coordinates: [121.5, 31.2] },
-  { id: 'los-angeles', name: 'Los Angeles', country: 'United States', coordinates: [-118.26, 33.74] },
-];
+import { portById, type PortId } from './ports.js';
+import type { Disruption, Shipment } from './types.js';
 
 const afterHours = (at: string, hours: number): string => new Date(Date.parse(at) + hours * 3_600_000).toISOString();
 
@@ -26,7 +20,7 @@ export function demoShipments(now: Date = new Date()): readonly Shipment[] {
   const lane = (spec: Spec, arrivalHours: number, departedHoursAgo: number): Shipment => {
     const route = voyageRoute({ ...spec, via: [] }) ?? [];
     const departed = Date.parse(at) - departedHoursAgo * 3_600_000;
-    const coordinates = positionAlong(route, progressAt(new Date(departed).toISOString(), afterHours(at, arrivalHours), Date.parse(at))) ?? ports.find(port => port.id === spec.origin)?.coordinates ?? [0, 0];
+    const coordinates = positionAlong(route, progressAt(new Date(departed).toISOString(), afterHours(at, arrivalHours), Date.parse(at))) ?? portById.get(spec.origin)?.coordinates ?? [0, 0];
     return voyage({ ...spec, via: [], coordinates, route }, arrivalHours, departedHoursAgo);
   };
   return [
@@ -51,7 +45,7 @@ export function assessDisruption(shipment: Shipment, disruption: Disruption): Sh
     || !(shipment.destination === disruption.portId || shipment.via.includes(disruption.portId))) return shipment;
   const delayHours = shipment.delayHours + added;
   const eta = afterHours(shipment.baselineEta, delayHours);
-  const port = ports.find(value => value.id === disruption.portId);
+  const port = portById.get(disruption.portId);
   return {
     ...shipment, eta, delayHours, risk: delayHours >= 24 ? 'delayed' : 'watch',
     change: `${port?.name ?? disruption.portId} disruption adds ${added}h to the arrival estimate.`,

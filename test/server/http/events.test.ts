@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { demoShipments, ports } from '../../../src/core/demo';
+import { demoShipments } from '../../../src/core/demo';
+import { ports } from '../../../src/core/ports';
 import type { Comment, Dashboard } from '../../../src/core/types';
 import { createEventsHandler, frame, pingFrame, preamble } from '../../../src/server/http/events';
 import { createHub } from '../../../src/server/runtime/hub';

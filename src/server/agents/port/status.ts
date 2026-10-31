@@ -1,5 +1,6 @@
 import type { BoardMessage, PortBulletin, PortStatus } from '../../../core/board';
-import type { PortId, Shipment } from '../../../core/types';
+import type { PortId } from '../../../core/ports';
+import type { Shipment } from '../../../core/types';
 
 /** Upcoming calls only: the origin has departed, the same rule the assessor and the deterministic model use. */
 export const relevance = (shipments: readonly Shipment[], portId: PortId): number =>

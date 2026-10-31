@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { BoardMessage, PortBulletin, ShipObservation } from '../../../../src/core/board';
-import { ports } from '../../../../src/core/demo';
+import { ports } from '../../../../src/core/ports';
 import { emptyMemory } from '../../../../src/server/agents/port/memory';
 import { watchPort, type BoardIo } from '../../../../src/server/agents/port/watch';
 import type { RelayCursor } from '../../../../src/server/relay/board';

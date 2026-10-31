@@ -2,7 +2,7 @@
 // Run: bun scripts/build-geodata.ts
 import { seaRoute } from 'searoute-ts';
 import type { FeatureCollection, MultiPolygon, Polygon, Position } from 'geojson';
-import { ports } from '../src/core/demo';
+import { ports } from '../src/core/ports';
 
 const round = (value: number, digits: number): number => Math.round(value * 10 ** digits) / 10 ** digits;
 const roundPosition = (digits: number) => (position: Position): Position => [round(position[0] ?? 0, digits), round(position[1] ?? 0, digits)];

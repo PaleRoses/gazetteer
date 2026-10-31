@@ -1,4 +1,4 @@
-import { ports } from '../../core/demo.js';
+import { ports } from '../../core/ports.js';
 import { positionAlong, progressAt, routeLengthKm, voyageRoute } from '../../core/routes.js';
 import type { Shipment } from '../../core/types.js';
 import type { LonLat, Telemetry, TelemetrySource } from './telemetry';

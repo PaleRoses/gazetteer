@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ports } from '../../src/core/demo';
-import type { PortId } from '../../src/core/types';
+import { ports, type PortId } from '../../src/core/ports';
 import { distanceKm, positionAlong, progressAt, routeLengthKm, routeThrough, splitAt, unwrap, voyageRoute, type LngLat } from '../../src/core/routes';
 
 const port = (id: PortId): LngLat => (ports.find(item => item.id === id)?.coordinates ?? [NaN, NaN]) as LngLat;

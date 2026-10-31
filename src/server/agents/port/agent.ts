@@ -1,6 +1,6 @@
 import { Actor, Persisted } from 'durable-actors';
-import { ports } from '../../../core/demo';
-import { relaySuccess, type Disruption, type PortId, type RelayOutcome } from '../../../core/types';
+import { ports, type PortId } from '../../../core/ports';
+import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/types';
 import { postBoard, readBoard } from '../../relay/board';
 import { emptyMemory, type PortMemory } from './memory';
 import { watchPort, type BoardIo } from './watch';

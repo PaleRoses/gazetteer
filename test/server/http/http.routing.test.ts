@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { demoShipments, ports } from '../../../src/core/demo';
+import { demoShipments } from '../../../src/core/demo';
+import { ports } from '../../../src/core/ports';
 import { relaySuccess, type Dashboard } from '../../../src/core/types';
 import { createAccess } from '../../../src/server/access/access';
 import { createApi } from '../../../src/server/http/api';

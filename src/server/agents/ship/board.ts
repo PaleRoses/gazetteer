@@ -1,9 +1,9 @@
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import { lineString, point } from '@turf/helpers';
 import type { BoardMessage, ShipAssessment, ShipObservation } from '../../../core/board';
-import { ports } from '../../../core/demo';
+import { ports, type PortId } from '../../../core/ports';
 import { distanceKm, voyageRoute } from '../../../core/routes';
-import type { PortId, RelayOutcome, Risk } from '../../../core/types';
+import type { RelayOutcome, Risk } from '../../../core/types';
 import type { AssessedShipment } from '../../assessment/apply';
 import type { BoardEvidence } from '../../assessment/prompt';
 import { describeError, type LonLat } from '../../telemetry/telemetry';

@@ -1,4 +1,4 @@
-import { ports } from '../../../core/demo';
+import { ports } from '../../../core/ports';
 import { voyageRoute } from '../../../core/routes';
 import { assessTelemetry, type AssessDeps, type AssessmentCache, type AssessmentOutcome } from '../../assessment/assess';
 import type { AssessedShipment } from '../../assessment/apply';

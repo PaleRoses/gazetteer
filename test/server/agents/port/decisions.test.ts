@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseBoardMessage, type EtaNotice, type PortBulletin, type ShipObservation } from '../../../../src/core/board';
-import { demoShipments, ports } from '../../../../src/core/demo';
+import { demoShipments } from '../../../../src/core/demo';
+import { ports } from '../../../../src/core/ports';
 import { decideBulletin } from '../../../../src/server/agents/port/bulletin';
 import { anchoredShips, arrivalsDue, assessPort, countLevel, bands, noticeLevel, type PortInputs } from '../../../../src/server/agents/port/risk';
 import { latestBulletin, portStatuses, relevance } from '../../../../src/server/agents/port/status';
@@ -153,7 +154,7 @@ describe('bulletins', () => {
 describe('port status', () => {
   const fleet = demoShipments(now).filter(ship => ['gz-1042', 'gz-1043', 'gz-1044', 'gz-1045'].includes(ship.id));
   test('relevance counts the shipments whose remaining route includes the port, origin excluded', () => {
-    expect(Object.fromEntries(ports.map(port => [port.id, relevance(fleet, port.id)]))).toEqual({ singapore: 2, rotterdam: 1, shanghai: 1, 'los-angeles': 1 });
+    expect(Object.fromEntries(ports.map(port => [port.id, relevance(fleet, port.id)] as const).filter(([, count]) => count > 0))).toEqual({ singapore: 2, rotterdam: 1, shanghai: 1, 'los-angeles': 1 });
   });
 
   test('the latest bulletin gives the risk; a silent port is normal', () => {

@@ -1,4 +1,4 @@
-import type { PortId } from './types.js';
+import type { PortId } from './ports.js';
 import { seaLanes } from './lanes.generated.js';
 
 export type LngLat = readonly [number, number];

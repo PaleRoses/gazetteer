@@ -1,5 +1,6 @@
 import type { BoardMessage } from '../../../core/board';
-import { relaySuccess, type PortId, type RelayOutcome } from '../../../core/types';
+import type { PortId } from '../../../core/ports';
+import { relaySuccess, type RelayOutcome } from '../../../core/types';
 import type { BoardRead, RelayCursor } from '../../relay/board';
 import type { RelayIdentity } from '../../relay/client';
 import type { PortNotice } from '../../sources/poll';

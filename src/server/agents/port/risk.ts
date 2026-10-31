@@ -5,7 +5,7 @@
  * previous answer). The predicate and the 3 km / 4 km pair are reused from ../telemetry/gfw.ts, which ported them first.
  */
 import type { EtaNotice, PortRisk, ShipObservation } from '../../../core/board';
-import type { PortId } from '../../../core/types';
+import type { PortId } from '../../../core/ports';
 import { distanceKm } from '../../sources/geo';
 import type { PortNotice } from '../../sources/poll';
 import type { LonLat, NoticeSeverity } from '../../sources/notice';

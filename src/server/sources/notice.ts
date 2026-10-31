@@ -1,4 +1,4 @@
-import type { PortId } from '../../core/types';
+import type { PortId } from '../../core/ports';
 
 export type NoticeKind = 'cyclone' | 'flood' | 'volcano' | 'earthquake' | 'weather';
 export type NoticeSeverity = 'minor' | 'moderate' | 'severe' | 'extreme';

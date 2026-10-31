@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { BoardMessage, EtaNotice, ShipObservation } from '../../../src/core/board';
-import { demoShipments, ports } from '../../../src/core/demo';
+import { demoShipments } from '../../../src/core/demo';
+import { ports } from '../../../src/core/ports';
 import { distanceKm, voyageRoute } from '../../../src/core/routes';
 import type { Shipment } from '../../../src/core/types';
 import { assessPort } from '../../../src/server/agents/port/risk';

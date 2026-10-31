@@ -1,4 +1,4 @@
-import type { PortId } from '../../core/types';
+import type { PortId } from '../../core/ports';
 import { distanceToGeometryKm, nearestOnPath } from './geo';
 import type { LonLat, Notice, NoticeKind } from './notice';
 

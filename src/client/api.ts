@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { portIds } from '../core/ports';
 import type { Comment, Dashboard, Shipment, User, Workspace } from '../core/types';
 
 const coordinate = z.tuple([z.number(), z.number()]);
-const portId = z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']);
+const portId = z.enum(portIds);
 const shipment: z.ZodType<Shipment> = z.object({
   id: z.string(), vessel: z.string(), reference: z.string(), cargo: z.string(), containers: z.number(),
   origin: portId, destination: portId, via: z.array(portId), coordinates: coordinate, route: z.array(coordinate),
