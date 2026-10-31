@@ -1,4 +1,4 @@
-import type { PortId } from './ports.js';
+import { portIds, type PortId } from './ports.js';
 import type { Commitments, Offer } from './recovery.js';
 import type { Shipment } from './types.js';
 
@@ -70,6 +70,15 @@ export const trucksFor = (city: PortId, anchor: string): readonly Departure[] =>
     .toSorted((a, b) => Date.parse(a.departs) - Date.parse(b.departs)) : [];
 };
 
+const storageOfferId = (city: PortId, plugId: string, from: string, until: string): string => `${city}:storage:${plugId}:${from}/${until}`;
+const storagePattern = /^([a-z-]+):storage:([^:]+):[^/]+\/.+$/;
+
+/** The ledger resource a storage offer occupies, `${city}:plug:${plugId}`: overlapping intervals on one plug are one resource. Null for any other offer id. */
+export const plugOf = (offerId: string): string | null => {
+  const [, city, plugId] = storagePattern.exec(offerId) ?? [];
+  return city && plugId && (portIds as readonly string[]).includes(city) ? `${city}:plug:${plugId}` : null;
+};
+
 export type TerminalRequest = Readonly<{ service: 'unload' | 'storage'; after?: string; until?: string }>;
 
 /**
@@ -94,7 +103,7 @@ export function terminalQuote(city: PortId, anchor: string, request: TerminalReq
     const until = Date.parse(wanted) < Date.parse(at(anchor, plug.untilHours)) ? new Date(Date.parse(wanted)).toISOString() : at(anchor, plug.untilHours);
     const hours = Math.max(plug.minimumHours, hoursBetween(from, until));
     return hoursBetween(from, until) > 0
-      ? { service: 'storage', id: `${city}:storage:${plug.id}:${from}/${until}`, provider, powered: true, from, until, priceEur: Math.round(hours * plug.eurPerHour * 100) / 100, expiresAt }
+      ? { service: 'storage', id: storageOfferId(city, plug.id, from, until), provider, powered: true, from, until, priceEur: Math.round(hours * plug.eurPerHour * 100) / 100, expiresAt }
       : null;
   }, null);
 }
