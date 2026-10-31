@@ -41,6 +41,17 @@ describe('ship reaction to a port bulletin', () => {
     expect(react(meridian, board, {}, null, now).reactions.singapore?.hours).toBe(ahead(2));
   });
 
+  test('a city watch is heard like a bulletin: traffic sets the delay, hazards only a watch and never undo it', () => {
+    const traffic: BoardMessage = { id: 'city:t', kind: 'city.traffic', author: { role: 'city', city: 'singapore', element: 'traffic' }, at: now, summary: 's', risk: 'severe', anchored: 10, arrivals48h: 0, evidenceIds: [], basis: { perHour: rate, provenance: 'assumed', basis: 'b' } };
+    const hazard: BoardMessage = { id: 'city:h', kind: 'city.hazards', author: { role: 'city', city: 'singapore', element: 'hazards' }, at: '2026-10-31T12:10:00.000Z', summary: 's', risk: 'elevated', notices: [], evidenceIds: [] };
+    const heard = react(meridian, [traffic, hazard], {}, null, '2026-10-31T12:10:00.000Z');
+    expect(heard.reactions.singapore).toEqual({ bulletinId: 'city:t', hours: ahead(10) });
+    expect(heard.summary.watching).toEqual(expect.arrayContaining(['city:t', 'city:h']));
+    const alone = react(meridian, [hazard], {}, null, '2026-10-31T12:10:00.000Z');
+    expect(alone.shipment).toBe(meridian);
+    expect(alone.summary.watching).toEqual(['city:h']);
+  });
+
   test('the same bulletin changes nothing and a shorter queue relaxes the estimate; the delay is set, not added', () => {
     const first = react(meridian, [bulletin({ id: 'b1', anchored: 20 })], {}, null, now);
     const again = react(first.shipment, [bulletin({ id: 'b1', anchored: 20 })], first.reactions, null, now);

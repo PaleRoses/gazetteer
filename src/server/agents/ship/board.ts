@@ -1,6 +1,6 @@
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import { lineString, point } from '@turf/helpers';
-import type { BoardMessage, QueueDrainBasis, ShipAssessment, ShipObservation } from '../../../core/board';
+import type { BoardMessage, PortRisk, QueueDrainBasis, ShipAssessment, ShipObservation } from '../../../core/board';
 import { ports, type PortId } from '../../../core/ports';
 import { distanceKm, voyageRoute } from '../../../core/routes';
 import type { RelayOutcome, Risk } from '../../../core/types';
@@ -47,6 +47,17 @@ export function remainingCalls(shipment: AssessedShipment): readonly Readonly<{ 
 /** What the ship concluded from the board this cycle: the rule-based floor, the queue estimates it moved, and every board message it relied on. */
 export type Society = Readonly<{ floor: RiskFloor | null; queues: readonly Readonly<QueueDrainBasis & { bulletinId: string; hours: Readonly<{ low: number; likely: number; high: number }> }>[]}>;
 export const noSociety: Society = { floor: null, queues: [] };
+/** What a port's watchers say, whichever message carried it: the queue (traffic) or the weather (hazards). */
+export type PortReport = Readonly<{ id: string; at: string; portId: PortId; element: 'traffic' | 'hazards'; risk: PortRisk; anchored: number; arrivals48h: number; evidenceIds: readonly string[] }>;
+export const portReportOf = (message: BoardMessage): PortReport | null => {
+  switch (message.kind) {
+    case 'port.bulletin': return { id: message.id, at: message.at, portId: message.portId, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
+    case 'city.traffic': return { id: message.id, at: message.at, portId: message.author.city, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
+    case 'city.hazards': return { id: message.id, at: message.at, portId: message.author.city, element: 'hazards', risk: message.risk, anchored: 0, arrivals48h: 0, evidenceIds: message.evidenceIds };
+    default: return null;
+  }
+};
+
 export type DecisionInput = Readonly<{ shipment: AssessedShipment; situation: Situation | null; now: string; society?: Society }>;
 
 /** A ship says when its signals begin, once, and says when they clear, once: a port that counted it stops counting it. */

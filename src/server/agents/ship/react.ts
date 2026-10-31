@@ -1,8 +1,8 @@
-import type { BoardMessage, PortBulletin } from '../../../core/board';
+import type { BoardMessage } from '../../../core/board';
 import { portById, type PortId } from '../../../core/ports';
 import { shiftEta } from '../../../core/eta';
 import type { AssessedShipment } from '../../assessment/apply';
-import { inHorizon, remainingCalls } from './board';
+import { inHorizon, portReportOf, remainingCalls, type PortReport } from './board';
 import type { ReactionSummary } from './risk-floor';
 
 /** Declared, not tuned. The queue-drain delay is the queue ahead divided by the port's service rate; the band and cap say how far that estimate may be trusted. */
@@ -30,13 +30,13 @@ export type Reacted<S extends AssessedShipment> = Readonly<{
 
 const hoursUntil = (at: string, now: string): number => (Date.parse(at) - Date.parse(now)) / 3_600_000;
 
-/** The newest bulletin for each port still ahead, inside the horizon. */
-const newestBulletins = (board: readonly BoardMessage[], ahead: ReadonlySet<PortId>, now: string): readonly PortBulletin[] => {
-  const bulletins = board.flatMap(message => message.kind === 'port.bulletin' && ahead.has(message.portId) && inHorizon(message.at, now) ? [message] : []);
-  const newest = new Map<PortId, PortBulletin>();
-  bulletins.forEach(message => {
-    const known = newest.get(message.portId);
-    if (!known || Date.parse(message.at) > Date.parse(known.at) || (message.at === known.at && message.id > known.id)) newest.set(message.portId, message);
+/** The newest report of each watcher of each port still ahead, inside the horizon. */
+const newestBulletins = (board: readonly BoardMessage[], ahead: ReadonlySet<PortId>, now: string): readonly PortReport[] => {
+  const newest = new Map<string, PortReport>();
+  board.flatMap(message => portReportOf(message) ?? []).filter(report => ahead.has(report.portId) && inHorizon(report.at, now)).forEach(report => {
+    const key = `${report.portId}:${report.element}`;
+    const known = newest.get(key);
+    if (!known || Date.parse(report.at) > Date.parse(known.at) || (report.at === known.at && report.id > known.id)) newest.set(key, report);
   });
   return [...newest.values()];
 };
@@ -44,7 +44,7 @@ const newestBulletins = (board: readonly BoardMessage[], ahead: ReadonlySet<Port
 const round = (value: number): number => Math.round(value);
 
 /** Ships queued before this one: the bulletin's count, less this ship, less every ship whose stop the board shows was reported after this ship's own. A stop the ship cannot find on its board counts as ahead of it. */
-const anchoredAhead = (bulletin: PortBulletin, board: readonly BoardMessage[], ownObservation: string | null): number => {
+const anchoredAhead = (bulletin: PortReport, board: readonly BoardMessage[], ownObservation: string | null): number => {
   const mine = ownObservation && bulletin.evidenceIds.includes(ownObservation) ? board.find(message => message.id === ownObservation) : undefined;
   if (!ownObservation || !bulletin.evidenceIds.includes(ownObservation)) return bulletin.anchored;
   const behind = mine ? bulletin.evidenceIds.filter(id => id !== ownObservation).filter(id => {
@@ -61,7 +61,7 @@ export function react<S extends AssessedShipment>(shipment: S, board: readonly B
   const settled = bulletins.reduce<Readonly<{ shipment: S; reactions: Reactions; changed: readonly ReactionBasis[] }>>((state, bulletin) => {
     const known = state.reactions[bulletin.portId];
     const call = calls.find(item => item.portId === bulletin.portId);
-    if (known?.bulletinId === bulletin.id || !call) return state;
+    if (bulletin.element === 'hazards' || known?.bulletinId === bulletin.id || !call) return state;
     const port = portById.get(bulletin.portId);
     const ahead = anchoredAhead(bulletin, board, ownObservation);
     const rate = port?.serviceRate;
