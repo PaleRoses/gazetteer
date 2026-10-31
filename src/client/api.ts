@@ -37,7 +37,7 @@ export const dashboardSchema: z.ZodType<Dashboard> = z.object({
   ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })),
   updatedAt: z.string(), mode: z.enum(['simulation', 'mixed']), runtime: z.string(), relay: z.string(),
   portStatus: z.array(portStatus).optional(), board: boardPosts.optional(),
-  relayHealth: z.object({ state: z.enum(['live', 'reconnecting']), since: z.string().nullable(), lastPostAt: z.string().nullable() }).optional(),
+  relayHealth: z.object({ state: z.enum(['live', 'reconnecting', 'off']), since: z.string().nullable(), lastPostAt: z.string().nullable() }).optional(),
   startup: z.object({ ready: z.number(), total: z.number(), queued: z.number().optional() }).optional(),
   operations: operationsSchema.optional(), intelligence: intelligenceSchema.optional(),
   routes: z.array(z.object({ id: z.string(), endpoints: z.tuple([portId, portId]), path: z.array(coordinate), shipmentIds: z.array(z.string()), risk: z.enum(['on-track', 'watch', 'delayed']), attention: z.number(), maxDelayHours: z.number(), summary: z.string(), intelligence: intelligenceSchema.optional() })).optional(),
