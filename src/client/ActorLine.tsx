@@ -8,7 +8,9 @@ export const actorName = (author: BoardAuthor, dashboard: Dashboard): string => 
   switch (author.role) {
     case 'ship': return author.agent ? `${author.agent} aboard ${author.vessel}` : `${author.vessel} · ship actor`;
     case 'port': return `${portName(dashboard.ports, author.id)} · port actor`;
-    case 'city': return `${portName(dashboard.ports, author.city)} · ${author.element} watch`;
+    case 'city': return `${portName(dashboard.ports, author.city)} · ${author.element === 'terminal' ? 'terminal desk' : `${author.element} watch`}`;
+    case 'cargo': return `Cargo agent ${author.id} aboard ${author.vessel}`;
+    case 'haulier': return `${portName(dashboard.ports, author.city)} · haulier`;
   }
   const unhandled: never = author;
   return unhandled;

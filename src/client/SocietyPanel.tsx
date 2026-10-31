@@ -2,6 +2,7 @@ import { createMemo, For, Show, type JSX } from 'solid-js';
 import { Anchor, ArrowRight, MessageSquare, Ship } from 'lucide-solid';
 import { concerns } from '../core/board';
 import type { BoardMessage, PortRisk, ShipAssessment, ShipObservation } from '../core/board';
+import { describeConstraint, type Offer, type Service } from '../core/recovery';
 import type { Dashboard } from '../core/types';
 import { resolveBoardCitations, type Citation } from './citations';
 import { actorName, boardAnchor } from './ActorLine';
@@ -11,7 +12,25 @@ const kindLabel: Readonly<Record<BoardMessage['kind'], string>> = {
   'port.bulletin': 'Port bulletin', 'ship.observation': 'Ship observation',
   'ship.assessment': 'Ship assessment', 'ship.eta': 'Arrival update',
   'city.traffic': 'City traffic report', 'city.hazards': 'City hazards report',
+  'recovery.request': 'Recovery request', 'recovery.offer': 'Recovery offer', 'recovery.hold': 'Hold placed',
+  'recovery.withdraw': 'Offer withdrawn', 'recovery.plan': 'Recovery plan', 'recovery.confirm': 'Booking confirmed', 'recovery.release': 'Hold released',
 };
+const serviceLabel: Readonly<Record<Service, string>> = { unload: 'Unloading window', storage: 'Reefer storage', truck: 'Truck' };
+const clock = (value: string): string => `${date(value)}, ${time(value)} UTC`;
+
+function OfferFacts(props: Readonly<{ offer: Offer }>): JSX.Element {
+  const terms = (): JSX.Element => {
+    const offer = props.offer;
+    switch (offer.service) {
+      case 'unload': return <span>Unload {clock(offer.at)}</span>;
+      case 'storage': return <span>{offer.powered ? 'Powered' : 'Unpowered'} {clock(offer.from)} to {clock(offer.until)}</span>;
+      case 'truck': return <span>Departs {clock(offer.departs)}</span>;
+    }
+    const unhandled: never = offer;
+    return unhandled;
+  };
+  return <div class="board-facts"><span>{serviceLabel[props.offer.service]}</span>{terms()}<span>EUR {props.offer.priceEur}</span><span>Offer expires {clock(props.offer.expiresAt)}</span></div>;
+}
 const methodLabel: Readonly<Record<ShipAssessment['method'], string>> = {
   'ai-assessed': 'AI assessment', 'deterministic-fallback': 'Rule-based fallback', deterministic: 'Deterministic model', 'rule-based': 'Rule-based assessment',
 };
@@ -48,6 +67,18 @@ function BoardEntry(props: Readonly<{ message: BoardMessage; dashboard: Dashboar
       case 'ship.observation': return <><div class="board-facts"><For each={message.signals}>{signal => <span>{signalLabel[signal]}</span>}</For></div><p class="board-meta">Observed by {message.provider}<Show when={message.nearPort}>{id => <> near {portName(props.dashboard.ports, id())}</>}</Show> · {date(message.observedAt)}, {time(message.observedAt)} UTC</p></>;
       case 'ship.assessment': return <><div class="board-facts"><RiskBadge risk={message.risk} /><span>{methodLabel[message.method]}</span><span>ETA {date(message.eta)}, {time(message.eta)} UTC</span></div><p class="board-meta">{message.confidence === null ? 'Confidence not supplied.' : `Model confidence ${Math.round(message.confidence * 100)}%.`}<Show when={message.delayHours}>{delay => <> Delay estimate {delay().low}–{delay().high}h; likely {delay().likely}h.</>}</Show> Method is not source provenance.</p><Show when={message.basis}>{basis => <p class="board-meta">Queue-drain rule at {portName(props.dashboard.ports, basis().portId)}: {basis().anchored} anchored vessels ÷ {basis().serviceRate.departuresPerHour} departures/hour ({basis().serviceRate.provenance} service rate).</p>}</Show></>;
       case 'ship.eta': return <p class="board-meta">{portName(props.dashboard.ports, message.portId)} arrival: {date(message.previousEta)}, {time(message.previousEta)} <ArrowRight size={13} /> {date(message.eta)}, {time(message.eta)} UTC</p>;
+      case 'recovery.request': return <div class="board-facts"><span>{serviceLabel[message.service]}</span><Show when={message.after}>{after => <span>After {clock(after())}</span>}</Show><Show when={message.until}>{until => <span>Until {clock(until())}</span>}</Show><Show when={message.powered}><span>Needs power</span></Show></div>;
+      case 'recovery.offer': return <OfferFacts offer={message.offer} />;
+      case 'recovery.hold': return <p class="board-meta">Holds offer <code>{message.offerId}</code> under key <code>{message.key}</code> until {clock(message.expiresAt)}.</p>;
+      case 'recovery.withdraw': return <p class="board-meta">Withdraws offer <code>{message.offerId}</code>: {message.reason}</p>;
+      case 'recovery.plan': {
+        const outcome = message.outcome;
+        return <><div class="board-facts"><span>{methodLabel[message.method]}</span><span>{outcome.status === 'fits' ? 'Plan fits' : 'Blocked'}</span></div>{outcome.status === 'fits'
+          ? <p class="board-meta">Ready {clock(outcome.plan.ready)} · truck departs {clock(outcome.plan.departs)} · delivered {clock(outcome.plan.delivered)} · EUR {outcome.plan.totalEur}</p>
+          : <p class="board-meta">{describeConstraint(outcome.blocking)}</p>}</>;
+      }
+      case 'recovery.confirm': return <p class="board-meta">Confirms offer <code>{message.offerId}</code> under key <code>{message.key}</code>.</p>;
+      case 'recovery.release': return <p class="board-meta">Releases offer <code>{message.offerId}</code> under key <code>{message.key}</code>.</p>;
     }
     const unhandled: never = message;
     return unhandled;
