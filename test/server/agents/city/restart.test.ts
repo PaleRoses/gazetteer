@@ -6,8 +6,10 @@ import { join, resolve } from 'node:path';
 import { createActorStub, createActorTransport } from 'durable-actors/backend';
 import { startLocalActors } from 'durable-actors/dev';
 import type { ShipObservation } from '../../../../src/core/board';
+import type { RecoveryMessage } from '../../../../src/core/recovery';
 import { portById } from '../../../../src/core/ports';
 import type { HazardWatch } from '../../../../src/server/agents/city/hazard-watch';
+import type { TerminalDesk } from '../../../../src/server/agents/city/terminal-desk';
 import type { TrafficWatch } from '../../../../src/server/agents/city/traffic-watch';
 import type { Disruption } from '../../../../src/core/types';
 
@@ -126,6 +128,41 @@ test('with Relay down for the whole check, a traffic watch still decides from wh
       const queued = (await watch.unpublished())?.board ?? [];
       expect(queued.map(message => message.kind)).toEqual(['city.traffic']);
       expect(queued[0]).toMatchObject({ risk: 'elevated', anchored: 2, evidenceIds: ['obs:a', 'obs:b'] });
+      expect(relay.sent.size).toBe(0);
+    } finally { await runtime.stop(); }
+  } finally {
+    relay.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+}, 180_000);
+
+type DeskClient = Pick<TerminalDesk, 'initialize' | 'deliver' | 'check' | 'unpublished'>;
+const deskMethods = [
+  { name: 'initialize', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'unpublished', result: 'value' },
+] as const;
+
+test('the terminal desk answers from the world\'s Rotterdam windows with Relay down, and its offer waits in the outbox', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'gazetteer-desk-'));
+  const relay = fakeRelay();
+  const project = projectWith({ RELAY_BASE_URL: relay.url, GAZETTEER_LIVE_SOURCES: 'off' });
+  const anchor = new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000).toISOString();
+  const later = (hours: number): string => new Date(Date.parse(anchor) + hours * 3_600_000).toISOString();
+  const ask: RecoveryMessage = {
+    id: 'case-1/request/open/unload', kind: 'recovery.request', author: { role: 'cargo', id: 'cargo-1', vessel: 'Meridian Star' }, at: new Date().toISOString(),
+    summary: 'An unloading window, please.', caseId: 'case-1', answers: [], to: { role: 'city', city: 'rotterdam', element: 'terminal' }, service: 'unload', after: later(6),
+  };
+  try {
+    const runtime = await startLocalActors({ project, projectId: 'gazetteer-desk', entrypoint: 'src/server/agents/index.ts', dataDir, apiKey: randomUUID(), quiet: true });
+    try {
+      const transport = createActorTransport({ projectId: runtime.connection.projectId, controlPlaneUrl: runtime.connection.controlPlaneUrl, apiKey: runtime.connection.apiKey, homeRegion: runtime.connection.storageRegion });
+      const desk = createActorStub<DeskClient>('TerminalDesk', 'desk-test-city-rotterdam-terminal', deskMethods, transport);
+      expect(await desk.initialize('workspace', 'rotterdam', 'workspace-key', true, join(dataDir, 'bookings.sqlite'), anchor)).toEqual({ status: 'ok', value: null });
+      relay.outage.down = true;
+      await desk.deliver({ board: [ask], disruptions: [] });
+      expect((await desk.check()).status).toBe('unavailable');
+      const queued = (await desk.unpublished())?.board ?? [];
+      expect(queued).toMatchObject([{ kind: 'recovery.offer', caseId: 'case-1', answers: ['case-1/request/open/unload'], offer: { service: 'unload', at: later(8), priceEur: 140 } }]);
       expect(relay.sent.size).toBe(0);
     } finally { await runtime.stop(); }
   } finally {

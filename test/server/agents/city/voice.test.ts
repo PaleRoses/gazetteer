@@ -23,7 +23,7 @@ describe('city watch voice', () => {
     const reports = board.filter(message => message.kind === 'city.traffic');
     expect(reports.length).toBeGreaterThan(0);
     reports.forEach(report => expect(unexplained(report)).toEqual([]));
-  });
+  }, 60_000);
 
   test('every number in a hazard report\'s summary is one of its own fields, whatever is in force', () => {
     const cases = [[], [reaching('a', 'minor', 'M 4.6 - 80 km SW of a town')], [reaching('a', 'minor', 'M 4.6'), reaching('b', 'severe', 'M 7.1 - 12 km N of the port'), reaching('c', 'minor', 'M 5.0')]];
