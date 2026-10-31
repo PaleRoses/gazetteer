@@ -255,3 +255,14 @@ describe('the act 2 demo controls', () => {
     access.close();
   });
 });
+
+describe('demo access', () => {
+  const available = async (demo: 'off' | 'loopback' | 'public', at: string): Promise<unknown> =>
+    (await (await createApi({ access: createAccess(':memory:'), monitoring: monitoringFixture, origin: at, demo })(new Request(`${at}/api/demo-session`))).json());
+  test('the waive-through opens on a public origin only when it is set to public, and never when off', async () => {
+    expect(await available('loopback', 'https://gazetteer.example')).toEqual({ available: false });
+    expect(await available('public', 'https://gazetteer.example')).toEqual({ available: true });
+    expect(await available('loopback', 'http://localhost:4310')).toEqual({ available: true });
+    expect(await available('off', 'http://localhost:4310')).toEqual({ available: false });
+  });
+});

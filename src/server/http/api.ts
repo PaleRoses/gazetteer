@@ -13,7 +13,7 @@ type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask' | 'withdrawTruck' | 'restartCargo'>>; origin: string; ingest?: IngestFeed; bookings?: Pick<Bookings, 'list'>; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask' | 'withdrawTruck' | 'restartCargo'>>; origin: string; ingest?: IngestFeed; bookings?: Pick<Bookings, 'list'>; demo?: DemoAccess; mail?: Mail; mailTransport?: MailTransport }>;
 type App = Readonly<{ Bindings: Readonly<{ clientKey: string }>; Variables: Readonly<{ user: User; token: string | undefined; membership: Workspace }> }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
@@ -41,6 +41,8 @@ const jsonOnly: MiddlewareHandler<App> = (c, next) =>
 const body = <S extends z.ZodType>(schema: S) => zValidator('json', schema, result => result.success ? undefined : json({ error: 'Invalid request fields' }, 400));
 
 const loopbackHosts: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+type DemoAccess = 'off' | 'loopback' | 'public';
+const demoAccess = (setting: string | undefined): DemoAccess => setting === 'off' || setting === 'public' ? setting : 'loopback';
 const demoOperator = { email: 'demo@gazetteer.local', name: 'Demo operator', workspaceName: 'Demo fleet' } as const;
 const tooMany = (): Response => json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
 const workspaceResources = ['dashboard', 'events', 'disruptions', 'members', 'invitations', 'bookings', 'withdraw-truck', 'restart-cargo'] as const;
@@ -49,7 +51,7 @@ const segment = (c: Context, index: number): string => new URL(c.req.url).pathna
 const workspaceOf = (c: Context): string => segment(c, 3);
 const shipmentOf = (c: Context): string => segment(c, 5);
 
-export function createApi({ access, monitoring, origin, ingest, bookings, demo = process.env.GAZETTEER_DEMO !== 'off', mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
+export function createApi({ access, monitoring, origin, ingest, bookings, demo = demoAccess(process.env.GAZETTEER_DEMO), mail, mailTransport = fetch }: Options): (request: Request, clientKey?: string) => Promise<Response> {
   const cookie = (token: string, maxAge = 604800): string => `gazetteer_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${origin.startsWith('https:') ? '; Secure' : ''}`;
   const authenticated = (result: Result<Session>): Response => {
     if (!result.ok) return respond(result);
@@ -57,8 +59,8 @@ export function createApi({ access, monitoring, origin, ingest, bookings, demo =
     return workspaces.ok ? json({ user: result.value.user, workspaces: workspaces.value }, 200, { 'Set-Cookie': cookie(result.value.token) }) : respond(workspaces);
   };
 
-  /** Waive-through sign-in exists only for a loopback origin and never when GAZETTEER_DEMO=off. */
-  const demoAvailable = demo && loopbackHosts.has(new URL(origin).hostname);
+  /** Waive-through sign-in: on a loopback origin by default, on any origin only when GAZETTEER_DEMO=public, never when GAZETTEER_DEMO=off. */
+  const demoAvailable = demo === 'public' || (demo === 'loopback' && loopbackHosts.has(new URL(origin).hostname));
 
   const events = monitoring.subscribe && createEventsHandler({
     subscribe: monitoring.subscribe,
