@@ -63,6 +63,8 @@ export function createApi({ access, monitoring, origin, ingest, bookings, demo =
 
   /** Waive-through sign-in: on a loopback origin by default, on any origin only when GAZETTEER_DEMO=public, never when GAZETTEER_DEMO=off. */
   const demoAvailable = demo === 'public' || (demo === 'loopback' && loopbackHosts.has(new URL(origin).hostname));
+  /** A POST comes from the configured origin, or from this machine itself (the server is also reached on localhost behind a public tunnel). */
+  const allowedOrigin = (from: string | undefined): boolean => from === origin || (from !== undefined && URL.canParse(from) && loopbackHosts.has(new URL(from).hostname));
 
   const events = monitoring.subscribe && createEventsHandler({
     subscribe: monitoring.subscribe,
@@ -93,7 +95,7 @@ export function createApi({ access, monitoring, origin, ingest, bookings, demo =
 
   const app = new Hono<App>()
     // Order is the contract: origin, then the public routes, then a session, then membership per route.
-    .use('*', (c, next) => c.req.method === 'POST' && c.req.header('Origin') !== origin ? Promise.resolve(json({ error: 'Origin not allowed' }, 403)) : next())
+    .use('*', (c, next) => c.req.method === 'POST' && !allowedOrigin(c.req.header('Origin')) ? Promise.resolve(json({ error: 'Origin not allowed' }, 403)) : next())
     .get('/api/demo-session', () => json({ available: demoAvailable }))
     .post('/api/demo-session', async c => {
       if (!demoAvailable) return json({ error: 'Demo access is not enabled here.' }, 403);

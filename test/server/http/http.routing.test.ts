@@ -11,7 +11,7 @@ const monitoring = { dashboard: async () => relaySuccess(dashboard), simulate: a
 
 async function setup() {
   const access = createAccess(':memory:');
-  const api = createApi({ access, monitoring, origin, demo: false });
+  const api = createApi({ access, monitoring, origin, demo: 'off' });
   const owner = await access.signup({ email: 'owner@example.com', name: 'Owner', password: 'correct horse battery staple' });
   const outsider = await access.signup({ email: 'out@example.com', name: 'Out', password: 'correct horse battery staple' });
   if (!owner.ok || !outsider.ok) throw new Error('seed');
