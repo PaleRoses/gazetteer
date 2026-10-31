@@ -9,6 +9,7 @@ import { relaySuccess, type Comment, type Dashboard, type Disruption, type PortI
 import type { PortAgent, ShipmentAgent } from './actors';
 import { createBoardModel, recentBoard } from './board/model';
 import { boardFrom } from './board/transport';
+import { portStatuses } from './port/status';
 import { createCoalescer } from './realtime/coalesce';
 import { fileSeqStore, startRelayLive } from './realtime/live';
 import { createHub, type Subscribe } from './realtime/sse';
@@ -87,7 +88,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     if (retained.length !== initialized.value.length) return { status: 'unavailable', message: 'A durable shipment is missing after initialization.' };
     const posts = await board.board(workspaceId);
     const built: Dashboard = {
-      shipments: retained, ports, ...(posts ? { board: posts } : {}),
+      shipments: retained, ports, ...(posts ? { board: posts, portStatus: portStatuses(ports, retained, posts) } : {}),
       updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
       runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
     };
