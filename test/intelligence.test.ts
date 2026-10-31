@@ -49,3 +49,13 @@ describe('voyage intelligence', () => {
     expect(shipmentBrief(parsed.shipments[0]!)).toEqual({ text: assessment.rationale, source: 'AI assessment' });
   });
 });
+
+test('SSE publishes a news coverage change even if shipment risk is unchanged, without clock-only churn', async () => {
+  const { createHub } = await import('../src/server/realtime/sse');
+  const hub = createHub();
+  const intelligence = buildIntelligence(ships, [notice()], now);
+  const snapshot = { shipments: ships, ports, intelligence, updatedAt: now.toISOString(), mode: 'mixed' as const, runtime: 'test', relay: 'test' };
+  expect(hub.publishDashboard('workspace', snapshot)).toBe(true);
+  expect(hub.publishDashboard('workspace', { ...snapshot, intelligence: { ...intelligence, checkedAt: '2026-10-31T12:01:00Z' } })).toBe(false);
+  expect(hub.publishDashboard('workspace', { ...snapshot, intelligence: { ...intelligence, unavailableProviders: ['nws'] } })).toBe(true);
+});

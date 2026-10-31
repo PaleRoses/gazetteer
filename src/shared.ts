@@ -1,4 +1,4 @@
-import type { BoardMessage, PortStatus } from './board';
+import type { BoardMessage, PortStatus } from './board.js';
 export type Risk = 'on-track' | 'watch' | 'delayed';
 export type RelayOutcome<A> = Readonly<{ status: 'ok'; value: A }> | Readonly<{ status: 'unavailable'; message: string }>;
 export const relaySuccess = <A>(value: A): RelayOutcome<A> => ({ status: 'ok', value });

@@ -2,7 +2,7 @@
 
 Gazetteer is a shared operations workspace for teams monitoring commercial ocean shipments. It answers four questions: **Where is the cargo? When will it arrive? What changed? What needs our attention?**
 
-The main screen is a map, not an agent dashboard. Select a vessel to see its route, cargo, milestones, current ETA, changes to that ETA, risks, supporting evidence and the next action. Teammates work from the same shipments, updates and comments.
+Select a vessel on the map or in the shipment list to open its name, UTC ETA, and a concise risk brief. Click the popup to open a dedicated voyage view with cargo, milestones, risk evidence, news, and potential diversions. Teammates work from the same shipments, updates and comments.
 
 ## Essential product behavior
 
@@ -17,7 +17,15 @@ These are acceptance requirements, not a claim that every integration has been v
 
 ## Current implementation and limits
 
-**All shipment positions, cargo, port notices and ETA assessments are synthetic.** Terse and Agent Relay are real integrations; the demo's impact assessment is currently deterministic, not LLM inference. No live AIS/carrier feed is connected. The intended AI-backed monitoring must retain evidence and report uncertainty rather than invent logistics facts.
+The seeded shipments, positions and cargo are synthetic. **Terse Durable Actors and Agent Relay are real integrations**, including retained shipment state and native scheduled checks. Public NWS, GDACS and USGS notices carry live provenance and source links. AI assessment uses the existing server-side Anthropic adapter when configured; without a model key, simulated disruptions use a labelled deterministic fallback and live notices do not acquire an invented delay. The telemetry watcher can be configured separately; an interpolated position is not an AIS fix.
+
+### Map, briefing and news
+
+- Popup risk labels map the retained server values to **low**, **moderate**, and **high**. The brief preserves AI versus scenario provenance; the browser does not calculate another risk score.
+- Voyage drilldown supports reloadable, workspace-scoped URLs, browser Back, an overview button and Escape. Search matches vessel, cargo, reference and endpoint port names.
+- News is grouped into **planned route**, **diversion**, and **regional context**. It considers the remaining sea corridor and upcoming calls, includes retained assessment evidence, deduplicates shared notices, and reports unavailable providers.
+- Port Klang, Antwerp-Bruges, Oakland and Ningbo-Zhoushan are illustrative port alternatives. Inspection shows an indicative connection on the map. It never changes the planned voyage, ETA or risk. Capacity, carrier acceptance and alternate arrival estimates remain unconfirmed.
+- Relay/SSE pushes shipment updates; the client refreshes broader news once a minute while connected. Public feed requests share a five-minute cache. Missing signals do not mean a route or alternative is safe.
 
 Accounts, owner/member workspaces, invitation links and shared comments are implemented. Actual email delivery needs configured credentials and a verified sender; remote teammate access needs a reachable deployment. See `HANDOFF.md` for the checks actually performed and remaining gaps—neither a passing build nor a provider adapter establishes end-to-end operation.
 
@@ -35,15 +43,15 @@ npm start
 
 Open **http://localhost:4310**. Create an account (password: 12+ characters); your workspace receives four synthetic shipments. Select **Simulate disruption** to publish a 36-hour Singapore delay. Two exposed shipments change ETA and risk; the two other voyages stay unchanged. Repeated delivery of the same evidence does not add the delay twice.
 
-`setup:relay` creates a real private Agent Relay/Relaycast demo workspace. Only synthetic disruption records and generated actor identities are sent there. It stores its credential in ignored `.env`; a fresh checkout must configure its own workspace. Terse downloads its local runtime on first start. Network access is required for setup and Relay; there is no counterfeit offline fallback.
+`setup:relay` creates a real private Agent Relay/Relaycast demo workspace. Generated actor identities and disruption evidence are sent there; live evidence retains its provider and URL. It stores its credential in ignored `.env`; a fresh checkout must configure its own workspace. Terse downloads its local runtime on first start. Network access is required for setup and Relay; there is no counterfeit offline fallback.
 
 ## Shared access
 
-The workspace owner can invite an email address. The invitee registers/signs in with that exact address and accepts the single-use link. Members share shipments, updates and comments; only owners can invite. The UI refreshes shared state every five seconds.
+The workspace owner can invite an email address. The invitee registers/signs in with that exact address and accepts the single-use link. Members share shipments, updates and comments; only owners can invite. The UI receives server-sent events, with five-second polling when the stream is unavailable.
 
 Without `RESEND_API_KEY` and a verified `MAIL_FROM`, an invitation produces a **manual share link**, not a sent email. Configure both for actual email delivery; a partial configuration is rejected. The UI distinguishes a provider-accepted email from an unconfirmed send—neither is proof of inbox delivery. Set `APP_ORIGIN` to the reachable HTTPS origin before sharing remotely, and run behind a TLS proxy with a persistent data volume. A localhost link is not reachable by a teammate on another machine.
 
-There is no password reset, account email verification, membership removal, production operations setup, or live-source ingestion yet. This is a handoff-ready basic demo, not a production authentication platform.
+There is no password reset, account email verification, membership removal, production operations setup yet. This is a handoff-ready basic demo, not a production authentication platform.
 
 ## Ownership
 

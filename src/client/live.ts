@@ -41,6 +41,7 @@ export function useWorkspaceFeed(workspaceId: string, paused: boolean): Feed {
     let source: EventSource | undefined;
     let pollTimer: number | undefined;
     let retryTimer: number | undefined;
+    let newsTimer: number | undefined;
     let graceTimer: number | undefined;
     const base = `/api/workspaces/${workspaceId}`;
 
@@ -77,6 +78,13 @@ export function useWorkspaceFeed(workspaceId: string, paused: boolean): Feed {
       });
     };
 
+    // Relay pushes shipment changes; refresh broader news even when no voyage changes.
+    const refreshNews = async (): Promise<void> => {
+      if (controller.signal.aborted) return;
+      if (source?.readyState === EventSource.OPEN && !pausedRef.current) await fetchOnce();
+      if (!controller.signal.aborted) newsTimer = window.setTimeout(() => { void refreshNews(); }, 60_000);
+    };
+    newsTimer = window.setTimeout(() => { void refreshNews(); }, 60_000);
     startPolling();
     connect();
     return () => { controller.abort(); source?.close(); stopPolling(); window.clearTimeout(retryTimer); window.clearTimeout(graceTimer); };
