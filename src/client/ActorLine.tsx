@@ -1,18 +1,10 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from 'solid-js';
 import type { BoardAuthor, BoardMessage } from '../core/board';
 import type { Dashboard } from '../core/types';
-import { portName, time } from './presentation';
+import { time } from './presentation';
+import { actorName } from './board-view';
 
 export const boardAnchor = (id: string): string => `actor-message-${id}`;
-export const actorName = (author: BoardAuthor, dashboard: Dashboard): string => {
-  switch (author.role) {
-    case 'ship': return author.agent ? `${author.agent} aboard ${author.vessel}` : `${author.vessel} · ship actor`;
-    case 'port': return `${portName(dashboard.ports, author.id)} · port actor`;
-    case 'city': return `${portName(dashboard.ports, author.city)} · ${author.element} watch`;
-  }
-  const unhandled: never = author;
-  return unhandled;
-};
 
 export function PixelShip() {
   return <svg class="pixel-ship-glyph" viewBox="0 0 24 24" aria-hidden="true" shape-rendering="crispEdges"><path fill="currentColor" d="M11 3h2v5h5v4h4v5h-2v3H4v-3H2v-5h4V8h5z"/><path fill="var(--field)" d="M8 10h3v2H8zM13 10h3v2h-3z"/></svg>;

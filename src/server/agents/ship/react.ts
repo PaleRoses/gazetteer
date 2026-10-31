@@ -24,6 +24,8 @@ export type ReactionBasis = Readonly<{
 
 export type Reacted<S extends AssessedShipment> = Readonly<{
   shipment: S; reactions: Reactions; summary: ReactionSummary;
+  /** Every report heard from a port still ahead, newest per watch, whatever it said. */
+  heard: readonly string[];
   /** One entry per port whose estimate this cycle changed. */
   changed: readonly ReactionBasis[];
 }>;
@@ -89,6 +91,6 @@ export function react<S extends AssessedShipment>(shipment: S, board: readonly B
   const delaying = Object.values(settled.reactions).filter(reaction => reaction && reaction.hours > 0).map(reaction => reaction!.bulletinId);
   return {
     shipment: settled.shipment, reactions: settled.reactions, summary: { watching: [...new Set([...watching, ...delaying])], hours: total },
-    changed: settled.changed,
+    changed: settled.changed, heard: bulletins.map(bulletin => bulletin.id),
   };
 }

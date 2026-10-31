@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Disruption } from '../../../../src/core/types';
-import { accept, adopt, delivered, emptyQueue, waiting } from '../../../../src/server/agents/port/outbox';
+import { accept, adopt, delivered, emptyQueue, waiting } from '../../../../src/server/agents/city/outbox';
 
 const disruption = (id: string): Disruption => ({
   id, portId: 'singapore', delayHours: 6,

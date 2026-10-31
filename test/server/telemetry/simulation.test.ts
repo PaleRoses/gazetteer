@@ -4,7 +4,7 @@ import { demoShipments } from '../../../src/core/demo';
 import { ports } from '../../../src/core/ports';
 import { distanceKm, voyageRoute } from '../../../src/core/routes';
 import type { Shipment } from '../../../src/core/types';
-import { assessPort } from '../../../src/server/agents/port/risk';
+import { assessTraffic } from '../../../src/server/agents/city/traffic';
 import { decideBoard, emptyBoardMemory } from '../../../src/server/agents/ship/board';
 import { emptyTelemetryState, watchShipment } from '../../../src/server/agents/ship/watch';
 import { observe } from '../../../src/server/telemetry/watcher';
@@ -50,9 +50,10 @@ describe('simulated telemetry', () => {
     });
   });
 
-  test('the queue builds in front of the user: arrivals going to anchor one after another over the first two hours', () => {
+  test('the queue builds in front of the user: one veteran at anchor, then arrivals going to anchor one after another over the first two hours', () => {
     const counts = [0, 0.3, 0.6, 1.0, 1.5, 2.1].map(hours => anchoredAt(at(hours)).length);
-    expect(counts[0]).toBe(0);
+    expect(counts[0]).toBe(1);
+    expect(Date.parse(byId(anchoredAt(at(0))[0]!).baselineEta)).toBeLessThanOrEqual(Date.parse(at(-12)));
     counts.slice(1).forEach((count, index) => expect(count).toBeGreaterThan(counts[index]!));
     expect(counts[counts.length - 1]).toBe(queueIds.length);
   });
@@ -117,8 +118,8 @@ describe('the society from simulated observations', () => {
       const step = await watchShipment({ source: simulationSource(ship, scenarios, () => now), assess: { model: null, modelId: 'none', now: () => now }, now: () => now }, ship, `sim:${ship.id}`, emptyTelemetryState, {});
       return decideBoard(emptyBoardMemory, { shipment: step.shipment, situation: step.state.situation, now }).map(item => item.message);
     }))).flat();
-  const risk = (messages: readonly BoardMessage[], portId: 'singapore' | 'rotterdam' | 'shanghai' | 'los-angeles') => assessPort({
-    portId, coordinates: ports.find(port => port.id === portId)!.coordinates, now: new Date(now), notices: [], previous: null,
+  const risk = (messages: readonly BoardMessage[], portId: 'singapore' | 'rotterdam' | 'shanghai' | 'los-angeles') => assessTraffic({
+    city: portId, coordinates: ports.find(port => port.id === portId)!.coordinates, now: new Date(now), previous: null,
     observations: messages.filter((message): message is ShipObservation => message.kind === 'ship.observation'),
     etas: messages.filter((message): message is EtaNotice => message.kind === 'ship.eta'),
   });

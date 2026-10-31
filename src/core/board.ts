@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { portIds } from './ports.js';
+import { cargoAuthor, haulierAuthor, recoveryMessage } from './recovery.js';
 
 const portId = z.enum(portIds);
 const instant = z.iso.datetime();
@@ -9,11 +10,13 @@ const risk = z.enum(['on-track', 'watch', 'delayed']);
 export const portRisk = z.enum(['normal', 'elevated', 'severe']);
 export const signalKind = z.enum(['off-route', 'slow-steaming', 'stationary-outside-port', 'ais-dark']);
 
-export const cityElement = z.enum(['traffic', 'hazards']);
+export const cityElement = z.enum(['traffic', 'hazards', 'terminal']);
 
 export const author = z.discriminatedUnion('role', [
   z.object({ role: z.literal('port'), id: portId }),
   z.object({ role: z.literal('city'), city: portId, element: cityElement }),
+  cargoAuthor,
+  haulierAuthor,
   z.object({ role: z.literal('ship'), id: z.string().min(1), vessel: z.string().min(1), /** The mind aboard that speaks for the ship; absent only on messages posted before ships were named. */ agent: z.string().min(1).optional() }),
 ]);
 
@@ -110,7 +113,7 @@ export const etaNotice = z.object({
   citedEvidence: z.array(z.string()).optional(),
 });
 
-export const boardMessage = z.discriminatedUnion('kind', [portBulletin, trafficReport, hazardReport, shipObservation, shipAssessment, etaNotice]);
+export const boardMessage = z.discriminatedUnion('kind', [portBulletin, trafficReport, hazardReport, shipObservation, shipAssessment, etaNotice, ...recoveryMessage.options]);
 
 export type PortRisk = z.infer<typeof portRisk>;
 export type BoardAuthor = z.infer<typeof author>;
@@ -138,6 +141,9 @@ export const concerns = (message: BoardMessage): Readonly<{ ports: readonly z.in
   switch (message.kind) {
     case 'port.bulletin': return { ports: [message.portId], shipmentId: null };
     case 'city.traffic': case 'city.hazards': return { ports: [message.author.city], shipmentId: null };
+    case 'recovery.request': return { ports: [message.to.city], shipmentId: null };
+    case 'recovery.offer': case 'recovery.withdraw': return { ports: [message.author.city], shipmentId: null };
+    case 'recovery.plan': case 'recovery.hold': case 'recovery.confirm': case 'recovery.release': return { ports: message.author.role === 'cargo' ? [] : [message.author.city], shipmentId: null };
     case 'ship.observation': return { ports: message.nearPort ? [message.nearPort] : [], shipmentId: message.shipmentId };
     case 'ship.assessment': return { ports: message.ports, shipmentId: message.shipmentId };
     case 'ship.eta': return { ports: [message.portId], shipmentId: message.shipmentId };
@@ -151,6 +157,7 @@ export const citations = (message: BoardMessage): readonly string[] => {
     case 'ship.assessment': return message.citedEvidence;
     case 'ship.eta': return message.citedEvidence ?? [];
     case 'ship.observation': return [];
+    case 'recovery.request': case 'recovery.offer': case 'recovery.hold': case 'recovery.withdraw': case 'recovery.plan': case 'recovery.confirm': case 'recovery.release': return message.answers;
   }
 };
 

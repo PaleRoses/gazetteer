@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import type { BoardMessage, PortBulletin } from '../../../../src/core/board';
+import type { BoardMessage, TrafficReport } from '../../../../src/core/board';
 import { demoShipments } from '../../../../src/core/demo';
-import { portById } from '../../../../src/core/ports';
+import { portById, type PortId } from '../../../../src/core/ports';
 import { type AssessedShipment } from '../../../../src/server/assessment/apply';
 import { react, queueDrain, type Reactions } from '../../../../src/server/agents/ship/react';
 import { applyFloor, floorRules, riskFloor } from '../../../../src/server/agents/ship/risk-floor';
@@ -12,8 +12,8 @@ const now = '2026-10-31T12:00:00.000Z';
 const [meridian] = demoShipments(new Date(now)) as [AssessedShipment, ...AssessedShipment[]];
 const rate = portById.get('singapore')!.serviceRate.perHour;
 const own = 'obs:telemetry:gz-1042:stationary-outside-port:t1';
-const bulletin = (over: Partial<PortBulletin> & Pick<PortBulletin, 'id'>): PortBulletin => ({
-  kind: 'port.bulletin', author: { role: 'port', id: 'singapore' }, at: now, summary: 'Singapore.', portId: 'singapore', risk: 'severe', anchored: 10, arrivals48h: 0, evidenceIds: [], ...over,
+const bulletin = ({ portId = 'singapore', ...over }: Partial<Omit<TrafficReport, 'author'>> & Pick<TrafficReport, 'id'> & { portId?: PortId }): TrafficReport => ({
+  kind: 'city.traffic', author: { role: 'city', city: portId, element: 'traffic' }, at: now, summary: 'Singapore.', risk: 'severe', anchored: 10, arrivals48h: 0, evidenceIds: [], basis: { perHour: rate, provenance: 'assumed', basis: 'declared' }, ...over,
 });
 const ahead = (anchored: number): number => Math.round(Math.min(queueDrain.capHours.value, anchored / rate));
 const telemetry: Telemetry = { mmsi: '563012345', position: [103.9, 1.3], sogKnots: 0, cogDegrees: 90, navStatus: 1, observedAt: now, provenance: 'live', provider: 'aisstream', fetchedAt: now };
@@ -95,7 +95,7 @@ describe('ship reaction to a port bulletin', () => {
   });
 
   test('a port already behind the ship is ignored', () => {
-    const done = react(meridian, [bulletin({ id: 'sh', portId: 'shanghai', author: { role: 'port', id: 'shanghai' } })], {} as Reactions, null, now);
+    const done = react(meridian, [bulletin({ id: 'sh', portId: 'shanghai' })], {} as Reactions, null, now);
     expect(done.shipment).toBe(meridian);
     expect(done.summary).toEqual({ watching: [], hours: 0 });
   });
