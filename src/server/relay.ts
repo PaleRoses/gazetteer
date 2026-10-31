@@ -63,6 +63,6 @@ export type DisruptionPoll = Readonly<{ disruptions: readonly Disruption[]; curs
 /** Bounded read: only messages past the persisted cursor, never the whole channel history. */
 export async function readDisruptionsSince(identity: RelayIdentity, cursor: Cursor | null): Promise<DisruptionPoll> {
   const client = await participant(identity);
-  const poll = await pollSince(request => client.messages.list(identity.channel, request), cursor, disruptionFrom);
+  const poll = await pollSince(request => client.messages.list(identity.channel, request), cursor, disruptionFrom, undefined, undefined, value => disruptionFrom({ metadata: { kind: 'gazetteer.simulated-disruption', disruption: value } }));
   return { disruptions: poll.items, cursor: poll.cursor, complete: poll.complete };
 }

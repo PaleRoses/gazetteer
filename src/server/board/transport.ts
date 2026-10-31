@@ -14,6 +14,14 @@ type Item = Readonly<{ board: BoardMessage }> | Readonly<{ disruption: Disruptio
 export const boardFrom = (message: Pick<RelayMessage, 'metadata'>): BoardMessage | undefined =>
   message.metadata?.kind === boardMetadataKind ? parseBoardMessage(message.metadata.message) : undefined;
 
+/** Items held in a persisted descent come back as plain JSON: re-validate them like fresh messages. */
+const reviveItem = (value: unknown): Item | undefined => {
+  if (typeof value !== 'object' || value === null) return undefined;
+  if ('board' in value) { const board = parseBoardMessage(value.board); return board ? { board } : undefined; }
+  if ('disruption' in value) { const disruption = disruptionFrom({ metadata: { kind: 'gazetteer.simulated-disruption', disruption: value.disruption } }); return disruption ? { disruption } : undefined; }
+  return undefined;
+};
+
 const itemFrom = (message: RelayMessage): Item | undefined => {
   const board = boardFrom(message);
   if (board) return { board };
@@ -48,12 +56,12 @@ export const boardTransport = (clientOf: (identity: RelayIdentity) => Promise<Cl
   /** Bounded: only messages past the actor's persisted cursor, oldest first. An unavailable read leaves the cursor untouched. */
   readBoard: (identity: RelayIdentity, cursor: RelayCursor): Promise<RelayOutcome<BoardRead>> => attemptRelay(async () => {
     const client = await clientOf(identity);
-    const poll = await pollSince(request => client.messages.list(identity.channel, request), cursor, boardFrom);
+    const poll = await pollSince(request => client.messages.list(identity.channel, request), cursor, boardFrom, undefined, undefined, parseBoardMessage);
     return { messages: distinctById(poll.items), cursor: poll.cursor };
   }, 'Agent Relay board is unavailable. Reading will retry without changing state.'),
   readChannel: (identity: RelayIdentity, cursor: RelayCursor): Promise<RelayOutcome<ChannelRead>> => attemptRelay(async () => {
     const client = await clientOf(identity);
-    const poll = await pollSince(request => client.messages.list(identity.channel, request), cursor, itemFrom);
+    const poll = await pollSince(request => client.messages.list(identity.channel, request), cursor, itemFrom, undefined, undefined, reviveItem);
     return {
       board: distinctById(poll.items.flatMap(item => 'board' in item ? [item.board] : [])),
       disruptions: poll.items.flatMap(item => 'disruption' in item ? [item.disruption] : []),

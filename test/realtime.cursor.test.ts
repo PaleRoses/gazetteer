@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { advance, collectSince, compareMessages, pollSince, type Cursor, type ListPage, type Message, type PageRequest, type Poll } from '../src/server/realtime/cursor';
+import { advance, compareMessages, pollSince, type Cursor, type ListPage, type Message, type PageRequest, type Poll } from '../src/server/realtime/cursor';
 
 type Fixture = Message & Readonly<{ n: number }>;
 // Ids copied from the live probe of 2026-10-31 (monotonic 18-digit snowflakes, one every few seconds).
@@ -73,13 +73,13 @@ describe('pollSince against the recorded Relay list semantics', () => {
     const idle = await pollSince(relay.list, first.cursor, item => item);
     expect(idle.items).toEqual([]);
     expect(idle.cursor).toEqual(first.cursor);
-    expect(relay.calls.slice(callsAfterFirst)).toEqual([{ limit: 100, after: first.cursor?.messageId }]);
+    expect(relay.calls.slice(callsAfterFirst)).toEqual([{ limit: 100, after: first.cursor?.messageId ?? undefined }]);
   });
 
   test('a gap larger than one page is walked down without skipping the middle (after alone would)', async () => {
     const channel = range(0, 30);
     const cursor: Cursor = { messageId: message(4).messageId, createdAt: null };
-    const naive = await relayOf(() => channel).list({ limit: 10, after: cursor.messageId });
+    const naive = await relayOf(() => channel).list({ limit: 10, after: message(4).messageId });
     expect(numbers(naive)).toEqual(numbers(range(20, 30)).toReversed());
     const poll = await pollSince(relayOf(() => channel).list, cursor, item => item, 10);
     expect(numbers(poll.items)).toEqual(numbers(range(5, 30)));
@@ -117,14 +117,19 @@ describe('pollSince against the recorded Relay list semantics', () => {
     expect(poll.cursor?.messageId).toBe(message(11).messageId);
   });
 
-  test('an exhausted page budget keeps the old cursor so nothing older is skipped, and the next poll catches up', async () => {
+  test('an exhausted page budget releases nothing, keeps the confirmed position and resumes below its frontier', async () => {
     const channel = range(0, 40);
     const cursor: Cursor = { messageId: message(0).messageId, createdAt: null };
-    const starved = await pollSince(relayOf(() => channel).list, cursor, item => item, 5, 3);
+    const relay = relayOf(() => channel);
+    const starved = await pollSince(relay.list, cursor, item => item, 5, 3);
     expect(starved.complete).toBe(false);
-    expect(starved.cursor).toEqual(cursor);
-    const recovered = await pollSince(relayOf(() => channel).list, starved.cursor, item => item, 5, 20);
-    expect(numbers(recovered.items)).toEqual(numbers(range(1, 40)));
+    expect(starved.items).toEqual([]);
+    expect(starved.cursor?.messageId).toBe(cursor.messageId);
+    expect(starved.cursor?.descent?.frontier).toBe(message(25).messageId);
+    const second = relayOf(() => channel);
+    const resumed = await pollSince(second.list, starved.cursor, item => item, 5, 3);
+    expect(second.calls[0]).toEqual({ limit: 5, after: message(0).messageId, before: message(25).messageId });
+    expect(resumed.complete).toBe(false);
   });
 
   test('a failing list propagates so the caller can leave the persisted cursor untouched', async () => {
@@ -132,10 +137,56 @@ describe('pollSince against the recorded Relay list semantics', () => {
     await expect(pollSince(failing, null, item => item)).rejects.toThrow('relay down');
   });
 
-  test('collectSince reports completeness only when a short page ends the walk', async () => {
-    const budget = await collectSince(relayOf(() => range(0, 9)).list, null, 3, 2);
-    expect(budget.complete).toBe(false);
-    expect(budget.messages).toHaveLength(6);
-    expect((await collectSince(relayOf(() => range(0, 9)).list, null, 3, 5)).complete).toBe(true);
+  test('a gap of 12000 messages converges in ceil(12000 / budget) reads, losing nothing and duplicating nothing, even across a JSON round trip of the persisted cursor', async () => {
+    const channel = range(0, 12001);
+    const known: Cursor = { messageId: message(0).messageId, createdAt: null };
+    const [limit, maxPages] = [100, 50];
+    let cursor: Cursor | null = known;
+    let reads = 0;
+    let released: readonly Fixture[] = [];
+    let complete = false;
+    while (!complete) {
+      const poll: Poll<Fixture> = await pollSince(relayOf(() => channel).list, cursor, item => item, limit, maxPages, value => value as Fixture);
+      reads += 1;
+      expect(reads).toBeLessThanOrEqual(Math.ceil(12000 / (limit * maxPages)));
+      if (!poll.complete) expect(poll.items).toEqual([]);
+      cursor = JSON.parse(JSON.stringify(poll.cursor)) as Cursor | null;
+      released = [...released, ...poll.items];
+      complete = poll.complete;
+    }
+    expect(reads).toBe(3);
+    expect(numbers(released)).toEqual(numbers(range(1, 12001)));
+    expect(cursor?.messageId).toBe(message(12000).messageId);
+    expect(cursor?.descent).toBeUndefined();
   });
+
+  test('a first read (no confirmed position) also descends in bounded steps', async () => {
+    const channel = range(0, 450);
+    let cursor: Cursor | null = null;
+    let released: readonly Fixture[] = [];
+    let reads = 0;
+    for (let complete = false; !complete;) {
+      const poll: Poll<Fixture> = await pollSince(relayOf(() => channel).list, cursor, item => item, 10, 20);
+      cursor = poll.cursor; released = [...released, ...poll.items]; complete = poll.complete; reads += 1;
+    }
+    expect(reads).toBe(3);
+    expect(numbers(released)).toEqual(numbers(channel));
+  });
+
+  test('messages arriving mid-descent are neither lost nor duplicated: they wait for the next read', async () => {
+    let channel = range(0, 300);
+    let cursor: Cursor | null = { messageId: message(0).messageId, createdAt: null };
+    const first: Poll<Fixture> = await pollSince(relayOf(() => channel).list, cursor, item => item, 10, 5);
+    expect(first.complete).toBe(false);
+    channel = [...channel, ...range(300, 320)];
+    cursor = first.cursor;
+    let released: readonly Fixture[] = [];
+    for (let complete = false; !complete;) {
+      const poll: Poll<Fixture> = await pollSince(relayOf(() => channel).list, cursor, item => item, 10, 5);
+      cursor = poll.cursor; released = [...released, ...poll.items]; complete = poll.complete;
+    }
+    const tail = await pollSince(relayOf(() => channel).list, cursor, item => item, 10, 5);
+    expect(numbers([...released, ...tail.items])).toEqual(numbers(range(1, 320)));
+  });
+
 });
