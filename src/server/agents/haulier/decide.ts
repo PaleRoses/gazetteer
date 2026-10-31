@@ -13,9 +13,9 @@ export type HaulierMemory = Readonly<{ offers: Readonly<Record<string, OfferReco
 export const emptyHaulierMemory: HaulierMemory = { offers: {}, seen: [] };
 
 export type HaulierContext = Readonly<{
-  city: PortId; trucks: readonly Truck[]; now: string;
-  /** The cargo agent writes holds, confirms and releases; the haulier reads availability and cancels what it withdraws. */
-  ledger: Pick<Bookings, 'release' | 'find' | 'free'>;
+  city: PortId; workspaceId: string; trucks: readonly Truck[]; now: string;
+  /** The owner of the physical resource writes the ledger: the haulier records the holds, confirms and releases it hears for its trucks. The cargo agent only reads, through find(key). */
+  ledger: Pick<Bookings, 'hold' | 'confirm' | 'release' | 'find' | 'free'>;
 }>;
 export type Decision = Readonly<{ memory: HaulierMemory; posts: readonly RecoveryMessage[] }>;
 
@@ -47,11 +47,60 @@ const answer = (context: HaulierContext, memory: HaulierMemory, request: Message
   return { memory: { ...memory, offers: { ...memory.offers, [bookingKey(request.caseId, offer.id)]: { caseId: request.caseId, truck, offer, messageId: message.id, status: 'open' } } }, posts: [message] };
 };
 
-const react = (context: HaulierContext, memory: HaulierMemory, message: RecoveryMessage): Decision =>
-  message.kind === 'recovery.request' && message.to.role === 'haulier' && message.to.city === context.city && message.service === 'truck'
-    ? answer(context, memory, message) : { memory, posts: [] };
+const withdrawal = (context: HaulierContext, record: OfferRecord, reason: string): Message<'recovery.withdraw'> => ({
+  id: `withdraw:${record.caseId}:${record.offer.id}`, kind: 'recovery.withdraw', author: author(context.city), at: context.now, caseId: record.caseId, answers: [record.messageId],
+  offerId: record.offer.id, reason, summary: `Truck ${record.truck.id} (${clock(record.truck.departs)}) is withdrawn: ${reason}`.slice(0, 280),
+});
 
-/** What the haulier does with what it heard on the board: answers each request for a truck, once, with its earliest free truck. */
+const withdrawOne = (context: HaulierContext, memory: HaulierMemory, record: OfferRecord, reason: string): Decision => ({
+  memory: { ...memory, offers: { ...memory.offers, [bookingKey(record.caseId, record.offer.id)]: { ...record, status: 'withdrawn' } } },
+  posts: [withdrawal(context, record, reason)],
+});
+
+/** The offer this message acts on, if it is one of ours and still open. */
+const openOffer = (memory: HaulierMemory, message: Readonly<{ caseId: string; offerId: string }>): OfferRecord | undefined => {
+  const record = memory.offers[bookingKey(message.caseId, message.offerId)];
+  return record?.status === 'open' ? record : undefined;
+};
+
+/** A hold is recorded under the cargo agent's key, with the truck's offer id as the resource. A truck held for another case, or an offer past its time, is withdrawn from this one. */
+const holdOn = (context: HaulierContext, memory: HaulierMemory, message: Message<'recovery.hold'>): Decision => {
+  const record = openOffer(memory, message);
+  if (!record) return { memory, posts: [] };
+  if (ms(record.offer.expiresAt) <= ms(context.now)) return withdrawOne(context, memory, record, 'the offer had expired before it was held');
+  const held = context.ledger.hold({
+    key: message.key, workspaceId: context.workspaceId, caseId: message.caseId, resource: record.offer.id, start: record.truck.departs,
+    end: plus(record.truck.departs, haulier.slotMinutes), priceEur: record.truck.priceEur, expiresAt: message.expiresAt,
+    heldBy: message.author.role === 'cargo' ? `cargo:${message.author.id}` : `haulier:${context.city}`,
+  });
+  return !held.ok && held.error === 'resource_taken' ? withdrawOne(context, memory, record, 'the truck is already held for another case') : { memory, posts: [] };
+};
+
+const confirmOn = (context: HaulierContext, memory: HaulierMemory, message: Message<'recovery.confirm'>): Decision => {
+  const record = openOffer(memory, message);
+  const booking = record ? context.ledger.find(message.key) : undefined;
+  if (!record || !booking) return { memory, posts: [] };
+  const confirmed = context.ledger.confirm(booking.id);
+  return !confirmed.ok && confirmed.error === 'expired' ? withdrawOne(context, memory, record, 'the hold expired before it was confirmed') : { memory, posts: [] };
+};
+
+const releaseOn = (context: HaulierContext, memory: HaulierMemory, message: Message<'recovery.release'>): Decision => {
+  const booking = memory.offers[bookingKey(message.caseId, message.offerId)] ? context.ledger.find(message.key) : undefined;
+  if (booking) context.ledger.release(booking.id);
+  return { memory, posts: [] };
+};
+
+const react = (context: HaulierContext, memory: HaulierMemory, message: RecoveryMessage): Decision => {
+  switch (message.kind) {
+    case 'recovery.request': return message.to.role === 'haulier' && message.to.city === context.city && message.service === 'truck' ? answer(context, memory, message) : { memory, posts: [] };
+    case 'recovery.hold': return holdOn(context, memory, message);
+    case 'recovery.confirm': return confirmOn(context, memory, message);
+    case 'recovery.release': return releaseOn(context, memory, message);
+    case 'recovery.offer': case 'recovery.withdraw': case 'recovery.plan': return { memory, posts: [] };
+  }
+};
+
+/** What the haulier does with what it heard on the board: answers each request for a truck, once, with its earliest free truck, and keeps the ledger in step with the holds, confirms and releases for its offers. */
 export function hear(context: HaulierContext, memory: HaulierMemory, heard: readonly RecoveryMessage[]): Decision {
   const fresh = heard.filter(heardBy(context.city)).filter(message => !memory.seen.includes(message.id))
     .sort((a, b) => ms(a.at) - ms(b.at) || a.id.localeCompare(b.id));
@@ -60,11 +109,6 @@ export function hear(context: HaulierContext, memory: HaulierMemory, heard: read
     return { memory: { ...next.memory, seen: [...next.memory.seen, message.id].slice(-haulier.seenCapacity) }, posts: [...carried.posts, ...next.posts] };
   }, { memory, posts: [] });
 }
-
-const withdrawal = (context: HaulierContext, record: OfferRecord, reason: string): Message<'recovery.withdraw'> => ({
-  id: `withdraw:${record.caseId}:${record.offer.id}`, kind: 'recovery.withdraw', author: author(context.city), at: context.now, caseId: record.caseId, answers: [record.messageId],
-  offerId: record.offer.id, reason, summary: `Truck ${record.truck.id} (${clock(record.truck.departs)}) is withdrawn: ${reason}`.slice(0, 280),
-});
 
 /**
  * The demo's control: the haulier withdraws a truck it has offered, the named offer or else the open one that leaves last, from every case it was

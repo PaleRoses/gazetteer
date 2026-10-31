@@ -3,7 +3,7 @@ import type { BoardMessage } from '../../../core/board';
 import type { PortId } from '../../../core/ports';
 import { recoveryMessage, type RecoveryMessage } from '../../../core/recovery';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/types';
-import { createBookings, type Bookings } from '../../booking/ledger';
+import { ledgerAt } from '../../booking/ledger';
 import { postBoard, readBoard } from '../../relay/board';
 import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } from '../../relay/client';
 import { connect } from '../../relay/connect';
@@ -23,16 +23,12 @@ type HaulierState = Readonly<{
   outbox: readonly BoardMessage[];
 }>;
 
-/** One ledger connection per file for the life of the process: SQLite in WAL mode shares safely with the server's own connection. */
-const ledgers = new Map<string, Bookings>();
-const ledgerAt = (path: string): Bookings => ledgers.get(path) ?? (() => { const opened = createBookings(path); ledgers.set(path, opened); return opened; })();
-
 const contextOf = (state: HaulierState): HaulierContext =>
-  ({ city: state.city, trucks: state.trucks, now: new Date().toISOString(), ledger: ledgerAt(state.bookingsPath) });
+  ({ city: state.city, workspaceId: state.workspaceId, trucks: state.trucks, now: new Date().toISOString(), ledger: ledgerAt(state.bookingsPath) });
 
 const isRecovery = (message: BoardMessage): message is RecoveryMessage => recoveryMessage.safeParse(message).success;
 
-/** A city's haulier: answers requests for a truck from its schedule and withdraws a truck, with its ledger bookings, on the demo's say-so. The cargo agent does the booking. */
+/** A city's haulier: answers requests for a truck from its schedule, writes the ledger for the holds, confirms and releases it hears for its trucks (the owner of the physical resource writes it), and withdraws a truck, with its bookings, on the demo's say-so. */
 export class HaulierAgent extends Actor {
   @Persisted private state: HaulierState | null = null;
   @Persisted private nextCheckAt: number | null = null;
@@ -74,13 +70,17 @@ export class HaulierAgent extends Actor {
     if (!this.state) return { status: 'unavailable', message: 'The haulier has not been initialized.' };
     const committed = this.state;
     const heard = committed.inbox.board;
-    const read = committed.synced ? relaySuccess({ messages: heard }) : await readBoard(committed.relay, null);
-    if (read.status === 'unavailable') return read;
-    const messages = [...new Map([...read.value.messages, ...heard].map(message => [message.id, message] as const)).values()].filter(isRecovery);
+    // Relay only completes the history; the haulier decides from what it holds and what was delivered locally, whatever Relay does.
+    const history = committed.synced ? null : await readBoard(committed.relay, null);
+    const fromRelay = history?.status === 'ok' ? history.value.messages : [];
+    const messages = [...new Map([...fromRelay, ...heard].map(message => [message.id, message] as const)).values()].filter(isRecovery);
     const decided = hear(contextOf(committed), committed.memory, messages);
     const latest = this.state ?? committed;
-    this.state = { ...latest, memory: decided.memory, outbox: enqueue(latest.outbox, decided.posts), synced: true, inbox: drainInbox(latest.inbox, { board: heard, disruptions: [] }) };
-    return relaySuccess(null);
+    this.state = {
+      ...latest, memory: decided.memory, outbox: enqueue(latest.outbox, decided.posts),
+      synced: latest.synced || history?.status === 'ok', inbox: drainInbox(latest.inbox, { board: heard, disruptions: [] }),
+    };
+    return history?.status === 'unavailable' ? history : relaySuccess(null);
   }
 
   /** The demo's control: withdraw the named truck offer, or else the open one that leaves last. Returns the offer withdrawn, or null when there was none. */
