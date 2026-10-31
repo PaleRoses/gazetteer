@@ -14,7 +14,9 @@ const at = '2026-10-31T12:00:00.000Z';
 const [meridian] = demoShipments(new Date(at)) as [ReturnType<typeof demoShipments>[number]];
 const notice: AssessableNotice = { id: 'sg-1', portId: 'singapore', delayHours: 36,
   evidence: { id: 'sg-1', source: 'simulation', title: 'Berth congestion', detail: 'Simulated congestion at Singapore.', observedAt: at } };
-const bulletin: BoardEvidence = { id: 'board-sg-7', kind: 'port.bulletin', at, summary: 'Singapore elevated: 4 anchored', facts: { portId: 'singapore', risk: 'elevated', anchored: 4, arrivals48h: 9 } };
+const bulletin: BoardEvidence = { id: 'board-sg-7', kind: 'city.traffic', at, summary: 'Singapore elevated: 4 anchored', facts: { portId: 'singapore', element: 'traffic', risk: 'elevated', anchored: 4, arrivals48h: 9 } };
+const hazards: BoardEvidence = { id: 'hazards:singapore#2', kind: 'city.hazards', at, summary: 'Singapore hazards normal', facts: { portId: 'singapore', element: 'hazards', risk: 'normal' } };
+const elsewhere: BoardEvidence = { id: 'traffic:busan#1', kind: 'city.traffic', at, summary: 'Busan normal', facts: { portId: 'busan', element: 'traffic', risk: 'normal', anchored: 0, arrivals48h: 2 } };
 const context: MindContext = { shipment: meridian, board: [bulletin], observation: null };
 const good: Assessment = { affected: true, delayHours: { low: 12, likely: 20, high: 40 }, risk: 'watch', rationale: 'Berth queue at the next call.', citedEvidence: ['sg-1', 'board-sg-7'], confidence: 0.6, action: null };
 const request = (session: string | null): ModelRequest => ({ system: 'assess', prompt: '{}', session, context });
@@ -88,8 +90,9 @@ describe('the ship mind keeps its own voyage conversation', () => {
 });
 
 describe('what the mind saw', () => {
-  test('port_status answers from the board and shows the bulletin id', () => {
-    expect(answerTool(context, 'mcp__ship__port_status', { port: 'Singapore' })).toMatchObject({ body: { id: 'singapore', onMyRoute: true, bulletin }, ids: ['board-sg-7'] });
+  test("port_status answers with the city's own watch reports by PortId and shows their ids", () => {
+    const city: MindContext = { ...context, board: [bulletin, hazards, elsewhere] };
+    expect(answerTool(city, 'mcp__ship__port_status', { port: 'Singapore' })).toMatchObject({ body: { id: 'singapore', onMyRoute: true, reports: [bulletin, hazards] }, ids: ['board-sg-7', 'hazards:singapore#2'] });
     expect(answerTool(context, 'mcp__ship__port_status', { port: 'atlantis' }).ids).toEqual([]);
     expect(answerTool(context, 'Bash', { command: 'ls' })).toEqual({ body: null, ids: [] });
   });

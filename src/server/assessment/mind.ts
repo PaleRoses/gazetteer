@@ -53,6 +53,8 @@ const mindInstructions = [
 
 type Answer = Readonly<{ body: unknown; ids: readonly string[] }>;
 const portQuery = z.object({ port: z.string() });
+/** A city's status is whatever its watches posted, by PortId; which agent wrote it does not matter. port.bulletin stays readable until the city watches replace it. */
+const cityKinds: readonly string[] = ['city.traffic', 'city.hazards', 'port.bulletin'];
 const isShipTool = (name: string): name is ShipTool => (shipTools as readonly string[]).includes(name);
 const unqualified = (name: string): string => name.startsWith(`mcp__${server}__`) ? name.slice(`mcp__${server}__`.length) : name;
 
@@ -60,9 +62,9 @@ const portStatus = (context: MindContext, input: unknown): Answer => {
   const asked = portQuery.safeParse(input);
   const port = asked.success ? ports.find(value => value.id === asked.data.port || value.name.toLowerCase() === asked.data.port.toLowerCase()) : undefined;
   if (!port) return { body: { found: false }, ids: [] };
-  const bulletin = context.board.find(item => item.kind === 'port.bulletin' && item.facts.portId === port.id) ?? null;
+  const reports = context.board.filter(item => cityKinds.includes(item.kind) && item.facts.portId === port.id);
   const ahead: readonly string[] = [...context.shipment.via, context.shipment.destination];
-  return { body: { found: true, id: port.id, name: port.name, onMyRoute: ahead.includes(port.id), bulletin }, ids: bulletin ? [bulletin.id] : [] };
+  return { body: { found: true, id: port.id, name: port.name, onMyRoute: ahead.includes(port.id), reports }, ids: reports.map(item => item.id) };
 };
 
 const askInstructions = [
@@ -93,7 +95,7 @@ const shipServer = (context: MindContext) => createSdkMcpServer({
   tools: [
     tool('read_board', 'Board messages from port and peer-ship agents that bear on my remaining route, by message id.', {}, async () => reply(answerTool(context, 'read_board', {}))),
     tool('read_track', 'My own live telemetry window: the latest position report, the watcher reading and the signals it raised.', {}, async () => reply(answerTool(context, 'read_track', {}))),
-    tool('port_status', 'One port by id or name: whether it is on my remaining route and its newest bulletin on the board.', { port: z.string() }, async args => reply(answerTool(context, 'port_status', args))),
+    tool('port_status', 'One port city by id or name: whether it is on my remaining route and what its traffic and hazard watches posted on the board.', { port: z.string() }, async args => reply(answerTool(context, 'port_status', args))),
   ],
 });
 

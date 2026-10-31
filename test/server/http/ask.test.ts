@@ -30,13 +30,16 @@ const withMind = (answer: ShipAnswer) => {
 
 describe('asking a ship mind over HTTP', () => {
   test('a member gets the answer and its citations; a stranger and a malformed question never reach the mind', async () => {
-    const { access, api, asked } = withMind({ status: 'answered', answer: 'Singapore is elevated (board-sg-7).', cited: ['board-sg-7'] });
+    const { access, api, asked } = withMind({ status: 'answered', answer: 'Singapore is elevated (board-sg-7).', cited: ['board-sg-7'], mind: meridian.agent, session: 'voyage-1' });
     const owner = await signup(api, 'owner');
     const stranger = await signup(api, 'stranger');
     const path = `/api/workspaces/${owner.workspaces[0]!.id}/shipments/${meridian.id}/ask`;
     const answered = await api(post(path, owner.cookie, { question: 'Why the delay?' }));
     expect(answered.status).toBe(200);
-    expect(await answered.json()).toEqual({ answer: 'Singapore is elevated (board-sg-7).', cited: ['board-sg-7'] });
+    expect(await answered.json()).toEqual({ answer: 'Singapore is elevated (board-sg-7).', cited: ['board-sg-7'], mind: meridian.agent, session: 'voyage-1' });
+    const forged = post(path, owner.cookie, { question: 'Why the delay?' });
+    forged.headers.set('Origin', 'https://attacker.example');
+    expect((await api(forged)).status).toBe(403);
     expect((await api(post(path, stranger.cookie, { question: 'Why the delay?' }))).status).not.toBe(200);
     expect((await api(post(path, owner.cookie, { question: '' }))).status).toBe(400);
     expect((await api(post(path, owner.cookie, { question: 'x'.repeat(501) }))).status).toBe(400);

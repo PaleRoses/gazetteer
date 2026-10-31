@@ -106,7 +106,7 @@ export function createApi({ access, monitoring, origin, ingest, demo = process.e
     .post('/api/workspaces/:workspaceId/shipments/:shipmentId/ask', member, jsonOnly, body(z.object({ question: z.string().trim().min(1).max(500) })), async c => {
       if (!monitoring.ask) return json({ error: 'The ship mind is unavailable.' }, 503);
       const answer = await monitoring.ask(workspaceOf(c), shipmentOf(c), c.req.valid('json').question);
-      return answer.status === 'answered' ? json({ answer: answer.answer, cited: answer.cited }) : json({ error: answer.message }, 503);
+      return answer.status === 'answered' ? json({ answer: answer.answer, cited: answer.cited, mind: answer.mind, session: answer.session }) : json({ error: answer.message }, 503);
     })
     .post('/api/workspaces/:workspaceId/disruptions', member, jsonOnly, body(disruptionSchema), async c => {
       const input = c.req.valid('json');

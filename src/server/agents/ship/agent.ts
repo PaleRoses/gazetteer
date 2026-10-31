@@ -24,7 +24,7 @@ import { connect } from '../../relay/connect';
 type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; baseRisk?: Risk; reactions?: Reactions; mind?: string | null; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
 const assessment = shipMindFromEnv(process.env, query);
 const asker = shipAskerFromEnv(process.env, query);
-export type ShipAnswer = Readonly<{ status: 'answered'; answer: string; cited: readonly string[] }> | Readonly<{ status: 'unavailable'; message: string }>;
+export type ShipAnswer = Readonly<{ status: 'answered'; answer: string; cited: readonly string[]; mind: string; session: string | null }> | Readonly<{ status: 'unavailable'; message: string }>;
 const telemetrySource = telemetrySourceFromEnv(process.env);
 const demo = demoEnabled(process.env);
 /** A read plus whatever the server already handed over: local echoes may not have reached Relay yet. */
@@ -75,7 +75,7 @@ export class ShipmentAgent extends Actor {
     const now = new Date().toISOString();
     const result = await asker(question, start.mind ?? null, { shipment: start.shipment, board: selectBoardEvidence(start.shipment, start.seen ?? [], now), observation: null });
     if (this.state) this.state = { ...this.state, mind: result.session };
-    return result.status === 'answered' ? { status: 'answered', answer: result.answer, cited: result.cited } : { status: 'unavailable', message: result.message };
+    return result.status === 'answered' ? { status: 'answered', answer: result.answer, cited: result.cited, mind: start.shipment.agent, session: result.session } : { status: 'unavailable', message: result.message };
   }
 
   /** The server heard these on the Relay stream (or authored them): take them locally instead of reading Relay. */
