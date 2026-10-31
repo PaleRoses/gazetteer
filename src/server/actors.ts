@@ -1,6 +1,10 @@
 import { Actor, Persisted } from 'durable-actors';
+import { ports } from '../domain';
 import { relaySuccess, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import { assessmentFromEnv, assessNotices, type AssessmentCache } from './assessment';
+import { postBoard, readBoard } from './board/transport';
+import { emptyMemory, type PortMemory } from './port/memory';
+import { watchPort } from './port/watch';
 import { pollPort } from './sources';
 import { emptyTelemetryState, mmsiPattern, telemetrySourceFromEnv, watchShipment, type TelemetryState } from './telemetry';
 import { toDisruption } from './sources/disruption';
@@ -10,13 +14,11 @@ import { attemptRelay, joinChannel, publishDisruption, readDisruptionsSince, reg
 const checkIntervalMs = 60_000;
 type PortState = Readonly<{
   portId: PortId; relay: RelayIdentity; ready: boolean;
-  outbox: readonly Disruption[]; published: readonly string[]; checkedAt: string | null;
+  outbox: readonly Disruption[]; published: readonly string[]; checkedAt: string | null; board?: PortMemory;
 }>;
 type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState }>;
 const assessment = assessmentFromEnv(process.env);
 const telemetrySource = telemetrySourceFromEnv(process.env);
-/** Provider failures are data inside the sources layer, so a dead feed leaves the outbox untouched. */
-const pollLive = async (portId: PortId): Promise<readonly Disruption[]> => (await pollPort(portId)).map(toDisruption);
 const enqueueLive = (state: PortState, incoming: readonly Disruption[]): readonly Disruption[] =>
   [...state.outbox, ...incoming.filter(live => !state.outbox.some(event => event.id === live.id) && !state.published.includes(live.id))];
 const connect = (state: Readonly<{ relay: RelayIdentity; ready: boolean }>, createChannel: boolean): Promise<RelayOutcome<null>> =>
@@ -67,14 +69,23 @@ export class PortAgent extends Actor {
   async check(): Promise<RelayOutcome<null>> {
     await this.scheduleCheck();
     if (!this.state) return { status: 'unavailable', message: 'Port monitoring has not been initialized.' };
-    this.state = { ...this.state, outbox: enqueueLive(this.state, await pollLive(this.state.portId)) };
+    // Provider failures are data inside the sources layer, so a dead feed leaves the outbox untouched.
+    const reaching = await pollPort(this.state.portId);
+    this.state = { ...this.state, outbox: enqueueLive(this.state, reaching.map(toDisruption)) };
     const current = this.state;
     const connection = await connect(current, current.portId === 'singapore');
     if (connection.status === 'unavailable') return connection;
     const publication = await attemptRelay(() => current.outbox.reduce<Promise<void>>((previous, disruption) => previous.then(async () => { await publishDisruption(current.relay, disruption); }), Promise.resolve()), 'Agent Relay publication is unavailable. The disruption remains queued for retry.');
     if (publication.status === 'unavailable') return publication;
-    this.state = { ...current, ready: true, outbox: [], published: [...current.published, ...current.outbox.map(event => event.id)], checkedAt: new Date().toISOString() };
-    return relaySuccess(null);
+    const committed: PortState = { ...current, ready: true, outbox: [], published: [...current.published, ...current.outbox.map(event => event.id)], checkedAt: new Date().toISOString() };
+    this.state = committed;
+    // The port's own watching: read what ships posted, assess, and post a bulletin only when something changed.
+    const place = ports.find(value => value.id === committed.portId);
+    if (!place) return relaySuccess(null);
+    const watched = await watchPort({ read: readBoard, post: postBoard }, committed.relay, committed.board ?? emptyMemory,
+      { portId: place.id, name: place.name, coordinates: place.coordinates, now: new Date(), notices: reaching });
+    this.state = { ...committed, board: watched.memory };
+    return watched.outcome;
   }
 
   async onAlarm(): Promise<void> { await this.check(); }

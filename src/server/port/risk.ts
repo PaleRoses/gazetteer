@@ -59,7 +59,7 @@ export const noticeLevel = ({ notice, hit }: PortNotice): Level => {
   return Math.min(2, Math.max(0, severityRank[notice.severity] - (squarely ? 0 : 1))) as Level;
 };
 
-const latestBy = <A>(items: readonly A[], key: (item: A) => string, order: (item: A) => string): readonly A[] =>
+export const latestBy = <A>(items: readonly A[], key: (item: A) => string, order: (item: A) => string): readonly A[] =>
   [...items.reduce((latest, item) => {
     const held = latest.get(key(item));
     return held === undefined || order(item) > order(held) ? latest.set(key(item), item) : latest;
