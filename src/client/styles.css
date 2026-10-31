@@ -56,3 +56,6 @@
 
 .demo-enter{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;margin-top:14px;padding:13px 16px;border:1px solid #8bb8ed;border-radius:7px;background:#eef5fc;color:#1f4f87;font-weight:650;font-size:var(--fs-3)}.demo-enter:hover{background:#e1eefb}
 .port-label,.vessel-name,.ocean-label{line-height:1.3}.port-label{font-size:var(--fs-3);text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 4px #fff,0 0 6px #fff}
+
+.startup-chip{display:inline-flex;align-items:center;gap:7px;margin-right:12px;padding:4px 10px;border-radius:999px;background:#fff6e0;border:1px solid #e3c98b;color:#7a5513;font-weight:650;font-size:var(--fs-1);letter-spacing:0}
+.global-error{display:flex;align-items:center;gap:12px}.global-error .error-note{flex:1}.retry-button{margin-right:16px;padding:6px 14px;border:1px solid #c9d6e2;border-radius:6px;background:#fff;color:#1f4f87;font-weight:650;font-size:var(--fs-2)}.retry-button:hover{background:#eef5fc}

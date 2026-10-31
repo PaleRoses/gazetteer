@@ -13,6 +13,8 @@ export type Feed = Readonly<{
   dashboard: Accessor<Dashboard | null>; mode: Accessor<FeedMode>; error: Accessor<string | null>;
   changes: Accessor<readonly Change[]>; comments: Accessor<readonly CommentEvent[]>;
   accept: (incoming: Dashboard) => void;
+  /** One immediate dashboard read, for the Retry control; it writes through the same guard as the poll. */
+  retry: () => void;
 }>;
 
 /**
@@ -79,7 +81,7 @@ export function createWorkspaceFeed(workspaceId: string, paused: Accessor<boolea
   connect();
   onCleanup(() => { controller.abort(); source?.close(); stopPolling(); window.clearTimeout(retryTimer); window.clearTimeout(graceTimer); });
 
-  return { dashboard, mode, error, changes, comments, accept };
+  return { dashboard, mode, error, changes, comments, accept, retry: () => { void fetchOnce(); } };
 }
 
 /** True for a few seconds after `value` changes; never on first read. */
