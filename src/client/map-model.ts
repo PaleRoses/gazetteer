@@ -1,5 +1,5 @@
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
-import type { PortRisk } from '../core/board';
+import type { BoardMessage, PortBulletin, PortRisk, TrafficReport } from '../core/board';
 import type { PortId } from '../core/ports';
 import type { Dashboard, Shipment } from '../core/types';
 import { positionAlong, progressAt, splitAt, unwrap, voyageRoute, type LngLat, type Route } from '../core/routes';
@@ -24,39 +24,40 @@ export const vesselView = (shipment: Shipment, now: number): VesselView => {
 
 export const vesselViews = (shipments: readonly Shipment[], now: number): readonly VesselView[] => shipments.map(shipment => vesselView(shipment, now));
 
-type PortProperties = Readonly<{ id: PortId; name: string; label: string }> & (
-  Readonly<{ risk: PortRisk; relevance: number }> | Readonly<{ risk: 'unreported'; relevance: null }>
-);
+type PortProperties = Readonly<{ id: PortId; name: string; label: string; risk: PortRisk | 'unreported'; relevance: number | null; anchored: number | null }>;
+type PortPoint = Point & { coordinates: [number, number] };
 const portRiskText: Readonly<Record<PortRisk, string>> = { normal: 'Normal', elevated: 'Elevated', severe: 'Severe' };
 
 /** The catalog owns positions; reported status owns risk/relevance. Absence is never a normal assessment. */
-export const portFeatures = (ports: Dashboard['ports'], statuses?: Dashboard['portStatus']): FeatureCollection<Point, PortProperties> => ({
+export const portFeatures = (ports: Dashboard['ports'], statuses?: Dashboard['portStatus'], board: readonly BoardMessage[] = []): FeatureCollection<PortPoint, PortProperties> => ({
   type: 'FeatureCollection',
-  features: ports.map((port): Feature<Point, PortProperties> => {
+  features: ports.map((port): Feature<PortPoint, PortProperties> => {
     const status = statuses?.find(value => value.portId === port.id);
-    const properties: PortProperties = status === undefined
-      ? { id: port.id, name: port.name, risk: 'unreported', relevance: null, label: `${port.name}\nRisk unreported` }
-      : {
-        id: port.id, name: port.name, risk: status.risk, relevance: status.relevance,
-        label: `${port.name}\n${portRiskText[status.risk]} · ${status.relevance} upcoming ${status.relevance === 1 ? 'ship' : 'ships'}`,
-      };
+    const traffic = board.reduce<TrafficReport | null>((latest, message) => message.kind === 'city.traffic' && message.author.city === port.id && (!latest || message.at >= latest.at) ? message : latest, null);
+    const bulletin = board.reduce<PortBulletin | null>((latest, message) => message.kind === 'port.bulletin' && message.portId === port.id && (!latest || message.at >= latest.at) ? message : latest, status?.bulletin ?? null);
+    const risk = status?.risk ?? traffic?.risk ?? bulletin?.risk ?? 'unreported';
+    const anchored = traffic?.anchored ?? bulletin?.anchored ?? null;
+    const properties: PortProperties = {
+      id: port.id, name: port.name, risk, relevance: status?.relevance ?? null, anchored,
+      label: `${port.name}\n${risk === 'unreported' ? 'Risk unreported' : portRiskText[risk]}${status ? ` · ${status.relevance} upcoming ${status.relevance === 1 ? 'ship' : 'ships'}` : ''}${anchored === null ? '' : ` · ${anchored} anchored`}`,
+    };
     return { type: 'Feature', id: port.id, properties, geometry: { type: 'Point', coordinates: [...port.coordinates] } };
   }),
 });
 
-const line = (id: string, coordinates: Route): Feature<LineString> => ({ type: 'Feature', properties: { id }, geometry: { type: 'LineString', coordinates: coordinates.map(point => [...point]) } });
+const line = (id: string, coordinates: Route, risk?: Shipment['risk']): Feature<LineString> => ({ type: 'Feature', properties: { id, ...(risk === undefined ? {} : { risk }) }, geometry: { type: 'LineString', coordinates: coordinates.map(point => [...point]) } });
 const collection = (features: readonly Feature<LineString>[]): FeatureCollection<LineString> => ({ type: 'FeatureCollection', features: [...features] });
 
 export type RouteLayers = Readonly<{ lanes: FeatureCollection<LineString>; sailed: FeatureCollection<LineString>; ahead: FeatureCollection<LineString> }>;
 
-/** Faint lanes for every voyage; the selected voyage split into the part sailed and the part ahead. */
+/** Every voyage remains visible; the selected voyage additionally gets a sailed/ahead overlay. */
 export const routeLayers = (views: readonly VesselView[], selectedId: string | undefined): RouteLayers => {
   const selected = views.find(view => view.id === selectedId);
   const split = selected && splitAt(selected.route, selected.progress);
   return {
-    lanes: collection(views.filter(view => view.id !== selectedId).map(view => line(view.id, view.route))),
-    sailed: collection(selected && split ? [line(selected.id, split.sailed)] : []),
-    ahead: collection(selected && split ? [line(selected.id, split.ahead)] : []),
+    lanes: collection(views.map(view => line(view.id, view.route, view.risk))),
+    sailed: collection(selected && split ? [line(selected.id, split.sailed, selected.risk)] : []),
+    ahead: collection(selected && split ? [line(selected.id, split.ahead, selected.risk)] : []),
   };
 };
 

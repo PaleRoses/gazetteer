@@ -22,6 +22,7 @@ export const dashboardSchema: z.ZodType<Dashboard> = z.object({
   ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })),
   updatedAt: z.string(), mode: z.enum(['simulation', 'mixed']), runtime: z.string(), relay: z.string(),
   portStatus: z.array(portStatus).optional(), board: z.array(boardMessage).optional(),
+  relayHealth: z.object({ state: z.enum(['live', 'reconnecting']), since: z.string().nullable(), lastPostAt: z.string().nullable() }).optional(),
   startup: z.object({ ready: z.number(), total: z.number(), queued: z.number().optional() }).optional(),
 });
 const userSchema: z.ZodType<User> = z.object({ id: z.string(), name: z.string(), email: z.string() });

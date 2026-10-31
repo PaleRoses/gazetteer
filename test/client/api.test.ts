@@ -23,6 +23,14 @@ test('missing actor reports remain distinct from explicitly empty reports', () =
   expect(dashboardSchema.parse({ ...unreported, board: [], portStatus: [] }).portStatus).toEqual([]);
 });
 
+test('relay health survives GET and SSE without inventing a missing transport status', () => {
+  const health = { state: 'reconnecting', since: '2026-10-31T12:00:00.000Z', lastPostAt: null } as const;
+  const snapshot = { ...societyDashboard, relayHealth: health };
+  expect(dashboardSchema.parse(snapshot).relayHealth).toEqual(health);
+  expect(parseDashboardEvent(JSON.stringify(snapshot))?.relayHealth).toEqual(health);
+  expect(dashboardSchema.parse(societyDashboard).relayHealth).toBeUndefined();
+});
+
 test('the canonical assessment method governs null confidence in GET and SSE', () => {
   const ruleWithInventedConfidence = { ...societyDashboard, board: [{ ...fixtureAssessment, confidence: 0 }] };
   const aiWithoutConfidence = { ...societyDashboard, board: [{ ...fixtureAssessment, method: 'ai-assessed', confidence: null }] };
