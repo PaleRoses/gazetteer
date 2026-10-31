@@ -10,7 +10,7 @@ export const cargoTankerTypes = { from: 70, to: 89 } as const;
 export const mmsiRange = { min: 100_000_000, max: 999_999_999 } as const;
 
 export const zones = {
-  /** Anchorage and outer radius: the 30 km / 40 km pair in agents/port/risk.ts, which scales GFW pipe-anchorages' 3 km / 4 km entry/exit ratio to a container port's offshore anchorage. Estimate of the scale, GFW's ratio. */
+  /** Anchorage and outer radius: the 30 km / 40 km pair in agents/city/traffic.ts (`anchorage`), which scales GFW pipe-anchorages' 3 km / 4 km entry/exit ratio to a container port's offshore anchorage. Estimate of the scale, GFW's ratio. */
   anchorageKm: 30, outerKm: 40,
   /** Berth radius: estimate. LA/LB, the one port with data in hand, shows moored vessels (Status 5) well inside 5 km of the reference point; replaced by AIS-derived cells once a baseline exists. */
   berthKm: 5,
