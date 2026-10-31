@@ -23,10 +23,13 @@ export type User = Readonly<{ id: string; name: string; email: string }>;
 export type Comment = Readonly<{ id: string; author: string; body: string; createdAt: string }>;
 export type Dashboard = Readonly<{
   intelligence?: Intelligence;
+  routes?: readonly MonitoredRoute[];
   shipments: readonly Shipment[]; ports: readonly Port[]; updatedAt: string;
   /** 'mixed' = live notices may appear beside simulated ones, each labelled by its evidence. */
   mode: 'simulation' | 'mixed'; runtime: string; relay: string;
   portStatus?: readonly PortStatus[]; board?: readonly BoardMessage[];
+  /** Present only while the workspace's actors are still starting; the shipments shown for the rest are their seed state. `queued` counts simulated disruptions waiting for their port actor. */
+  startup?: Readonly<{ ready: number; total: number; queued?: number }>;
 }>;
 
 /** Assessment provenance travels with the shipment; the client never invents a risk score. */
@@ -47,4 +50,11 @@ export type IntelligenceItem = Readonly<{
 export type Intelligence = Readonly<{
   items: readonly IntelligenceItem[]; diversions: readonly Diversion[];
   checkedAt: string; unavailableProviders: readonly string[]; sourcesEnabled: boolean;
+}>;
+
+/** A two-way port-to-port monitoring corridor, not a carrier service or prescribed navigation lane. */
+export type MonitoredRoute = Readonly<{
+  id: string; endpoints: readonly [PortId, PortId]; path: readonly (readonly [number, number])[];
+  shipmentIds: readonly string[]; risk: Risk; attention: number; maxDelayHours: number; summary: string;
+  intelligence?: Intelligence;
 }>;

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { boardMetadataKind, type BoardMessage } from '../src/board';
 import { boardTransport } from '../src/server/board/transport';
+import type { Cursor } from '../src/server/realtime/cursor';
 import type { RelayIdentity } from '../src/server/relay';
 
 const identity: RelayIdentity = { token: 'at_test', channel: 'gazetteer-w1' };
@@ -89,6 +90,35 @@ describe('board transport', () => {
     const conflict = { sendMessage: async () => { throw Object.assign(new Error('Idempotency-Key was reused with a different request payload'), { statusCode: 409 }); }, messages: { list: async () => [] } };
     expect(await boardTransport(async () => conflict as never).postBoard(identity, bulletin('b-1'))).toEqual({ status: 'ok', value: 'b-1' });
   });
+
+  test('a gap beyond one read budget resumes across reads with the persisted cursor round-tripped through JSON, releasing board posts and disruptions once, in order', async () => {
+    const channel = fakeChannel();
+    const transport = boardTransport(async () => channel.client);
+    const disruption = (n: number) => ({ id: `d-${n}`, portId: 'singapore', delayHours: 12, evidence: { id: `d-${n}`, source: 'simulation', title: 't', detail: 'x', observedAt: '2026-10-31T20:00:00.000Z' } });
+    const total = 5300;
+    for (let n = 0; n < total; n += 1) {
+      if (n % 100 === 7) await channel.raw.sendMessage({ text: 'd', metadata: { kind: 'gazetteer.simulated-disruption', source: 'simulation', disruption: disruption(n) } });
+      else if (n % 100 === 50) await channel.raw.sendMessage({ text: 'b', metadata: { kind: boardMetadataKind, message: eta(`e-${String(n).padStart(5, '0')}`) } });
+      else await channel.raw.sendMessage({ text: 'chatter', metadata: { kind: 'chatter' } });
+    }
+    let cursor: Cursor | null = null;
+    const board: string[] = [];
+    const disruptions: string[] = [];
+    let reads = 0;
+    for (let complete = false; !complete;) {
+      const read = await transport.readChannel(identity, cursor);
+      if (read.status !== 'ok') throw new Error(read.message);
+      reads += 1;
+      cursor = JSON.parse(JSON.stringify(read.value.cursor)) as Cursor | null;
+      board.push(...read.value.board.map(message => message.id));
+      disruptions.push(...read.value.disruptions.map(item => item.id));
+      complete = cursor?.descent === undefined;
+    }
+    expect(reads).toBe(2);
+    expect(board).toHaveLength(53);
+    expect(board).toEqual(board.toSorted());
+    expect(disruptions).toEqual(Array.from({ length: 53 }, (_, index) => `d-${index * 100 + 7}`));
+  }, 30000);
 
   test('a provider failure is data and the caller keeps its cursor', async () => {
     const down = boardTransport(async () => { throw new Error('relay down'); });

@@ -1,20 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { shipmentBrief, riskLabel } from './brief';
-import type { GeoJSONSource, Popup, Map as MapLibreMap, Marker, StyleSpecification } from 'maplibre-gl';
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, untrack } from 'solid-js';
+import { Portal } from 'solid-js/web';
+import { riskLabel, shipmentBrief } from './brief';
+import type { GeoJSONSource, Map as MapLibreMap, Marker, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
-import type { Dashboard, Diversion, Shipment } from '../shared';
+import type { Dashboard, Diversion, MonitoredRoute, Shipment } from '../shared';
 import { boundsOf, graticule, routeLayers, vesselViews, type VesselView } from './map-model';
 
 type MapLibre = typeof import('maplibre-gl');
-type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; inspected: Diversion | null; showPopup: boolean }>;
+type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; showPopup: boolean; inspected: Diversion | null; corridor?: MonitoredRoute; routeMode?: boolean; onRoute: (id: string) => void }>;
 
 const COLOURS = { ocean: '#d6e6f2', land: '#f5f3ea', coast: '#8fb0c9', grid: '#9ebdd3', lane: '#5f87ad', route: '#1f5a9e' } as const;
 const TICK_MS = 4_000;
 const FRAME_PADDING = { top: 70, bottom: 150, left: 60, right: 110 } as const;
 const OCEANS: readonly (readonly [string, number, number])[] = [['ATLANTIC OCEAN', -35, 25], ['PACIFIC OCEAN', -150, 10], ['PACIFIC OCEAN', 175, 5], ['INDIAN OCEAN', 78, -22]];
-const RISK_TEXT = { 'on-track': 'low risk', watch: 'moderate risk', delayed: 'high risk' } as const;
+const RISK_TEXT = riskLabel;
 
 const style = (origin: string): StyleSpecification => ({
   version: 8,
@@ -29,8 +29,10 @@ const style = (origin: string): StyleSpecification => ({
 
 const emptyLines: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 const addRouteLayers = (map: MapLibreMap): void => {
-  for (const id of ['lanes', 'sailed', 'ahead', 'alternative']) map.addSource(id, { type: 'geojson', data: emptyLines });
-  map.addLayer({ id: 'alternative', type: 'line', source: 'alternative', paint: { 'line-color': '#8b5a9b', 'line-width': 2, 'line-dasharray': [2, 3] } });
+  for (const id of ['lanes', 'sailed', 'ahead', 'corridors', 'alternative']) map.addSource(id, { type: 'geojson', data: emptyLines });
+  map.addLayer({ id: 'corridors', type: 'line', source: 'corridors', paint: { 'line-color': '#225f9e', 'line-width': 5, 'line-opacity': 0.7 } });
+  map.addLayer({ id: 'corridor-hit', type: 'line', source: 'corridors', paint: { 'line-color': '#225f9e', 'line-width': 24, 'line-opacity': 0.01 } });
+  map.addLayer({ id: 'alternative', type: 'line', source: 'alternative', paint: { 'line-color': '#8755a4', 'line-width': 2, 'line-dasharray': [3, 3] } });
   map.addLayer({ id: 'lanes', type: 'line', source: 'lanes', layout: { 'line-cap': 'round' }, paint: { 'line-color': COLOURS.lane, 'line-width': 1.6, 'line-opacity': 0.75, 'line-dasharray': [2, 3] } });
   map.addLayer({ id: 'ahead-casing', type: 'line', source: 'ahead', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.75 } });
   map.addLayer({ id: 'ahead', type: 'line', source: 'ahead', layout: { 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 2.2, 'line-dasharray': [2, 2] } });
@@ -68,159 +70,159 @@ const decorate = (button: HTMLElement, view: VesselView, selected: boolean): voi
 
 const setLines = (map: MapLibreMap, id: string, data: GeoJSON.FeatureCollection): void => { (map.getSource(id) as GeoJSONSource | undefined)?.setData(data); };
 
-export function ShipmentMap({ dashboard, selected, focusId, onSelect, onOpen, onDismiss, inspected, showPopup }: Selection) {
-  const [popupHost, setPopupHost] = useState<HTMLElement | null>(null);
-  const popup = useRef<Popup | null>(null);
-  const container = useRef<HTMLDivElement>(null);
-  const [ready, setReady] = useState<Readonly<{ lib: MapLibre; map: MapLibreMap }> | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const markers = useRef(new Map<string, Marker>());
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
-  const inspectedFrame = useRef<string | null>(null);
-  const fleetFramed = useRef(false);
-  const framed = useRef<string | undefined>(undefined);
+export function ShipmentMap(props: Selection) {
+  let container: HTMLDivElement | undefined;
+  const [ready, setReady] = createSignal<Readonly<{ lib: MapLibre; map: MapLibreMap }> | null>(null);
+  const [failed, setFailed] = createSignal(false);
+  const [now, setNow] = createSignal(Date.now());
+  const markers = new Map<string, Marker>();
+  let framed: string | undefined;
+  const [frameWidth, setFrameWidth] = createSignal(0);
+  const [popupHost, setPopupHost] = createSignal<HTMLElement | undefined>();
+  let popup: import('maplibre-gl').Popup | undefined;
 
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), TICK_MS); return () => window.clearInterval(timer); }, []);
 
-  useEffect(() => {
-    const host = container.current;
+  const tick = window.setInterval(() => setNow(Date.now()), TICK_MS);
+  onCleanup(() => window.clearInterval(tick));
+
+  onMount(() => {
+    const host = container;
     if (!host) return;
     let disposed = false;
     let created: MapLibreMap | undefined;
-    const trackedMarkers = markers.current;
+    const resize = new ResizeObserver(() => { created?.resize(); setFrameWidth(host.clientWidth); });
+    resize.observe(host);
+    onCleanup(() => { resize.disconnect(); popup?.remove(); disposed = true; markers.forEach(marker => marker.remove()); markers.clear(); created?.remove(); });
     void import('maplibre-gl').then(module => {
       if (disposed) return;
       const lib: MapLibre = 'default' in module ? (module as unknown as { default: MapLibre }).default : module;
       lib.setWorkerUrl(new URL(workerUrl, window.location.href).href);
       const map = new lib.Map({
-        container: host, style: style(window.location.origin), center: [30, 24], zoom: 1.15, minZoom: -0.5, maxZoom: 7,
-        attributionControl: false, dragRotate: false, pitchWithRotate: false, cooperativeGestures: false,
+        container: host, style: style(window.location.origin), center: [30, 24], zoom: 1.15, minZoom: 0.6, maxZoom: 7,
+        attributionControl: false, dragRotate: false, pitchWithRotate: false,
       });
       created = map;
       map.touchZoomRotate.disableRotation();
-      map.addControl(new lib.AttributionControl({ compact: true, customAttribution: 'Land: Natural Earth (public domain) · Sea lanes: Eurostat SeaRoute network · Positions interpolated from schedule (simulated)' }), 'bottom-right');
+      map.addControl(new lib.AttributionControl({ compact: true, customAttribution: 'Natural Earth · Approximate voyage paths · positions simulated' }), 'bottom-right');
       map.addControl(new lib.NavigationControl({ showCompass: false }), 'top-right');
       OCEANS.forEach(([name, lon, lat]) => new lib.Marker({ element: element('span', 'ocean-label', name), anchor: 'center' }).setLngLat([lon, lat]).addTo(map));
-      map.on('load', () => { addRouteLayers(map); if (!disposed) setReady({ lib, map }); });
+      map.on('load', () => {
+        addRouteLayers(map);
+        map.on('click', 'corridor-hit', event => { const id = event.features?.[0]?.properties?.id; if (typeof id === 'string') props.onRoute(id); });
+        map.on('mouseenter', 'corridor-hit', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'corridor-hit', () => { map.getCanvas().style.cursor = ''; });
+        if (!disposed) setReady({ lib, map });
+      });
       map.on('error', event => { if (!disposed && (event as { sourceId?: string }).sourceId === 'land') setFailed(true); });
     }).catch(() => { if (!disposed) setFailed(true); });
-    return () => { disposed = true; trackedMarkers.forEach(marker => marker.remove()); trackedMarkers.clear(); created?.remove(); setReady(null); };
-  }, []);
+  });
 
-  const views = useMemo(() => vesselViews(dashboard?.shipments ?? [], now), [dashboard, now]);
-  const selectedId = selected?.id;
+  const views = createMemo(() => vesselViews(props.dashboard?.shipments ?? [], now()));
+  const selectedId = () => props.selected?.id;
 
-  useEffect(() => {
-    if (!ready) return;
-    const { lib, map } = ready;
-    const layers = routeLayers(views, selectedId);
+  createEffect(() => {
+    const current = ready();
+    if (!current) return;
+    const { lib, map } = current;
+    const list = views();
+    const chosen = selectedId();
+    const layers = routeLayers(list, chosen);
     setLines(map, 'lanes', layers.lanes); setLines(map, 'sailed', layers.sailed); setLines(map, 'ahead', layers.ahead);
-    const known = markers.current;
-    const live = new Set(views.map(view => view.id));
-    known.forEach((marker, id) => { if (!live.has(id) && !id.includes(':')) { marker.remove(); known.delete(id); } });
-    views.forEach(view => {
-      const existing = known.get(view.id);
-      const marker = existing ?? new lib.Marker({ element: vesselElement(id => onSelectRef.current(id), view), anchor: 'center' }).setLngLat([...view.position]).addTo(map);
-      if (!existing) known.set(view.id, marker);
+    const live = new Set(list.map(view => view.id));
+    markers.forEach((marker, id) => { if (!live.has(id) && !id.includes(':')) { marker.remove(); markers.delete(id); } });
+    list.forEach(view => {
+      const existing = markers.get(view.id);
+      const marker = existing ?? new lib.Marker({ element: vesselElement(id => props.onSelect(id), view), anchor: 'center' }).setLngLat([...view.position]).addTo(map);
+      if (!existing) markers.set(view.id, marker);
       marker.setLngLat([...view.position]);
-      decorate(marker.getElement(), view, view.id === selectedId);
+      decorate(marker.getElement(), view, view.id === chosen);
     });
-  }, [ready, views, selectedId]);
+  });
 
-  useEffect(() => {
-    if (!ready || !dashboard) return;
-    const { lib, map } = ready;
+  createEffect(() => {
+    const current = ready();
+    const dashboard = props.dashboard;
+    if (!current || !dashboard) return;
+    const { lib, map } = current;
+    const portKeys = new Set(dashboard.ports.map(port => `port:${port.id}`));
+    markers.forEach((marker, key) => { if (key.startsWith('port:') && !portKeys.has(key)) { marker.remove(); markers.delete(key); } });
     dashboard.ports.forEach(port => {
       const key = `port:${port.id}`;
-      if (markers.current.has(key)) return;
+      if (markers.has(key)) return;
       const node = element('div', 'port-marker');
       node.append(element('span', 'port-dot'), element('span', 'port-label', port.name));
-      markers.current.set(key, new lib.Marker({ element: node, anchor: 'left', offset: [-4, 0] }).setLngLat([...port.coordinates] as [number, number]).addTo(map));
+      markers.set(key, new lib.Marker({ element: node, anchor: 'left', offset: [-4, 0] }).setLngLat([...port.coordinates] as [number, number]).addTo(map));
     });
-  }, [ready, dashboard]);
+  });
 
-  useEffect(() => {
-    if (ready && views.length && !fleetFramed.current && !focusId) {
-      fleetFramed.current = true;
-      ready.map.fitBounds([[-180, -50], [180, 65]], { padding: 45, duration: 0, maxZoom: 1.15 });
-    }
-    if (!focusId) framed.current = undefined;
-    if (!ready || !focusId || framed.current === focusId) return;
-    const view = views.find(item => item.id === focusId);
-    const bounds = view && boundsOf(view.route);
-    if (!bounds) return;
-    framed.current = focusId;
-    ready.map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: FRAME_PADDING, maxZoom: 4.2, duration: 900 });
-  }, [ready, focusId, views]);
-
-  useEffect(() => {
-    if (!ready || !container.current) return;
-    const observer = new ResizeObserver(() => ready.map.resize());
-    observer.observe(container.current);
-    return () => observer.disconnect();
-  }, [ready]);
-
-  useEffect(() => {
-    if (!ready || !selectedId || !showPopup) { setPopupHost(null); return; }
+  createEffect(() => {
+    const current = ready();
+    if (!current) return;
+    const corridors = props.corridor ? [props.corridor] : props.routeMode ? props.dashboard?.routes ?? [] : [];
+    setLines(current.map, 'corridors', { type: 'FeatureCollection', features: corridors.filter(r => r.path.length > 1).map(r => ({ type: 'Feature', properties: { id: r.id }, geometry: { type: 'LineString', coordinates: r.path.map(p => [...p]) } })) });
+  });
+  createEffect(() => {
+    const current = ready();
+    if (!current) return;
+    const option = props.inspected;
+    const key = `${frameWidth()}:` + (option ? `alternative:${option.id}` : props.corridor ? `route:${props.corridor.id}` : props.focusId ?? 'fleet');
+    if (key === framed) return;
+    const focus = views().find(v => v.id === props.focusId);
+    const path = option ? [option.coordinates, props.dashboard?.ports.find(p => p.id === option.replaces)?.coordinates ?? option.coordinates] : props.corridor?.path ?? focus?.route ?? [];
+    const bounds = boundsOf(path);
+    const narrow = (container?.clientWidth ?? 500) < 500;
+    if (bounds) current.map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: narrow ? { top: 90, bottom: 160, left: 35, right: 35 } : FRAME_PADDING, maxZoom: option ? 6 : 4.2, duration: 600 });
+    else current.map.fitBounds([[-180, -50], [180, 65]], { padding: 40, duration: 600 });
+    framed = key;
+  });
+  createEffect(() => {
+    const current = ready();
+    const selected = props.selected;
+    if (!current || !selected || !props.showPopup) { popup?.remove(); popup = undefined; setPopupHost(undefined); return; }
     const host = document.createElement('div');
-    const card = new ready.lib.Popup({ closeButton: false, closeOnClick: false, focusAfterOpen: false, offset: 22, maxWidth: '290px', className: 'shipment-popup' });
-    popup.current = card;
-    setPopupHost(host);
-    card.setDOMContent(host);
-    return () => { card.remove(); popup.current = null; };
-  }, [ready, selectedId, showPopup]);
-
-  useEffect(() => {
-    const view = views.find(view => view.id === selectedId);
-    if (ready && view && popup.current) { popup.current.setLngLat([...view.position]); if (!popup.current.isOpen()) popup.current.addTo(ready.map); }
-  }, [ready, selectedId, views, showPopup]);
-
-  useEffect(() => {
-    if (!ready) return;
-    const { map, lib } = ready;
-    const extra: Marker[] = [];
-    const alternatives = (dashboard?.intelligence?.diversions ?? []).filter(option => !selectedId || option.shipmentId === selectedId);
-    const seen = new Set<string>();
-    alternatives.forEach(option => {
-      if (seen.has(option.name)) return;
-      seen.add(option.name);
+    const position = untrack(() => views().find(v => v.id === selected.id)?.position) ?? selected.coordinates;
+    popup?.remove();
+    const created = new current.lib.Popup({ closeButton: false, closeOnClick: false, offset: 20, maxWidth: '290px', className: 'shipment-popup' }).setLngLat([...position]).setDOMContent(host).addTo(current.map);
+    popup = created; setPopupHost(host);
+    onCleanup(() => created.remove());
+  });
+  createEffect(() => {
+    const position = views().find(v => v.id === props.selected?.id)?.position;
+    if (position) popup?.setLngLat([...position]);
+  });
+  createEffect(() => {
+    const current = ready();
+    if (!current) return;
+    const info = props.corridor?.intelligence ?? props.dashboard?.intelligence;
+    const alternatives = props.inspected ? [props.inspected] : (info?.diversions ?? []).filter(d => props.corridor || d.shipmentId === props.selected?.id);
+    const owned: Marker[] = [];
+    for (const option of [...new Map(alternatives.map(d => [d.name, d])).values()]) {
       const node = element('div', 'alternative-port');
       node.append(element('span', 'alternative-dot'), element('span', '', option.name));
-      node.title = 'Potential diversion · carrier confirmation required';
-      extra.push(new lib.Marker({ element: node, anchor: 'left' }).setLngLat([...option.coordinates]).addTo(map));
-    });
-    (dashboard?.intelligence?.items ?? []).filter(item => item.coordinates && item.relevance.some(reason => !selectedId || reason.shipmentId === selectedId)).forEach(item => {
-      const node = element('button', 'news-marker', '!') as HTMLButtonElement;
-      node.type = 'button'; node.setAttribute('aria-label', item.evidence.title); node.title = item.evidence.title;
-      node.addEventListener('click', () => { const id = item.relevance[0]?.shipmentId; if (id) onSelectRef.current(id); });
-      extra.push(new lib.Marker({ element: node }).setLngLat([...item.coordinates!] as [number, number]).addTo(map));
-    });
-    return () => extra.forEach(marker => marker.remove());
-  }, [ready, dashboard?.intelligence, selectedId]);
-
-  useEffect(() => {
-    if (!ready) return;
-    const port = dashboard?.ports.find(port => port.id === inspected?.replaces);
-    setLines(ready.map, 'alternative', inspected && port ? { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[...port.coordinates], [...inspected.coordinates]] } }] } : emptyLines);
-    if (!inspected) inspectedFrame.current = null;
-    if (inspected && port && inspectedFrame.current !== inspected.id) {
-      inspectedFrame.current = inspected.id;
-      ready.map.fitBounds([[Math.min(port.coordinates[0], inspected.coordinates[0]), Math.min(port.coordinates[1], inspected.coordinates[1])], [Math.max(port.coordinates[0], inspected.coordinates[0]), Math.max(port.coordinates[1], inspected.coordinates[1])]], { padding: 100, maxZoom: 5, duration: 600 });
+      owned.push(new current.lib.Marker({ element: node }).setLngLat([...option.coordinates]).addTo(current.map));
     }
-  }, [ready, inspected, dashboard?.ports]);
+    for (const item of info?.items ?? []) {
+      if (!item.coordinates || (!props.corridor && props.selected && !item.relevance.some(r => r.shipmentId === props.selected?.id))) continue;
+      const node = element('button', 'news-marker', '!'); node.setAttribute('aria-label', item.evidence.title); node.title = item.evidence.title;
+      node.addEventListener('click', () => { document.querySelector('.intelligence-panel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); });
+      owned.push(new current.lib.Marker({ element: node }).setLngLat([...item.coordinates]).addTo(current.map));
+    }
+    const option = props.inspected;
+    const port = props.dashboard?.ports.find(p => p.id === option?.replaces);
+    setLines(current.map, 'alternative', { type: 'FeatureCollection', features: option && port ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[...port.coordinates], [...option.coordinates]] } }] : [] });
+    onCleanup(() => owned.forEach(m => m.remove()));
+  });
 
-  return <div className="map-canvas">
-    <div ref={container} className="map-gl" role="group" aria-label="Shipment map. Select a vessel with the markers or the shipment list." />
-    {selected && showPopup && (popupHost ? createPortal(<div className="vessel-popup-card"><button className="popup-dismiss" onClick={onDismiss} aria-label="Close ship popup">×</button><button className="popup-open" onClick={onOpen}><span className="section-kicker">{selected.reference}</span><strong>{selected.vessel}</strong><span className="popup-eta">ETA {new Date(selected.eta).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC</span><span className={`risk-badge ${selected.risk}`}>{riskLabel[selected.risk]}</span><span className="popup-brief">{shipmentBrief(selected).text}</span><span className="popup-source">{shipmentBrief(selected).source}</span><span className="popup-cta">Open voyage & news →</span></button></div>, popupHost) : failed && <button className="map-fallback-open" onClick={onOpen}>Open {selected.vessel} · voyage & news →</button>)}
-    {inspected && <p className="alternative-map-caption">{inspected.name} · indicative port connection, not a navigable route</p>}
-    {failed && <p className="map-fallback" role="status">The map could not be drawn. The shipment list still shows every route and ETA.</p>}
-    <div className="map-legend" aria-hidden="true"><span><i className="legend-dot on-track" />Low</span><span><i className="legend-dot watch" />Moderate</span><span><i className="legend-dot delayed" />High</span></div>
+  return <div class="map-canvas">
+    <div ref={container} class="map-gl" role="group" aria-label="Shipment map. Select a vessel with the markers or the shipment list." />
+    <Show when={popupHost()}>{host => <Portal mount={host()}><button class="popup-dismiss" aria-label="Close ship popup" onClick={props.onDismiss}>×</button><button class="popup-open" onClick={props.onOpen}><span class="reference">{props.selected?.reference}</span><strong>{props.selected?.vessel}</strong><span class="popup-eta">ETA {props.selected && new Date(props.selected.eta).toLocaleString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} UTC</span><span class={`risk-badge ${props.selected?.risk}`}>{props.selected && riskLabel[props.selected.risk]}</span><span class="popup-brief">{props.selected && shipmentBrief(props.selected).text}</span><span class="popup-source">{props.selected && shipmentBrief(props.selected).source}</span><span class="popup-cta">Open voyage & news →</span></button></Portal>}</Show>
+    <Show when={props.inspected}><div class="alternative-map-caption">{props.inspected?.name} · indicative connection; revised ETA unconfirmed</div></Show>
+    <Show when={failed()}><p class="map-fallback" role="status">The map could not be drawn. The shipment list still shows every route and ETA.</p></Show>
+    <div class="map-legend" aria-hidden="true"><span><i class="legend-dot on-track" />Low risk</span><span><i class="legend-dot watch" />Moderate risk</span><span><i class="legend-dot delayed" />High risk</span></div>
   </div>;
 }
 
 const backdrop = new URL('./world-coastline.svg', import.meta.url).href;
 export function MapBackdrop() {
-  return <div className="map-canvas"><svg className="world-map" viewBox="0 30 1000 420" aria-hidden="true"><image href={backdrop} width="1000" height="500" /></svg></div>;
+  return <div class="map-canvas"><svg class="world-map" viewBox="0 30 1000 420" aria-hidden="true"><image href={backdrop} width="1000" height="500" /></svg></div>;
 }

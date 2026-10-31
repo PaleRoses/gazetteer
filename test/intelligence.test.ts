@@ -25,7 +25,7 @@ describe('voyage intelligence', () => {
   });
   test('a declared destination-zone notice stays on the planned voyage and unrelated voyages are excluded', () => {
     const news = buildIntelligence(ships, [notice({ geometry: { kind: 'zone', zoneIds: ['test'], portIds: ['los-angeles'] } })], now);
-    expect(news.items[0]?.relevance).toEqual([{ shipmentId: 'gz-1043', kind: 'route', reason: 'Reaches the upcoming Los Angeles call.' }]);
+    expect(news.items[0]?.relevance).toEqual(ships.filter(s => s.destination === 'los-angeles').map(s => ({ shipmentId: s.id, kind: 'route', reason: 'Reaches the upcoming Los Angeles call.' })));
   });
   test('passed calls and expired notices do not generate prospective diversion exposure', () => {
     expect(callsAhead(ships[0]!, new Date(now.getTime() + 280 * 3_600_000))).toEqual(['rotterdam']);

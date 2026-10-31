@@ -18,6 +18,9 @@ export const isCurrent = (held: Dashboard | null, incoming: Dashboard): boolean 
 export const mergeComment = (comments: readonly Comment[], incoming: Comment): readonly Comment[] =>
   comments.some(comment => comment.id === incoming.id) ? comments : [...comments, incoming];
 
+/** Sub-minute ETA drift is the server re-anchoring its clock, not a revised estimate. */
+const ETA_RESOLUTION_MS = 60_000;
+
 export type Change = Readonly<{ id: string; vessel: string; kind: 'eta' | 'risk' }>;
 
 /** Shipments whose arrival estimate or risk moved between two snapshots. */
@@ -26,7 +29,7 @@ export const changesBetween = (before: Dashboard | null, after: Dashboard): read
     const prior = before.shipments.find(item => item.id === shipment.id);
     if (!prior) return [];
     return [
-      ...(prior.eta !== shipment.eta ? [{ id: shipment.id, vessel: shipment.vessel, kind: 'eta' as const }] : []),
+      ...(Math.abs(Date.parse(prior.eta) - Date.parse(shipment.eta)) >= ETA_RESOLUTION_MS ? [{ id: shipment.id, vessel: shipment.vessel, kind: 'eta' as const }] : []),
       ...(prior.risk !== shipment.risk ? [{ id: shipment.id, vessel: shipment.vessel, kind: 'risk' as const }] : []),
     ];
   });

@@ -1,10 +1,10 @@
 export type LonLat = readonly [number, number];
-export type TelemetryProvider = 'aisstream' | 'digitraffic';
+export type TelemetryProvider = 'aisstream' | 'digitraffic' | 'simulation';
 
 /** One AIS position report, normalised. `null` means the transponder reported "not available". */
 export type Telemetry = Readonly<{
   mmsi: string; position: LonLat; sogKnots: number | null; cogDegrees: number | null; navStatus: number | null;
-  observedAt: string; provenance: 'live'; provider: TelemetryProvider; fetchedAt: string;
+  observedAt: string; provenance: 'live' | 'simulation'; provider: TelemetryProvider; fetchedAt: string;
 }>;
 export type TelemetryOutcome =
   | Readonly<{ status: 'ok'; value: Telemetry }>

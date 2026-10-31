@@ -34,10 +34,10 @@ export const diversionsFor = (shipment: Shipment, now: Date): readonly Diversion
   ...options[replaces], id: `${shipment.id}:${replaces}`, shipmentId: shipment.id, replaces,
 }));
 
-const relevanceFor = (notice: Notice, shipment: Shipment, diversions: readonly Diversion[], now: Date): readonly NewsRelevance[] => {
-  if (Date.parse(shipment.eta) <= now.getTime()) return [];
-  const calls = callsAhead(shipment, now);
-  const ahead = remainingRoute(shipment, now);
+const relevanceFor = (notice: Notice, shipment: Shipment, diversions: readonly Diversion[], now: Date, scope: 'voyage' | 'corridor'): readonly NewsRelevance[] => {
+  if (scope === 'voyage' && Date.parse(shipment.eta) <= now.getTime()) return [];
+  const calls = scope === 'corridor' ? [shipment.origin, shipment.destination] : callsAhead(shipment, now);
+  const ahead = scope === 'corridor' ? voyageRoute(shipment) ?? unwrap(shipment.route) : remainingRoute(shipment, now);
   const reach = radiusKm[notice.kind];
   const call = ports.find(port => calls.includes(port.id) && (notice.geometry.kind === 'zone'
     ? notice.geometry.portIds.includes(port.id)
@@ -50,11 +50,11 @@ const relevanceFor = (notice: Notice, shipment: Shipment, diversions: readonly D
 };
 
 /** Relevance is evidence selection, not a second risk/ETA assessment. */
-export function buildIntelligence(shipments: readonly Shipment[], notices: readonly Notice[], now: Date, unavailableProviders: readonly string[] = [], sourcesEnabled = true): Intelligence {
-  const diversions = shipments.flatMap(shipment => diversionsFor(shipment, now));
+export function buildIntelligence(shipments: readonly Shipment[], notices: readonly Notice[], now: Date, unavailableProviders: readonly string[] = [], sourcesEnabled = true, scope: 'voyage' | 'corridor' = 'voyage'): Intelligence {
+  const diversions = shipments.flatMap(shipment => scope === 'voyage' ? diversionsFor(shipment, now) : [shipment.origin, shipment.destination].map(replaces => ({ ...options[replaces], id: `${shipment.id}:${replaces}`, shipmentId: shipment.id, replaces })));
   const items = new Map<string, IntelligenceItem>();
   for (const notice of notices.filter(notice => isActive(notice, now))) {
-    const relevance = shipments.flatMap(shipment => relevanceFor(notice, shipment, diversions, now));
+    const relevance = shipments.flatMap(shipment => relevanceFor(notice, shipment, diversions, now, scope));
     if (!relevance.length) continue;
     const coordinates = anchors(notice.geometry)[0] ?? (notice.geometry.kind === 'zone' ? ports.find(port => notice.geometry.kind === 'zone' && notice.geometry.portIds.includes(port.id))?.coordinates : undefined) ?? null;
     items.set(notice.id, { evidence: { id: notice.id, title: notice.title, detail: notice.detail, observedAt: notice.observedAt, source: 'live', provider: notice.provider, url: notice.url }, coordinates, relevance });

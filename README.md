@@ -91,3 +91,7 @@ Focused tests cover deterministic impact, duplicate delivery, persistent account
 ## Upstream contracts
 
 [Terse Durable Actors](https://github.com/TerseAI/durable-actors), [Agent Relay SDK](https://agentrelay.com/docs/typescript-sdk), and [Resend email API](https://resend.com/docs/api-reference/emails/send-email).
+
+## Shared route monitoring
+
+Open **Routes** to monitor port-to-port corridors across shipments in both directions. A route drilldown brings together its member voyages, endpoint bulletins, full-corridor news and diversion candidates. Risk badges describe the highest assessed shipment risk, with delays explicitly attributed to member shipments. Routes update from the same Terse/Agent Relay snapshots as the shipment view. See [route-monitoring.md](docs/route-monitoring.md) for semantics and verification.
