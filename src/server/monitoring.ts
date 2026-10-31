@@ -10,21 +10,23 @@ import type { PortAgent, ShipmentAgent } from './actors';
 import { createBoardModel, recentBoard } from './board/model';
 import { boardFrom } from './board/transport';
 import { portStatuses } from './port/status';
+import { concerns } from '../board';
 import { createCoalescer } from './realtime/coalesce';
+import type { Inbox } from './realtime/inbox';
 import { createLimiter, createStartup, type StartupTask } from './realtime/startup';
 import { fileSeqStore, startRelayLive } from './realtime/live';
 import { createHub, type Subscribe } from './realtime/sse';
 import { disruptionFrom, relayChannel, workspaceOfChannel } from './relay';
 
-type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume'>;
-type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume'>;
+type PortClient = Pick<PortAgent, 'initialize' | 'simulate' | 'check' | 'resume' | 'deliver'>;
+type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'check' | 'resume' | 'deliver'>;
 const portMethods = [
   { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' },
-  { name: 'resume', result: 'void' },
+  { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof PortClient })[];
 const shipmentMethods = [
   { name: 'initialize', result: 'value' }, { name: 'snapshot', result: 'value' }, { name: 'check', result: 'value' },
-  { name: 'resume', result: 'void' },
+  { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof ShipmentClient })[];
 
 export type Monitoring = Readonly<{
@@ -127,6 +129,14 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     await Promise.all(mine.map(item => port(workspaceId, id).simulate(item)));
     await relayLimit(() => port(workspaceId, id).check());
   };
+  /** One Relay stream per process feeds every actor by local RPC: actors read Relay only at start, never per alarm. */
+  const fanOut = (workspaceId: string, batch: Inbox): Promise<unknown> => Promise.all([
+    ...ports.filter(value => startup.isReady(workspaceId, portKey(value.id)) && batch.board.length > 0).map(value => port(workspaceId, value.id).deliver(batch).catch(() => undefined)),
+    ...seedsOf(workspaceId).filter(seed => startup.isReady(workspaceId, shipKey(seed.id))).map(seed => shipment(workspaceId, seed.id).deliver(batch).catch(() => undefined)),
+  ]);
+  const checkPorts = (workspaceId: string, ids: readonly PortId[]): Promise<unknown> => Promise.all(ids
+    .filter(id => startup.isReady(workspaceId, portKey(id)))
+    .map(id => relayLimit(() => port(workspaceId, id).check()).catch(() => undefined)));
   const startup = createStartup({
     tasksOf, limit: relayLimit,
     onReady: (workspaceId, key) => {
@@ -145,8 +155,13 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       const workspaceId = workspaceOfChannel(channel);
       if (!workspaceId || !hasWorkspace(workspaceId)) return;
       const post = boardFrom(message);
-      if (post && board.ingest(workspaceId, [post]) && hub.subscribers(workspaceId) > 0) void announce(workspaceId);
-      if (disruptionFrom(message)) void refresh(workspaceId);
+      const disruption = disruptionFrom(message);
+      if (!post && !disruption) return;
+      const changed = post ? board.ingest(workspaceId, [post]) : false;
+      void fanOut(workspaceId, { board: post ? [post] : [], disruptions: disruption ? [disruption] : [] }).then(() => {
+        if (post && post.kind !== 'port.bulletin') void checkPorts(workspaceId, concerns(post).ports);
+        return changed || disruption ? refresh(workspaceId) : undefined;
+      });
     },
   });
   if (live.status === 'unavailable') console.warn(live.message);
