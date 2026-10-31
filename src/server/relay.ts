@@ -13,9 +13,14 @@ export const relayChannel = (workspaceId: string): string => `gazetteer-${worksp
 
 const disruptionSchema = z.object({
   id: z.string(), portId: z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']),
-  delayHours: z.number().positive().max(168),
-  evidence: z.object({ id: z.string(), source: z.literal('simulation'), title: z.string(), detail: z.string(), observedAt: z.iso.datetime() }),
+  delayHours: z.number().positive().max(168).nullable(),
+  evidence: z.discriminatedUnion('source', [
+    z.object({ id: z.string(), source: z.literal('simulation'), title: z.string(), detail: z.string(), observedAt: z.iso.datetime() }),
+    z.object({ id: z.string(), source: z.literal('live'), provider: z.string(), url: z.string(), title: z.string(), detail: z.string(), observedAt: z.iso.datetime() }),
+  ]),
+  geometry: z.object({ center: z.tuple([z.number(), z.number()]), radiusKm: z.number().nonnegative() }).optional(),
 });
+const disruptionKinds: readonly unknown[] = ['gazetteer.simulated-disruption', 'gazetteer.live-disruption'];
 
 const retryPolicy = { maxRetries: 4, backoffMs: 500, backoffMultiplier: 2, jitter: true };
 
@@ -31,7 +36,7 @@ export async function joinChannel(identity: RelayIdentity, createChannel: boolea
   const client = await participant(identity);
   const channels = createChannel ? await client.channels.list() : [];
   if (createChannel && !channels.some(channel => channel.name === identity.channel)) {
-    await client.channels.create({ name: identity.channel, topic: 'Gazetteer synthetic port disruptions. No live shipping information.' });
+    await client.channels.create({ name: identity.channel, topic: 'Gazetteer port disruptions. Simulated notices say so; live notices carry their provider and URL.' });
   } else await client.channels.join(identity.channel);
 }
 
@@ -39,7 +44,7 @@ export async function publishDisruption(identity: RelayIdentity, disruption: Dis
   const client = await participant(identity);
   const message = await client.sendMessage({
     to: `#${identity.channel}`, text: disruption.evidence.detail,
-    idempotencyKey: disruption.id, metadata: { kind: 'gazetteer.simulated-disruption', source: 'simulation', disruption },
+    idempotencyKey: disruption.id, metadata: { kind: disruption.evidence.source === 'live' ? 'gazetteer.live-disruption' : 'gazetteer.simulated-disruption', source: disruption.evidence.source, disruption },
   });
   return message.messageId;
 }
@@ -55,8 +60,9 @@ export async function readDisruptions(identity: RelayIdentity): Promise<readonly
   const client = await participant(identity);
   const messages = await channelHistory(client, identity.channel);
   return messages.flatMap(message => {
-    if (message.metadata?.kind !== 'gazetteer.simulated-disruption') return [];
-    const parsed = disruptionSchema.safeParse(message.metadata.disruption);
+    const { metadata } = message;
+    if (metadata === undefined || !disruptionKinds.includes(metadata.kind)) return [];
+    const parsed = disruptionSchema.safeParse(metadata.disruption);
     return parsed.success ? [parsed.data] : [];
   }).toSorted((left, right) => left.evidence.observedAt.localeCompare(right.evidence.observedAt));
 }

@@ -41,6 +41,7 @@ export function applyAssessment(shipment: AssessedShipment, notice: AssessableNo
 
 /** The synthetic arithmetic model, labelled as a fallback and never as AI. */
 export function applyFallback(shipment: AssessedShipment, notice: AssessableNotice, reason: string, assessedAt: string): AssessedShipment {
+  if (notice.delayHours === null) return shipment;
   const applied = assessDisruption(shipment, notice);
   if (applied === shipment) return shipment;
   const entry: AssessmentRecord = {

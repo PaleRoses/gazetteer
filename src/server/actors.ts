@@ -1,6 +1,8 @@
 import { Actor, Persisted } from 'durable-actors';
 import { relaySuccess, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import { assessmentFromEnv, assessNotices, type AssessmentCache } from './assessment';
+import { pollPort } from './sources';
+import { toDisruption } from './sources/disruption';
 import { attemptRelay, joinChannel, publishDisruption, readDisruptions, registerParticipant, relayChannel, type RelayIdentity } from './relay';
 
 const checkIntervalMs = 60_000;
@@ -10,6 +12,10 @@ type PortState = Readonly<{
 }>;
 type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache }>;
 const assessment = assessmentFromEnv(process.env);
+/** Provider failures are data inside the sources layer, so a dead feed leaves the outbox untouched. */
+const pollLive = async (portId: PortId): Promise<readonly Disruption[]> => (await pollPort(portId)).map(toDisruption);
+const enqueueLive = (state: PortState, incoming: readonly Disruption[]): readonly Disruption[] =>
+  [...state.outbox, ...incoming.filter(live => !state.outbox.some(event => event.id === live.id) && !state.published.includes(live.id))];
 const connect = (state: Readonly<{ relay: RelayIdentity; ready: boolean }>, createChannel: boolean): Promise<RelayOutcome<null>> =>
   state.ready ? Promise.resolve(relaySuccess(null)) : attemptRelay(async () => {
     await joinChannel(state.relay, createChannel);
@@ -58,6 +64,7 @@ export class PortAgent extends Actor {
   async check(): Promise<RelayOutcome<null>> {
     await this.scheduleCheck();
     if (!this.state) return { status: 'unavailable', message: 'Port monitoring has not been initialized.' };
+    this.state = { ...this.state, outbox: enqueueLive(this.state, await pollLive(this.state.portId)) };
     const current = this.state;
     const connection = await connect(current, current.portId === 'singapore');
     if (connection.status === 'unavailable') return connection;

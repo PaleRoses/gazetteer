@@ -74,8 +74,8 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     if (retained.length !== initialized.value.length) return { status: 'unavailable', message: 'A durable shipment is missing after initialization.' };
     return relaySuccess({
       shipments: retained, ports,
-      updatedAt: new Date().toISOString(), mode: 'simulation',
-      runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · synthetic disruptions only',
+      updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
+      runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
     });
   };
   return {
