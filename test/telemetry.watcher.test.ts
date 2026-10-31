@@ -9,7 +9,7 @@ const real = (mmsi: string): Telemetry => {
   return outcome.value;
 };
 const testPorts: readonly KnownPort[] = [
-  { name: 'Helsinki', coordinates: [24.95, 60.17] }, { name: 'Kotka', coordinates: [26.95, 60.47] }, { name: 'Vaasa', coordinates: [21.6, 63.1] },
+  { name: 'Helsinki', coordinates: [24.95, 60.17] }, { name: 'Kotka', coordinates: [26.95, 60.47] }, { name: 'Vaasa berth', coordinates: [21.572, 63.0805] },
 ];
 const at = (telemetry: Telemetry, seconds = 20): string => new Date(Date.parse(telemetry.observedAt) + seconds * 1000).toISOString();
 
@@ -60,7 +60,7 @@ describe('watcher on real Digitraffic telemetry', () => {
     const anchored = real('538010578');
     const farPlan: Plan = { route: planThrough(anchored, 400), eta: etaIn(anchored, 30), ports: testPorts };
     const [signal] = observe(farPlan, anchored, at(anchored)).signals;
-    expect(signal).toMatchObject({ kind: 'stationary-outside-port', measured: { navStatus: 'at anchor' }, thresholds: { berthRadiusKm: 5 } });
+    expect(signal).toMatchObject({ kind: 'stationary-outside-port', measured: { navStatus: 'at anchor' }, thresholds: { anchorageEntryKm: 3, anchorageExitKm: 4, stoppingKnots: 0.2 } });
     expect(signal!.measured.nearestPortKm as number).toBeGreaterThan(5);
     const moored = real('230098780');
     expect(observe({ route: planThrough(moored, 100), eta: etaIn(moored, 5), ports: testPorts }, moored, at(moored)).signals).toEqual([]);
@@ -68,10 +68,11 @@ describe('watcher on real Digitraffic telemetry', () => {
 
   test('a silent transponder is dark, and its stale position yields no other signal', () => {
     const plan: Plan = { route: planThrough(underway, aheadKm, 300), eta: etaIn(underway, 3), ports: testPorts };
-    const later = new Date(Date.parse(underway.observedAt) + 3 * 3_600_000).toISOString();
-    const observation = observe(plan, underway, later);
+    const hoursAfter = (hours: number): string => new Date(Date.parse(underway.observedAt) + hours * 3_600_000).toISOString();
+    const observation = observe(plan, underway, hoursAfter(13));
     expect(kinds(observation.signals)).toEqual(['ais-dark']);
-    expect(observation.signals[0]!.measured.ageMinutes).toBeCloseTo(180, 0);
+    expect(observation.signals[0]!.measured).toMatchObject({ silentHours: 13, intentionalDisabling: 'not classified' });
+    expect(kinds(observe(plan, underway, hoursAfter(12)).signals)).not.toContain('ais-dark');
     expect(kinds(observe(plan, underway, at(underway)).signals)).not.toContain('ais-dark');
   });
 
@@ -79,6 +80,7 @@ describe('watcher on real Digitraffic telemetry', () => {
     const plan: Plan = { route: planThrough(underway, aheadKm, 60), eta: etaIn(underway, needed(underway.sogKnots!)), ports: testPorts };
     expect(kinds(observe(plan, underway, at(underway)).signals)).toEqual(['off-route']);
     expect(observe(plan, underway, at(underway), { ...defaultThresholds, offRouteKm: 80 }).signals).toEqual([]);
+    expect(defaultThresholds).toMatchObject({ gapHours: 12, anchorageEntryKm: 3, anchorageExitKm: 4, stoppingKnots: 0.2, startingKnots: 0.5, slowKnots: 2 });
   });
 });
 

@@ -1,16 +1,13 @@
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import { lineString, point } from '@turf/helpers';
 import { distanceKm, routeLengthKm, type Route } from '../../sea-routes';
+import { advanceTrack, currentLoitering, emptyTrack, gfwDefaults, isOpenGap, type GfwParameters, type PortState, type Track } from './gfw';
 import { navStatusLabels, type LonLat, type Telemetry } from './telemetry';
 
-export type Thresholds = Readonly<{
-  offRouteKm: number; slowRatio: number; slowCheckMinRemainingKm: number; minImpliedKnots: number;
-  stoppedKnots: number; berthRadiusKm: number; darkAfterMinutes: number;
-}>;
+/** Off-route and slow steaming are Gazetteer's own (GFW has no plan to compare against); the rest are GFW's pipeline defaults, see gfw.ts. */
+export type Thresholds = GfwParameters & Readonly<{ offRouteKm: number; slowRatio: number; slowCheckMinRemainingKm: number; minImpliedKnots: number }>;
 /** Declared, not tuned: every signal carries the threshold it crossed. */
-export const defaultThresholds: Thresholds = {
-  offRouteKm: 50, slowRatio: 0.6, slowCheckMinRemainingKm: 300, minImpliedKnots: 5, stoppedKnots: 0.5, berthRadiusKm: 5, darkAfterMinutes: 60,
-};
+export const defaultThresholds: Thresholds = { ...gfwDefaults, offRouteKm: 50, slowRatio: 0.6, slowCheckMinRemainingKm: 300, minImpliedKnots: 5 };
 
 export type KnownPort = Readonly<{ name: string; coordinates: LonLat }>;
 export type Plan = Readonly<{ route: Route; eta: string; ports: readonly KnownPort[] }>;
@@ -22,9 +19,9 @@ export type Signal = Readonly<{
 }>;
 export type Reading = Readonly<{
   ageMinutes: number; offRouteKm: number | null; remainingKm: number | null; hoursToEta: number; impliedKnots: number | null;
-  nearestPort: Readonly<{ name: string; km: number }> | null;
+  nearestPort: Readonly<{ name: string; km: number }> | null; portState: PortState | null; loiteringHours: number | null;
 }>;
-export type Observation = Readonly<{ reading: Reading; signals: readonly Signal[] }>;
+export type Observation = Readonly<{ reading: Reading; signals: readonly Signal[]; track: Track }>;
 
 const kmPerNauticalMile = 1.852;
 const round = (value: number, places = 1): number => Math.round(value * 10 ** places) / 10 ** places;
@@ -41,43 +38,49 @@ const nearestPortOf = (ports: readonly KnownPort[], at: LonLat): Reading['neares
     return !best || km < best.km ? { name: port.name, km } : best;
   }, null);
 
-/** Pure: latest telemetry against the plan. A dark transponder suppresses every position-derived signal, since its position is stale. */
-export function observe(plan: Plan, telemetry: Telemetry, now: string, thresholds: Thresholds = defaultThresholds): Observation {
+/** Pure: latest telemetry against the plan. A dark transponder suppresses every position-derived signal, since its position is stale. `previous` carries the GFW hysteresis state between alarms. */
+export function observe(plan: Plan, telemetry: Telemetry, now: string, thresholds: Thresholds = defaultThresholds, previous: Track = emptyTrack): Observation {
   const ageMinutes = Math.max(0, (Date.parse(now) - Date.parse(telemetry.observedAt)) / 60_000);
   const hoursToEta = (Date.parse(plan.eta) - Date.parse(now)) / 3_600_000;
   const progress = onRoute(plan.route, telemetry.position);
   const impliedKnots = progress && hoursToEta > 0 ? progress.remainingKm / kmPerNauticalMile / hoursToEta : null;
   const nearestPort = nearestPortOf(plan.ports, telemetry.position);
-  const reading: Reading = { ageMinutes, offRouteKm: progress?.offRouteKm ?? null, remainingKm: progress?.remainingKm ?? null, hoursToEta, impliedKnots, nearestPort };
+  const track = advanceTrack(thresholds, previous, { at: telemetry.observedAt, position: telemetry.position, sogKnots: telemetry.sogKnots, nearestPortKm: nearestPort?.km ?? null });
+  const loitering = currentLoitering(thresholds, track.fixes);
+  const reading: Reading = {
+    ageMinutes, offRouteKm: progress?.offRouteKm ?? null, remainingKm: progress?.remainingKm ?? null, hoursToEta, impliedKnots, nearestPort,
+    portState: track.state, loiteringHours: loitering ? round(loitering.hours) : null,
+  };
   const signal = (kind: SignalKind, title: string, detail: string, measured: Signal['measured'], used: Signal['thresholds']): Signal => ({
     id: `${telemetry.mmsi}:${kind}:${telemetry.observedAt}`, kind, title, detail, observedAt: telemetry.observedAt,
     provenance: 'live', provider: telemetry.provider, fetchedAt: telemetry.fetchedAt, measured, thresholds: used, telemetry,
   });
   const status = telemetry.navStatus === null ? 'status unknown' : navStatusLabels[telemetry.navStatus] ?? `status ${telemetry.navStatus}`;
+  const silentHours = ageMinutes / 60;
 
-  if (ageMinutes > thresholds.darkAfterMinutes) return { reading, signals: [signal('ais-dark',
-    'AIS transponder dark',
-    `No position report for ${Math.round(ageMinutes)} minutes (threshold ${thresholds.darkAfterMinutes}); the last known position is stale.`,
-    { ageMinutes: round(ageMinutes) }, { darkAfterMinutes: thresholds.darkAfterMinutes })] };
+  if (isOpenGap(thresholds, silentHours)) return { reading, track, signals: [signal('ais-dark',
+    'Open AIS gap',
+    `No position report for ${round(silentHours)} h, longer than the ${thresholds.gapHours} h gap threshold (Global Fishing Watch pipe-gaps); the last known position is stale. Intentional disabling is not classified: shore distance and receiver coverage are not available here.`,
+    { silentHours: round(silentHours), intentionalDisabling: 'not classified' }, { gapHours: thresholds.gapHours })] };
 
   const offRoute = progress && progress.offRouteKm > thresholds.offRouteKm
     ? [signal('off-route', 'Vessel off the planned route', `${round(progress.offRouteKm)} km from the planned route (threshold ${thresholds.offRouteKm} km).`,
       { offRouteKm: round(progress.offRouteKm) }, { offRouteKm: thresholds.offRouteKm })] : [];
 
-  const stationary = telemetry.sogKnots !== null && telemetry.sogKnots < thresholds.stoppedKnots || telemetry.navStatus === 1;
-  const stopped = stationary && nearestPort !== null && nearestPort.km > thresholds.berthRadiusKm
+  const stopped = track.stopped && !track.inPort && nearestPort !== null
     ? [signal('stationary-outside-port', 'Vessel stopped outside port',
-      `${status}, ${telemetry.sogKnots ?? 'unknown'} kn, ${round(nearestPort.km)} km from ${nearestPort.name} (berth radius ${thresholds.berthRadiusKm} km); a possible congestion queue.`,
-      { sogKnots: telemetry.sogKnots, navStatus: status, nearestPortKm: round(nearestPort.km) }, { stoppedKnots: thresholds.stoppedKnots, berthRadiusKm: thresholds.berthRadiusKm })] : [];
+      `${status}, ${telemetry.sogKnots ?? 'unknown'} kn, ${round(nearestPort.km)} km from ${nearestPort.name}: stopped (speed hysteresis ${thresholds.stoppingKnots}/${thresholds.startingKnots} kn) and outside the port (entry ${thresholds.anchorageEntryKm} km, exit ${thresholds.anchorageExitKm} km)${loitering ? `; loitering ${round(loitering.hours)} h at ${round(loitering.avgKnots)} kn average` : ''}. A possible congestion queue.`,
+      { sogKnots: telemetry.sogKnots, navStatus: status, nearestPortKm: round(nearestPort.km), portState: track.state, loiteringHours: loitering ? round(loitering.hours) : null },
+      { stoppingKnots: thresholds.stoppingKnots, startingKnots: thresholds.startingKnots, anchorageEntryKm: thresholds.anchorageEntryKm, anchorageExitKm: thresholds.anchorageExitKm, slowKnots: thresholds.slowKnots })] : [];
 
-  const slow = !stationary && telemetry.sogKnots !== null && progress && impliedKnots !== null
+  const slow = !track.stopped && telemetry.sogKnots !== null && progress && impliedKnots !== null
     && impliedKnots >= thresholds.minImpliedKnots && progress.remainingKm > thresholds.slowCheckMinRemainingKm
     && telemetry.sogKnots < thresholds.slowRatio * impliedKnots
     ? [signal('slow-steaming', 'Speed below what the ETA needs',
       `${telemetry.sogKnots} kn over ground against ${round(impliedKnots)} kn needed to cover ${Math.round(progress.remainingKm)} km by the ETA (threshold ${Math.round(thresholds.slowRatio * 100)}% of required).`,
       { sogKnots: telemetry.sogKnots, impliedKnots: round(impliedKnots), remainingKm: Math.round(progress.remainingKm) }, { slowRatio: thresholds.slowRatio, minImpliedKnots: thresholds.minImpliedKnots, slowCheckMinRemainingKm: thresholds.slowCheckMinRemainingKm })] : [];
 
-  return { reading, signals: [...offRoute, ...stopped, ...slow] };
+  return { reading, track, signals: [...offRoute, ...stopped, ...slow] };
 }
 
 /** A situation is the set of signal kinds that began together; it is what the assessor is asked about, once. */
