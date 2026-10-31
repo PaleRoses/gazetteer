@@ -2,12 +2,14 @@ import '@fontsource-variable/jost';
 import './styles.css';
 import { greatCircle, lattice, type LonLat, type Path, type Points } from './lattice';
 import { robotMarkup, shipMarkup } from './sprites';
+import { wordField } from './words';
 
 const APP_URL: string = import.meta.env.VITE_APP_URL ?? '/';
-const appHref = (path: string): string => `${APP_URL.replace(/\/+$/, '')}${path}`;
+const appHref = (path: string): string => `${APP_URL.replace(/\/+$/, '')}${path}` || '/';
 
 const LAND = '#e9e6d6';
-const MINT = '#7fe0b5';
+const MINT = '#5fe3c0';
+const FIELD = '#070808';
 const RAD = Math.PI / 180;
 const HOME: LonLat = [-34, 17];
 const SWAY_DEGREES = 16;
@@ -65,7 +67,7 @@ const robot = required('#robot', isElement);
 const context = canvas.getContext('2d', { alpha: true });
 
 document.querySelectorAll<HTMLAnchorElement>('a[data-app]').forEach(anchor => {
-  anchor.href = appHref(anchor.dataset['app'] ?? '/');
+  anchor.href = appHref(anchor.dataset['app'] ?? '');
 });
 robot.innerHTML = robotMarkup();
 
@@ -107,12 +109,11 @@ const view: View = {
 const size = { css: 0, radius: 0, dpr: 1, scale: 1 };
 
 const resize = (): void => {
-  const radius = Math.floor(Math.max(120, Math.min(410, (window.innerHeight - 160) / 2, (window.innerWidth - 32) / 2)));
+  const radius = Math.floor(Math.max(120, Math.min(410, globe.clientWidth / 2)));
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const css = radius * 2;
   if (css === size.css && dpr === size.dpr) return;
   Object.assign(size, { css, radius, dpr, scale: radius / 410 });
-  globe.style.setProperty('--globe', `${css}px`);
   canvas.width = Math.round(css * dpr);
   canvas.height = Math.round(css * dpr);
   canvas.style.width = `${css}px`;
@@ -281,6 +282,11 @@ const render = (): void => {
   const sprites = smooth(0.55, 1, clock.intro);
   setBasis();
   context.clearRect(0, 0, canvas.width, canvas.height);
+  context.globalAlpha = 0.84 * smooth(0, 0.6, clock.intro);
+  context.fillStyle = FIELD;
+  context.beginPath();
+  context.arc(canvas.width / 2, canvas.height / 2, size.radius * size.dpr, 0, 2 * Math.PI);
+  context.fill();
   drawLimb(context, sea, clock.intro);
   drawLand(context, land, clock.intro);
   const progress = placeVessels(clock.seconds, sprites);
@@ -361,5 +367,6 @@ canvas.addEventListener('pointercancel', release);
 window.addEventListener('resize', resize);
 reducedMotion.addEventListener('change', () => { dirty = true; });
 
+wordField(required('#words', isCanvas), reducedMotion);
 resize();
 schedule(frame);

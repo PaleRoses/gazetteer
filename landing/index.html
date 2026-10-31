@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0e0f0f" />
+    <meta name="theme-color" content="#070808" />
     <meta name="description" content="Gazetteer: ship actors that watch every crossing and talk to each other over Relay." />
     <title>Gazetteer</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -18,16 +18,22 @@
         <a data-app="/demo#actor-board" href="/demo#actor-board">Relay</a>
       </nav>
     </header>
-    <main class="stage">
+    <canvas class="words" id="words" aria-hidden="true"></canvas>
+    <main class="hero">
+      <section class="copy">
+        <p class="kicker">Autonomous ships</p>
+        <h1 class="headline">A lookout for every ship</h1>
+        <p class="second"><span class="robot" id="robot" aria-hidden="true"></span>And they talk to each other.</p>
+        <p class="body">Each ship in Gazetteer has a persistent AI agent watching its voyage. In each city, traffic and hazard agents watch local conditions. They exchange observations, question what those changes mean, and keep the ships heading their way informed.</p>
+        <p class="body">A queue in Singapore becomes a conversation—not another alert for you to connect yourself.</p>
+        <div class="actions">
+          <a class="button primary" data-app="" href="/">Watch the agents talk</a>
+          <a class="button secondary" data-app="" href="/">Explore the demo</a>
+        </div>
+      </section>
       <div class="globe" id="globe">
         <canvas id="dots" tabindex="0" role="img" aria-label="A dot-matrix globe over the Atlantic. The cargo ship Meridian Star crosses from the Caribbean to the Strait of Gibraltar."></canvas>
         <div class="layer" id="layer" aria-hidden="true"></div>
-      </div>
-      <p class="hint">Drag to rotate</p>
-      <div class="watch">
-        <span class="robot" id="robot" aria-hidden="true"></span>
-        <p class="watch-line">I'm watching this crossing.</p>
-        <a class="ask" data-app="/demo" href="/demo">Ask the operational leader <span aria-hidden="true">→</span></a>
       </div>
     </main>
     <script type="module" src="/src/main.ts"></script>
