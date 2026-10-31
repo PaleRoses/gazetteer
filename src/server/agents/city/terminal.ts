@@ -112,7 +112,8 @@ const holdOn = (context: TerminalContext, memory: TerminalMemory, message: Messa
   const released = superseded.reduce((current, other) => set(current, other, 'released'), memory);
   const held = context.ledger.hold({
     key: message.key, workspaceId: context.workspaceId, caseId: record.caseId, resource: record.resource, start: record.start, end: record.end,
-    priceEur: record.offer.priceEur, expiresAt: message.expiresAt, heldBy: `terminal:${context.city}`,
+    priceEur: record.offer.priceEur, expiresAt: message.expiresAt,
+    heldBy: message.author.role === 'cargo' ? `cargo:${message.author.id}` : `terminal:${context.city}`,
   });
   return held.ok ? { memory: set(released, record, 'held'), posts: [] } : withdraw(context, released, record, 'the hold could not be recorded');
 };
