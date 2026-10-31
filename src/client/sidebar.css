@@ -1,0 +1,11 @@
+/* Keep the toggle on the map so it remains reachable with the panel hidden. */
+.sidebar-toggle{position:absolute;top:16px;left:16px;z-index:8;display:grid;place-items:center;width:32px;height:40px;padding:0;border:1px solid #4a4a4a;border-radius:0;background:var(--field);color:var(--muted)}
+.sidebar-toggle:hover{background:var(--raised);color:var(--bone)}
+.map-panel:has(>.sidebar-toggle) .gz-map-projection{left:60px}
+.workspace-shell>.operations-layout.sidebar-collapsed{grid-template-columns:minmax(0,1fr)}
+.operations-layout.sidebar-collapsed>.world-panel{grid-column:1}
+.operations-layout.sidebar-collapsed>:is(.fleet-rail,.voyage-detail-column,.detail-panel){display:none}
+
+/* Narrow maps keep the region picker clear of the panel and projection controls. */
+.map-panel:has(>.sidebar-toggle){container-type:inline-size}
+@container(max-width:420px){.map-panel:has(>.sidebar-toggle) .gz-map-region{top:66px}}
