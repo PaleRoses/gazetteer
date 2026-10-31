@@ -10,8 +10,11 @@ describe('synthetic shipment impact', () => {
   test('upcoming Singapore calls change, unaffected voyages do not', () => {
     const shipments = demoShipments(new Date(at));
     const updated = shipments.map(shipment => assessDisruption(shipment, disruption));
-    expect(updated.filter(shipment => shipment.risk === 'delayed').map(shipment => shipment.id)).toEqual(['gz-1042', 'gz-1044']);
-    expect(updated.filter(shipment => shipment.risk === 'on-track')).toEqual(shipments.filter(shipment => ['gz-1043', 'gz-1045'].includes(shipment.id)));
+    const calling = shipments.filter(shipment => shipment.destination === 'singapore' || shipment.via.includes('singapore')).map(shipment => shipment.id);
+    expect(updated.filter(shipment => shipment.risk === 'delayed').map(shipment => shipment.id)).toEqual(calling);
+    expect(calling).toEqual(expect.arrayContaining(['gz-1042', 'gz-1044']));
+    expect(updated.filter(shipment => shipment.risk === 'on-track')).toEqual(shipments.filter(shipment => !calling.includes(shipment.id)));
+    expect(updated.filter(shipment => ['gz-1043', 'gz-1045'].includes(shipment.id)).every(shipment => shipment.risk === 'on-track')).toBe(true);
     expect(updated.every(shipment => shipment.delayHours === 0 || Date.parse(shipment.eta) - Date.parse(shipment.baselineEta) === 36 * 3_600_000)).toBe(true);
   });
   test('redelivery cannot compound the ETA and retains supporting evidence', () => {

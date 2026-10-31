@@ -9,6 +9,7 @@ import { pollPort } from './sources';
 import type { BoardMessage } from '../board';
 import { decideBoard, emptyBoardMemory, emptyTelemetryState, mmsiPattern, postDecisions, rememberBoard, selectBoardEvidence, telemetrySourceFromEnv, watchShipment, type ShipBoardMemory, type TelemetryState } from './telemetry';
 import { toDisruption } from './sources/disruption';
+import { demoEnabled, telemetryBinding } from './telemetry/simulation';
 import type { Cursor } from './realtime/cursor';
 import { attemptRelay, joinChannel, publishDisruption, readDisruptionsSince, registerParticipant, relayChannel, type RelayIdentity } from './relay';
 
@@ -20,6 +21,7 @@ type PortState = Readonly<{
 type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; seen?: readonly BoardMessage[] }>;
 const assessment = assessmentFromEnv(process.env);
 const telemetrySource = telemetrySourceFromEnv(process.env);
+const demo = demoEnabled(process.env);
 const enqueueLive = (state: PortState, incoming: readonly Disruption[]): readonly Disruption[] =>
   [...state.outbox, ...incoming.filter(live => !state.outbox.some(event => event.id === live.id) && !state.published.includes(live.id))];
 const connect = (state: Readonly<{ relay: RelayIdentity; ready: boolean }>, createChannel: boolean): Promise<RelayOutcome<null>> =>
@@ -134,8 +136,9 @@ export class ShipmentAgent extends Actor {
     const channel = connection.status === 'unavailable' ? connection : await readChannel(start.relay, start.cursor ?? null);
     const seen = channel.status === 'ok' ? rememberBoard(start.seen ?? [], channel.value.board, now) : start.seen ?? [];
     const evidence = selectBoardEvidence(start.shipment, seen, now);
-    const watched = start.mmsi
-      ? await watchShipment({ source: telemetrySource, assess: assessment, board: evidence }, start.shipment, start.mmsi, start.telemetry ?? emptyTelemetryState, start.assessmentCache ?? {})
+    const binding = telemetryBinding(start.shipment, start.mmsi, demo, telemetrySource);
+    const watched = binding
+      ? await watchShipment({ source: binding.source, assess: assessment, board: evidence }, start.shipment, binding.key, start.telemetry ?? emptyTelemetryState, start.assessmentCache ?? {})
       : { shipment: start.shipment, state: start.telemetry, cache: start.assessmentCache ?? {} };
     if (channel.status === 'unavailable') {
       this.state = { ...start, shipment: watched.shipment, assessmentCache: watched.cache, telemetry: watched.state, seen };

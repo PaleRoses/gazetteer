@@ -57,7 +57,7 @@ export function buildTelemetryPrompt(shipment: Shipment, observation: Observatio
     telemetry: {
       latest: signals[0]?.telemetry,
       reading: { ageMinutes: Math.round(reading.ageMinutes), offRouteKm: reading.offRouteKm, remainingKm: reading.remainingKm, hoursToEta: Math.round(reading.hoursToEta), impliedKnots: reading.impliedKnots, nearestPort: reading.nearestPort },
-      evidence: signals.map(({ id, kind, title, detail, observedAt, provider, fetchedAt, measured, thresholds }) => ({ id, source: 'live', kind, title, detail, observedAt, provider, fetchedAt, measured, thresholds })),
+      evidence: signals.map(({ id, kind, title, detail, observedAt, provenance, provider, fetchedAt, measured, thresholds }) => ({ id, source: provenance, kind, title, detail, observedAt, provider, fetchedAt, measured, thresholds })),
       priorEvidence: shipment.evidence.map(({ id, title, detail, observedAt }) => ({ id, title, detail, observedAt })),
     },
     board: boardSection(board),

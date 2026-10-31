@@ -149,10 +149,11 @@ describe('activity window', () => {
 
 describe('port selection', () => {
   const notices = [...gdacs, ...normalizeNws(nwsRaw, fetchedAt)];
+  const original = lanes.filter(lane => ['gz-1042', 'gz-1043', 'gz-1044', 'gz-1045'].includes(lane.id));
   test('the Los Angeles marine statement reaches Los Angeles while it is in force and only then', () => {
-    expect(noticesForPort(notices, 'los-angeles', new Date('2026-10-31T20:00:00Z')).map(entry => entry.notice.provider)).toEqual(['nws']);
-    expect(noticesForPort(notices, 'los-angeles', new Date('2026-11-01T02:00:00Z'))).toEqual([]);
-    expect(noticesForPort(notices, 'rotterdam', new Date('2026-10-31T20:00:00Z'))).toEqual([]);
+    expect(noticesForPort(notices, 'los-angeles', new Date('2026-10-31T20:00:00Z'), original).map(entry => entry.notice.provider)).toEqual(['nws']);
+    expect(noticesForPort(notices, 'los-angeles', new Date('2026-11-01T02:00:00Z'), original)).toEqual([]);
+    expect(noticesForPort(notices, 'rotterdam', new Date('2026-10-31T20:00:00Z'), original)).toEqual([]);
   });
 });
 

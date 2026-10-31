@@ -14,7 +14,7 @@ export type Plan = Readonly<{ route: Route; eta: string; ports: readonly KnownPo
 export type SignalKind = 'off-route' | 'slow-steaming' | 'stationary-outside-port' | 'ais-dark';
 export type Signal = Readonly<{
   id: string; kind: SignalKind; title: string; detail: string; observedAt: string;
-  provenance: 'live'; provider: Telemetry['provider']; fetchedAt: string;
+  provenance: Telemetry['provenance']; provider: Telemetry['provider']; fetchedAt: string;
   measured: Readonly<Record<string, number | string | null>>; thresholds: Readonly<Record<string, number>>; telemetry: Telemetry;
 }>;
 export type Reading = Readonly<{
@@ -53,7 +53,7 @@ export function observe(plan: Plan, telemetry: Telemetry, now: string, threshold
   };
   const signal = (kind: SignalKind, title: string, detail: string, measured: Signal['measured'], used: Signal['thresholds']): Signal => ({
     id: `${telemetry.mmsi}:${kind}:${telemetry.observedAt}`, kind, title, detail, observedAt: telemetry.observedAt,
-    provenance: 'live', provider: telemetry.provider, fetchedAt: telemetry.fetchedAt, measured, thresholds: used, telemetry,
+    provenance: telemetry.provenance, provider: telemetry.provider, fetchedAt: telemetry.fetchedAt, measured, thresholds: used, telemetry,
   });
   const status = telemetry.navStatus === null ? 'status unknown' : navStatusLabels[telemetry.navStatus] ?? `status ${telemetry.navStatus}`;
   const silentHours = ageMinutes / 60;
