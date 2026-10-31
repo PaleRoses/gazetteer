@@ -20,6 +20,8 @@ const trucks: readonly Truck[] = [
   { id: 't2100', departs: '2026-10-31T21:00:00.000Z', priceEur: 650 },
 ];
 const truckId = (id: string) => truckOfferId('rotterdam', id);
+/** The haulier's context, as a value so that it fits both the haulier's current and in-flight context types. */
+const haulierAt = (ledger: ReturnType<typeof createBookings>) => { const context = { city: 'rotterdam' as const, workspaceId: 'w1', trucks, now, ledger }; return context; };
 
 /** A fixture terminal desk: an 18:00 unload and a two-hour reefer plug, and a longer plug when asked to cover a later truck. */
 const terminalAnswers = (heard: readonly RecoveryMessage[], answered: ReadonlySet<string>): readonly RecoveryMessage[] =>
@@ -40,7 +42,7 @@ const world = () => {
   const round = ({ cargo, haulier, board }: World): World => {
     const done = cycle(reconcile(hear(cargo, board), key => ledger.find(key)?.status), now, run);
     const afterCargo = [...board, ...done.messages];
-    const hauled = haulierHears({ city: 'rotterdam', trucks, now, ledger }, haulier, afterCargo);
+    const hauled = haulierHears(haulierAt(ledger), haulier, afterCargo);
     const answered = new Set(afterCargo.flatMap(message => message.kind === 'recovery.offer' ? message.answers : []));
     return { cargo: done.state, haulier: hauled.memory, board: [...afterCargo, ...hauled.posts, ...terminalAnswers(afterCargo, answered)] };
   };
@@ -74,7 +76,7 @@ describe('the cargo agent negotiates its recovery with the real haulier on the r
     const { ledger, settle, start } = world();
     const confirmed = settle(start);
     const unloadRow = ledger.find(bookingKey('case-1', 'rotterdam:unload:1800'));
-    const withdrawn = withdrawTruck({ city: 'rotterdam', trucks, now, ledger }, confirmed.haulier, 'driver unavailable', truckId('t1930'));
+    const withdrawn = withdrawTruck(haulierAt(ledger), confirmed.haulier, 'driver unavailable', truckId('t1930'));
     const recovered = settle({ ...confirmed, haulier: withdrawn.memory, board: [...confirmed.board, ...withdrawn.posts] });
     expect(recovered.cargo.plan).toMatchObject({ unload: 'rotterdam:unload:1800', truck: truckId('t2100'), storage: 'rotterdam:plug:1800-22' });
     expect([statusOf(ledger, truckId('t1930')), statusOf(ledger, 'rotterdam:plug:1800-20')]).toEqual(['released', 'released']);
@@ -87,7 +89,7 @@ describe('the cargo agent negotiates its recovery with the real haulier on the r
     const confirmed = settle(start);
     const taken = ledger.hold({ key: 'other-case:plug', workspaceId: 'w1', caseId: 'other-case', resource: 'rotterdam:plug:1800-22', start: '2026-10-31T18:00:00.000Z', end: '2026-10-31T22:00:00.000Z', priceEur: 150, expiresAt: later, heldBy: 'someone' });
     expect(taken.ok).toBe(true);
-    const withdrawn = withdrawTruck({ city: 'rotterdam', trucks, now, ledger }, confirmed.haulier, 'driver unavailable', truckId('t1930'));
+    const withdrawn = withdrawTruck(haulierAt(ledger), confirmed.haulier, 'driver unavailable', truckId('t1930'));
     const stuck = settle({ ...confirmed, haulier: withdrawn.memory, board: [...confirmed.board, ...withdrawn.posts] });
     expect(stuck.cargo.plan).toBeNull();
     expect([statusOf(ledger, 'rotterdam:unload:1800'), statusOf(ledger, 'rotterdam:plug:1800-20')]).toEqual(['confirmed', 'confirmed']);

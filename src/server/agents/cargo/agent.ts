@@ -1,7 +1,9 @@
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Actor, Persisted } from 'durable-actors';
 import type { BoardMessage } from '../../../core/board';
 import { recoveryMessage, type Commitments, type Plan, type RecoveryMessage } from '../../../core/recovery';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/types';
+import { phraseFromEnv } from '../../assessment/mind';
 import { createBookings, type Bookings } from '../../booking/ledger';
 import { postBoard, readBoard } from '../../relay/board';
 import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } from '../../relay/client';
@@ -11,6 +13,7 @@ import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
 import { checkIntervalMs } from '../alarm';
 import { cycle, executeOn } from './cycle.js';
 import { hear, openCase, reconcile, type Booking, type CaseState } from './negotiate.js';
+import { wordPlans } from './voice.js';
 
 type CargoState = Readonly<{
   workspaceId: string; relay: RelayIdentity; ready: boolean;
@@ -19,6 +22,8 @@ type CargoState = Readonly<{
   /** The commitments and the whole case: durable, so a restarted agent resumes mid-negotiation and re-decides the same ids and keys. */
   recovery: CaseState;
   inbox: Inbox; synced: boolean;
+  /** The cargo mind's own session, resumed when it words the next plan; null until it has spoken. */
+  mind?: string | null;
   /** Decided but not yet acknowledged by Relay: durable, retried in order, and visible to the server at once through unpublished(). */
   outbox: readonly BoardMessage[];
 }>;
@@ -26,12 +31,14 @@ export type CargoCase = Readonly<{ caseId: string; method: 'rule-based'; plan: P
 
 const ledgers = new Map<string, Bookings>();
 const ledgerAt = (path: string): Bookings => ledgers.get(path) ?? (() => { const opened = createBookings(path); ledgers.set(path, opened); return opened; })();
+/** The cargo mind words plans when the workspace id exists; without it nothing spawns and the rule-based words stand. */
+const phrase = phraseFromEnv(process.env, query);
 const isRecovery = (message: BoardMessage): message is RecoveryMessage => recoveryMessage.safeParse(message).success;
 
 
 /**
- * The refrigerated container's own agent: it remembers its commitments and negotiates its recovery on the board. Deterministic and labelled
- * rule-based. It owns the ledger writes (hold, confirm, release by caseId:offerId) and reads the ledger back each cycle as the truth.
+ * The refrigerated container's own agent: it remembers its commitments and negotiates its recovery on the board. The decisions are the
+ * deterministic solver's; its mind, when the workspace id exists, only words its plans (labelled ai-assessed when it did). It owns the ledger writes (hold, confirm, release by caseId:offerId) and reads the ledger back each cycle as the truth.
  */
 export class CargoAgent extends Actor {
   @Persisted private state: CargoState | null = null;
@@ -85,9 +92,10 @@ export class CargoAgent extends Actor {
     const ledger = ledgerAt(committed.bookingsPath);
     const known = reconcile(hear(committed.recovery, messages), key => ledger.find(key)?.status);
     const done = cycle(known, new Date().toISOString(), executeOn(ledger, committed.workspaceId, this.id));
+    const voiced = await wordPlans(done.state, done.messages, phrase, committed.mind ?? null);
     const latest = this.state ?? committed;
     this.state = {
-      ...latest, recovery: done.state, outbox: enqueue(latest.outbox, done.messages), synced: true,
+      ...latest, recovery: done.state, mind: voiced.session, outbox: enqueue(latest.outbox, voiced.messages), synced: true,
       inbox: drainInbox(latest.inbox, { board: heard, disruptions: [] }),
     };
     return relaySuccess(null);
