@@ -131,7 +131,7 @@ The haulier posts a withdrawal. The cargo agent keeps the 18:00 unload, which st
 
 ## 2.4 An interruption: restart the cargo agent
 
-`POST /api/workspaces/:id/restart-cargo` calls the cargo agent's `resume()`; it does not kill a process. The cargo agent restarts from its saved case and replays the board and the ledger; nothing books twice. `test/server/runtime/recovery.restart.test.ts` proves this against real actors: restarted before it answers the offers it was just sent, it leaves one ledger row per key and the case still recovers. The ledger (`GET /api/workspaces/:id/bookings`) shows one row per case and offer. R-114 has two rows after the withdrawal, 18:00–19:30 released and 18:00–21:00 confirmed, because the extension is a new offer.
+*Restart cargo agent* (`POST /api/workspaces/:id/restart-cargo`) calls the cargo agent's `resume()`; it does not kill a process. The cargo agent restarts from its saved case and replays the board and the ledger; nothing books twice. `test/server/runtime/recovery.restart.test.ts` proves this against real actors: restarted before it answers the offers it was just sent, it leaves one ledger row per key and the case still recovers. The ledger (`GET /api/workspaces/:id/bookings`) shows one row per case and offer. R-114 has two rows after the withdrawal, 18:00–19:30 released and 18:00–21:00 confirmed, because the extension is a new offer.
 
 ## 2.5 What act 2 needs that this runbook cannot vouch for
 
@@ -143,14 +143,15 @@ What has landed, as of this commit:
 - **The act 2 runtime** (a7155e3, opened on a control since 426fa73). The cargo agent, Rotterdam's terminal desk and its haulier start beside act 1's actors, and each recovery message is routed to the actor it is for. The anchor is read from Meridian Star's own actor.
 - **The ledger law** (94d6142). Each provider writes the rows for its own offers; the cargo agent only posts its holds, confirms and releases and reads the ledger back.
 - **The epoch fix** (d7827c2). The scenario clock's t0 is written once beside relay-seq, so a server restart keeps the anchor and the ETAs the persisted actors already hold.
-- **The three act 2 controls.** All are POST only, for a member of the workspace, and answer with the dashboard; none has a button in the client yet.
-  - `POST /api/workspaces/:id/delay-meridian-star` (*Delay Meridian Star*) opens act 2. It starts the three actors, and the cargo agent opens its case on the declared 6 h delay. Until it is pressed, `Dashboard.recovery` is absent; a second press returns the open case. It declares the delay to the cargo; it does not move Meridian Star's ETA on the map.
-  - `POST /api/workspaces/:id/withdraw-truck`: the haulier withdraws its last-departing open truck, and with it whatever the ledger holds for that truck. Press it once, after the 19:30 plan is confirmed. A second press would withdraw the 21:00 truck too.
-  - `POST /api/workspaces/:id/restart-cargo`: see 2.4.
-- **The recovery view.** `Dashboard.recovery` carries the case (the plan, the recovered delivery, labelled `rule-based`) and every reservation of the workspace, read from the ledger. The client does not render it yet. Show it from `GET /api/workspaces/:id/dashboard` or the bookings endpoint.
+- **The three act 2 controls**, buttons in the recovery panel at the top of the Simulation tab (9f9417a, fadd03a). Each press calls a POST route, the second way in for a member of the workspace; it answers with the dashboard.
+  - *Delay Meridian Star* (`POST /api/workspaces/:id/delay-meridian-star`) opens act 2. It starts the three actors, and the cargo agent opens its case on the declared 6 h delay. Until it is pressed, the panel reads "Act 2 has not started" and `Dashboard.recovery` is absent. Once the case is open the button is disabled; a second POST returns the open case. It declares the delay to the cargo; it does not move Meridian Star's ETA on the map.
+  - *Withdraw truck* (`POST /api/workspaces/:id/withdraw-truck`): the haulier withdraws its last-departing open truck, and with it whatever the ledger holds for that truck. Press it after the 19:30 plan is confirmed. The button is disabled after one withdrawal; a second POST would withdraw the 21:00 truck too.
+  - *Restart cargo agent* (`POST /api/workspaces/:id/restart-cargo`): see 2.4.
+- **The press runs the act by itself** (2119094). After each press, a delivery or an actor becoming ready, the server steps the three actors until two rounds say nothing new. One press of *Delay Meridian Star* reaches three confirmed reservations and a delivery date, with nobody stepping the actors. The seat ran act 2 end to end on 2119094: the 19:30 truck at EUR 1,002.50, then after *Withdraw truck* the 21:00 truck at EUR 1,185.
+- **The recovery panel** (9f9417a). It lights the six steps from the case's own recovery posts, and shows the negotiation with who answers whom, the blocking constraint, and the reservations with their status and hold countdowns. They come from `Dashboard.recovery`, the case labelled `rule-based`, and every reservation of the workspace, read from the ledger. `GET /api/workspaces/:id/bookings` returns the same rows.
+- **Whose case a reservation is for** (56f3fb7). A row's `heldBy` names the cargo agent whose case holds it, on the haulier's rows and the terminal desk's alike.
 
 What this runbook cannot yet vouch for:
-- **Whose case a reservation is for.** A row's `heldBy` names the cargo agent whose case holds it. The haulier's rows do. Until the terminal desk's fix lands, its rows read `terminal:rotterdam`.
 - **The pace.** After *Delay Meridian Star*, the negotiation runs at the actors' pace, not on the scenario clock. It has not been timed against the pinned server.
 
 Check each against the build before showing it. If act 2 is not green on the pinned server, the demo runs act 1 and shows act 2 only as far as it is real; nothing is staged by hand.
