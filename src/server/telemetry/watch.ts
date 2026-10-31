@@ -2,13 +2,14 @@ import { ports } from '../../domain';
 import { voyageRoute } from '../../sea-routes';
 import { assessTelemetry, type AssessDeps, type AssessmentCache, type AssessmentOutcome } from '../assessment/assess';
 import type { AssessedShipment } from '../assessment/apply';
+import type { BoardEvidence } from '../assessment/prompt';
 import { describeError, type Telemetry, type TelemetrySource } from './telemetry';
 import { emptyTrack, type Track } from './gfw';
 import { defaultThresholds, nextSituation, observe, type Situation, type Thresholds } from './watcher';
 
 export type TelemetryState = Readonly<{ latest: Telemetry | null; situation: Situation | null; track?: Track }>;
 export const emptyTelemetryState: TelemetryState = { latest: null, situation: null, track: emptyTrack };
-export type WatchDeps = Readonly<{ source: TelemetrySource; assess: AssessDeps; thresholds?: Thresholds; now?: () => string }>;
+export type WatchDeps = Readonly<{ source: TelemetrySource; assess: AssessDeps; board?: readonly BoardEvidence[]; thresholds?: Thresholds; now?: () => string }>;
 export type WatchReport =
   | Readonly<{ status: 'untracked' }>
   | Readonly<{ status: 'no-position'; message: string }>
@@ -33,6 +34,6 @@ export async function watchShipment(deps: WatchDeps, shipment: AssessedShipment,
     status: 'watched', fetch: fetched.status === 'ok' ? 'fresh' : 'stale', fetchMessage: fetched.status === 'unavailable' ? fetched.message : null, signals: observation.signals.length, assessment,
   });
   if (!situation) return { shipment: watched, state: nextState, cache, report: report(null) };
-  const settled = await assessTelemetry(deps.assess, cache, watched, situation, observation);
+  const settled = await assessTelemetry(deps.assess, cache, watched, situation, observation, deps.board ?? []);
   return { shipment: settled.shipment, state: nextState, cache: settled.cache, report: report(settled.outcome) };
 }

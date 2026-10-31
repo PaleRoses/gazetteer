@@ -4,7 +4,7 @@ import { demoShipments } from '../src/domain';
 import { positionAlong, voyageRoute } from '../src/sea-routes';
 import type { RelayOutcome } from '../src/shared';
 import { applyAssessment, assessNotice, type AssessableNotice, type Assessment, type AssessedShipment } from '../src/server/assessment';
-import { decideBoard, emptyBoardMemory, postDecisions, selectBoardEvidence, type Outbound, type ShipBoardMemory, type Situation, type Telemetry } from '../src/server/telemetry';
+import { decideBoard, emptyBoardMemory, postDecisions, rememberBoard, selectBoardEvidence, type Outbound, type ShipBoardMemory, type Situation, type Telemetry } from '../src/server/telemetry';
 
 const now = '2026-10-31T12:00:00.000Z';
 const [meridian, laurel] = demoShipments(new Date(now)) as [AssessedShipment, AssessedShipment, ...AssessedShipment[]];
@@ -122,5 +122,17 @@ describe('board evidence for the assessment', () => {
     expect(bad.outcome).toMatchObject({ status: 'fallback', reason: expect.stringContaining('b-la') });
     const without = await assessNotice(deps(['b-singapore']), {}, laurel, { ...notice, portId: 'singapore' }, []);
     expect(without.outcome).toEqual({ status: 'skipped', reason: 'not-exposed' });
+  });
+});
+
+describe('remembering the board', () => {
+  const message = (id: string, at: string): BoardMessage => ({ id, kind: 'port.bulletin', author: { role: 'port', id: 'singapore' }, at, summary: id, portId: 'singapore', risk: 'normal', anchored: 0, arrivals48h: 0, evidenceIds: [] });
+  test('deduplicates by id, drops what is past the horizon, and stays bounded', () => {
+    const kept = rememberBoard([message('a', '2026-10-31T10:00:00.000Z'), message('old', '2026-10-29T10:00:00.000Z')], [message('a', '2026-10-31T10:00:00.000Z'), message('b', '2026-10-31T11:00:00.000Z')], now);
+    expect(kept.map(item => item.id)).toEqual(['a', 'b']);
+    const many = Array.from({ length: 80 }, (_, i) => message(`m${i}`, new Date(Date.parse(now) - (80 - i) * 60_000).toISOString()));
+    const bounded = rememberBoard([], many, now);
+    expect(bounded).toHaveLength(50);
+    expect(bounded[49]!.id).toBe('m79');
   });
 });

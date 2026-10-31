@@ -116,3 +116,11 @@ export function selectBoardEvidence(shipment: AssessedShipment, board: readonly 
     ...peers.map((message): BoardEvidence => ({ id: message.id, kind: message.kind, at: message.at, summary: message.summary, facts: { vessel: message.author.role === 'ship' ? message.author.vessel : null, signals: message.signals, nearPort: message.nearPort, position: message.position, observedAt: message.observedAt } })),
   ];
 }
+
+const maxRemembered = 50;
+/** Pure: the ship's recent view of the board, since each read only sees what is past the cursor. Deduplicated by id, bounded by age and count. */
+export const rememberBoard = (previous: readonly BoardMessage[], incoming: readonly BoardMessage[], now: string): readonly BoardMessage[] =>
+  [...new Map([...previous, ...incoming].map(message => [message.id, message] as const)).values()]
+    .filter(message => Date.parse(now) - Date.parse(message.at) <= peerHorizonHours * 3_600_000)
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+    .slice(-maxRemembered);

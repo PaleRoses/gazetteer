@@ -5,4 +5,4 @@ export { defaultThresholds, nextSituation, observe, type KnownPort, type Observa
 export { telemetrySourceFromEnv } from './source';
 export { emptyTelemetryState, watchShipment, type TelemetryState, type WatchDeps, type WatchReport, type WatchStep } from './watch';
 export { advanceTrack, currentLoitering, emptyTrack, gfwDefaults, isInPort, isOpenGap, isStopped, portEvents, portStateOf, type Fix, type PortEvent, type PortState, type Track } from './gfw';
-export { approachKm, decideBoard, emptyBoardMemory, peerRouteKm, postDecisions, remainingCalls, selectBoardEvidence, type DecisionInput, type Outbound, type ShipBoardMemory } from './board';
+export { approachKm, decideBoard, emptyBoardMemory, peerRouteKm, postDecisions, rememberBoard, remainingCalls, selectBoardEvidence, type DecisionInput, type Outbound, type ShipBoardMemory } from './board';
