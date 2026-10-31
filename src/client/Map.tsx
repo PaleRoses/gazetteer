@@ -92,7 +92,7 @@ export function ShipmentMap(props: Selection) {
       });
       created = map;
       map.touchZoomRotate.disableRotation();
-      map.addControl(new lib.AttributionControl({ compact: true, customAttribution: 'Land: Natural Earth (public domain) · Sea lanes: Eurostat SeaRoute network · Positions interpolated from schedule (simulated)' }), 'bottom-right');
+      map.addControl(new lib.AttributionControl({ compact: true, customAttribution: 'Natural Earth · Eurostat SeaRoute lanes · positions simulated' }), 'bottom-right');
       map.addControl(new lib.NavigationControl({ showCompass: false }), 'top-right');
       OCEANS.forEach(([name, lon, lat]) => new lib.Marker({ element: element('span', 'ocean-label', name), anchor: 'center' }).setLngLat([lon, lat]).addTo(map));
       map.on('load', () => { addRouteLayers(map); if (!disposed) setReady({ lib, map }); });
