@@ -23,6 +23,17 @@ const notice: AssessableNotice = { id: 'sg-1', portId: 'singapore', delayHours: 
 const verdict = (cited: readonly string[]): Assessment => ({ affected: true, delayHours: { low: 20, likely: 30, high: 50 }, risk: 'delayed', rationale: 'Queue at the next call.', citedEvidence: [...cited], confidence: 0.6, action: null });
 const delayed = applyAssessment(meridian, notice, { assessment: verdict(['sg-1']), model: 'test-model', assessedAt: now });
 
+describe('ship evidence from the city watches', () => {
+  test('the newest traffic and hazard report of a port still ahead are evidence, with their element; a port behind is not', () => {
+    const traffic = (id: string, at: string, city: 'singapore' | 'shanghai'): BoardMessage => ({ id, kind: 'city.traffic', author: { role: 'city', city, element: 'traffic' }, at, summary: 's', risk: 'severe', anchored: 4, arrivals48h: 1, evidenceIds: [], basis: { perHour: 0.8, provenance: 'assumed', basis: 'b' } });
+    const hazard: BoardMessage = { id: 'h1', kind: 'city.hazards', author: { role: 'city', city: 'singapore', element: 'hazards' }, at: now, summary: 's', risk: 'elevated', notices: [], evidenceIds: [] };
+    const board = [traffic('t-old', '2026-10-31T10:00:00.000Z', 'singapore'), traffic('t-new', '2026-10-31T11:00:00.000Z', 'singapore'), traffic('t-behind', now, 'shanghai'), hazard];
+    const evidence = selectBoardEvidence(meridian, board, now);
+    expect(evidence.map(item => item.id).sort()).toEqual(['h1', 't-new']);
+    expect(evidence.find(item => item.id === 't-new')).toMatchObject({ kind: 'city.traffic', facts: { portId: 'singapore', element: 'traffic', anchored: 4 } });
+  });
+});
+
 describe('ship board decisions', () => {
   test('a fresh ship announces its ETA to each port ahead, once; every message is valid board traffic', () => {
     const first = decideBoard(emptyBoardMemory, { shipment: meridian, situation: null, now });

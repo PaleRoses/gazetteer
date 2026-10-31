@@ -48,12 +48,12 @@ export function remainingCalls(shipment: AssessedShipment): readonly Readonly<{ 
 export type Society = Readonly<{ floor: RiskFloor | null; queues: readonly Readonly<QueueDrainBasis & { bulletinId: string; hours: Readonly<{ low: number; likely: number; high: number }> }>[]}>;
 export const noSociety: Society = { floor: null, queues: [] };
 /** What a port's watchers say, whichever message carried it: the queue (traffic) or the weather (hazards). */
-export type PortReport = Readonly<{ id: string; at: string; portId: PortId; element: 'traffic' | 'hazards'; risk: PortRisk; anchored: number; arrivals48h: number; evidenceIds: readonly string[] }>;
+export type PortReport = Readonly<{ id: string; kind: BoardMessage['kind']; summary: string; at: string; portId: PortId; element: 'traffic' | 'hazards'; risk: PortRisk; anchored: number; arrivals48h: number; evidenceIds: readonly string[] }>;
 export const portReportOf = (message: BoardMessage): PortReport | null => {
   switch (message.kind) {
-    case 'port.bulletin': return { id: message.id, at: message.at, portId: message.portId, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
-    case 'city.traffic': return { id: message.id, at: message.at, portId: message.author.city, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
-    case 'city.hazards': return { id: message.id, at: message.at, portId: message.author.city, element: 'hazards', risk: message.risk, anchored: 0, arrivals48h: 0, evidenceIds: message.evidenceIds };
+    case 'port.bulletin': return { id: message.id, kind: message.kind, summary: message.summary, at: message.at, portId: message.portId, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
+    case 'city.traffic': return { id: message.id, kind: message.kind, summary: message.summary, at: message.at, portId: message.author.city, element: 'traffic', risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h, evidenceIds: message.evidenceIds };
+    case 'city.hazards': return { id: message.id, kind: message.kind, summary: message.summary, at: message.at, portId: message.author.city, element: 'hazards', risk: message.risk, anchored: 0, arrivals48h: 0, evidenceIds: message.evidenceIds };
     default: return null;
   }
 };
@@ -125,12 +125,12 @@ export function selectBoardEvidence(shipment: AssessedShipment, board: readonly 
   const route = voyageRoute(shipment) ?? shipment.route;
   const nearRoute = (position: LonLat): boolean =>
     route.length > 1 && nearestPointOnLine(lineString(route.map(item => [...item])), point([...position]), { units: 'kilometers' }).properties.pointDistance <= peerRouteKm;
-  const latestFirst = <A extends BoardMessage>(items: readonly A[]): readonly A[] => [...items].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  const bulletins = latestFirst(board.flatMap(message => message.kind === 'port.bulletin' && ahead.has(message.portId) && inHorizon(message.at, now) ? [message] : []));
-  const newestPerPort = bulletins.filter((message, index) => bulletins.findIndex(other => other.portId === message.portId) === index).slice(0, maxBulletins);
+  const latestFirst = <A extends Readonly<{ at: string }>>(items: readonly A[]): readonly A[] => [...items].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const reports = board.flatMap(message => portReportOf(message) ?? []).filter(report => ahead.has(report.portId) && inHorizon(report.at, now));
+  const newestPerWatch = latestFirst(reports).filter((report, index, sorted) => sorted.findIndex(other => other.portId === report.portId && other.element === report.element) === index).slice(0, maxBulletins);
   const peers = latestFirst(board.flatMap(message => message.kind === 'ship.observation' && message.shipmentId !== shipment.id && inHorizon(message.at, now) && nearRoute(message.position) ? [message] : [])).slice(0, maxPeers);
   return [
-    ...newestPerPort.map((message): BoardEvidence => ({ id: message.id, kind: message.kind, at: message.at, summary: message.summary, facts: { portId: message.portId, risk: message.risk, anchored: message.anchored, arrivals48h: message.arrivals48h } })),
+    ...newestPerWatch.map((report): BoardEvidence => ({ id: report.id, kind: report.kind, at: report.at, summary: report.summary, facts: { portId: report.portId, element: report.element, risk: report.risk, anchored: report.anchored, arrivals48h: report.arrivals48h } })),
     ...peers.map((message): BoardEvidence => ({ id: message.id, kind: message.kind, at: message.at, summary: message.summary, facts: { vessel: message.author.role === 'ship' ? message.author.vessel : null, signals: message.signals, nearPort: message.nearPort, position: message.position, observedAt: message.observedAt } })),
   ];
 }
