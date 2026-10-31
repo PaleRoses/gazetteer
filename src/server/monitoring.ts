@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 import { chmod, mkdir } from 'node:fs/promises';
 import { startLocalActors } from 'durable-actors/dev';
 import { createActorStub, createActorTransport, type ActorRpcMethod } from 'durable-actors/backend';
+import { buildIntelligence } from './intelligence';
+import { liveSweep } from './sources';
 import { demoShipments, ports } from '../domain';
 import { relaySuccess, type Comment, type Dashboard, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import type { PortAgent, ShipmentAgent } from './actors';
@@ -80,7 +82,11 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     const snapshots = await Promise.all(initialized.value.map(value => shipment(workspaceId, value.id).snapshot()));
     const retained = snapshots.filter((value): value is Shipment => value !== null);
     if (retained.length !== initialized.value.length) return { status: 'unavailable', message: 'A durable shipment is missing after initialization.' };
+    const now = new Date();
+    const sourcesEnabled = process.env.GAZETTEER_LIVE_SOURCES !== 'off';
+    const news = sourcesEnabled ? await liveSweep(now) : { notices: [], failures: [] };
     const built: Dashboard = {
+      intelligence: buildIntelligence(retained, news.notices, now, news.failures.map(failure => failure.provider), sourcesEnabled),
       shipments: retained, ports,
       updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
       runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',

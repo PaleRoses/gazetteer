@@ -3,19 +3,30 @@ import type { Comment, Dashboard, Shipment, User, Workspace } from '../shared';
 
 const coordinate = z.tuple([z.number(), z.number()]);
 const portId = z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles']);
+export const evidenceSchema = z.discriminatedUnion('source', [
+  z.object({ id: z.string(), source: z.literal('simulation'), title: z.string(), detail: z.string(), observedAt: z.string() }),
+  z.object({ id: z.string(), source: z.literal('live'), provider: z.string(), url: z.string().url().refine(value => /^https?:/.test(value)), title: z.string(), detail: z.string(), observedAt: z.string() }),
+]);
 const shipment: z.ZodType<Shipment> = z.object({
   id: z.string(), vessel: z.string(), reference: z.string(), cargo: z.string(), containers: z.number(),
   origin: portId, destination: portId, via: z.array(portId), coordinates: coordinate, route: z.array(coordinate),
   baselineEta: z.string(), eta: z.string(), risk: z.enum(['on-track', 'watch', 'delayed']), delayHours: z.number(),
   change: z.string(), action: z.string().nullable(),
   milestones: z.array(z.object({ label: z.string(), at: z.string(), status: z.enum(['complete', 'current', 'upcoming']) })),
-  evidence: z.array(z.discriminatedUnion('source', [
-    z.object({ id: z.string(), source: z.literal('simulation'), title: z.string(), detail: z.string(), observedAt: z.string() }),
-    z.object({ id: z.string(), source: z.literal('live'), provider: z.string(), url: z.string(), title: z.string(), detail: z.string(), observedAt: z.string() }),
-  ])),
+  evidence: z.array(evidenceSchema),
+  assessments: z.array(z.object({
+    noticeId: z.string(), basis: z.enum(['port-notice', 'live-telemetry']).optional(), method: z.enum(['ai-assessed', 'deterministic-fallback']), model: z.string().nullable(), assessedAt: z.string(), affected: z.boolean(),
+    delayHours: z.object({ low: z.number(), likely: z.number(), high: z.number() }), confidence: z.number().nullable(),
+    rationale: z.string(), citedEvidence: z.array(z.string()), fallbackReason: z.string().nullable(),
+  })).optional(),
   appliedDisruptions: z.array(z.string()),
 });
-export const dashboardSchema: z.ZodType<Dashboard> = z.object({ shipments: z.array(shipment), ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })), updatedAt: z.string(), mode: z.enum(['simulation', 'mixed']), runtime: z.string(), relay: z.string() });
+const intelligenceSchema = z.object({
+  items: z.array(z.object({ evidence: evidenceSchema, coordinates: coordinate.nullable(), relevance: z.array(z.object({ shipmentId: z.string(), kind: z.enum(['route', 'diversion', 'context']), reason: z.string(), diversionId: z.string().optional() })) })),
+  diversions: z.array(z.object({ id: z.string(), shipmentId: z.string(), name: z.string(), replaces: portId, coordinates: coordinate, reason: z.string(), constraint: z.string() })),
+  checkedAt: z.string(), unavailableProviders: z.array(z.string()), sourcesEnabled: z.boolean(),
+});
+export const dashboardSchema: z.ZodType<Dashboard> = z.object({ intelligence: intelligenceSchema.optional(), shipments: z.array(shipment), ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })), updatedAt: z.string(), mode: z.enum(['simulation', 'mixed']), runtime: z.string(), relay: z.string() });
 const userSchema: z.ZodType<User> = z.object({ id: z.string(), name: z.string(), email: z.string() });
 export const workspaceSchema: z.ZodType<Workspace> = z.object({ id: z.string(), name: z.string(), role: z.enum(['owner', 'member']) });
 export const sessionSchema = z.object({ user: userSchema, workspaces: z.array(workspaceSchema) });

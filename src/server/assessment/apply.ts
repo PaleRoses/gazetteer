@@ -7,13 +7,10 @@ import type { AssessableNotice } from './exposure';
 
 export type Method = 'ai-assessed' | 'deterministic-fallback';
 export type Basis = 'port-notice' | 'live-telemetry';
-export type AssessmentRecord = Readonly<{
-  noticeId: string; basis?: Basis; method: Method; model: string | null; assessedAt: string; affected: boolean;
-  delayHours: Readonly<{ low: number; likely: number; high: number }>; confidence: number | null;
-  rationale: string; citedEvidence: readonly string[]; fallbackReason: string | null;
-}>;
+export type { AssessmentRecord } from '../../shared';
+import type { AssessmentRecord } from '../../shared';
 export type AssessedShipment = Shipment & Readonly<{ assessments?: readonly AssessmentRecord[]; telemetry?: Telemetry; signals?: readonly Signal[] }>;
-/** What an assessment is about: a port notice or a live-telemetry situation. Live evidence is not a simulated `Evidence`, so it travels as `signals`. */
+/** An assessment can describe a port notice or live telemetry; telemetry evidence travels as signals. */
 export type Subject = Readonly<{ id: string; basis: Basis; label: string; evidence: readonly Evidence[] }>;
 export type Provenanced = Readonly<{ assessment: Assessment; model: string; assessedAt: string }>;
 

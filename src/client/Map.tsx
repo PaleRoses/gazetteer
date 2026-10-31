@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { GeoJSONSource, Map as MapLibreMap, Marker, StyleSpecification } from 'maplibre-gl';
+import { createPortal } from 'react-dom';
+import { shipmentBrief, riskLabel } from './brief';
+import type { GeoJSONSource, Popup, Map as MapLibreMap, Marker, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
-import type { Dashboard, Shipment } from '../shared';
+import type { Dashboard, Diversion, Shipment } from '../shared';
 import { boundsOf, graticule, routeLayers, vesselViews, type VesselView } from './map-model';
 
 type MapLibre = typeof import('maplibre-gl');
-type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void }>;
+type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; inspected: Diversion | null; showPopup: boolean }>;
 
 const COLOURS = { ocean: '#d6e6f2', land: '#f5f3ea', coast: '#8fb0c9', grid: '#9ebdd3', lane: '#5f87ad', route: '#1f5a9e' } as const;
 const TICK_MS = 4_000;
 const FRAME_PADDING = { top: 70, bottom: 150, left: 60, right: 110 } as const;
 const OCEANS: readonly (readonly [string, number, number])[] = [['ATLANTIC OCEAN', -35, 25], ['PACIFIC OCEAN', -150, 10], ['PACIFIC OCEAN', 175, 5], ['INDIAN OCEAN', 78, -22]];
-const RISK_TEXT = { 'on-track': 'on schedule', watch: 'watch', delayed: 'delayed' } as const;
+const RISK_TEXT = { 'on-track': 'low risk', watch: 'moderate risk', delayed: 'high risk' } as const;
 
 const style = (origin: string): StyleSpecification => ({
   version: 8,
@@ -27,7 +29,8 @@ const style = (origin: string): StyleSpecification => ({
 
 const emptyLines: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 const addRouteLayers = (map: MapLibreMap): void => {
-  for (const id of ['lanes', 'sailed', 'ahead']) map.addSource(id, { type: 'geojson', data: emptyLines });
+  for (const id of ['lanes', 'sailed', 'ahead', 'alternative']) map.addSource(id, { type: 'geojson', data: emptyLines });
+  map.addLayer({ id: 'alternative', type: 'line', source: 'alternative', paint: { 'line-color': '#8b5a9b', 'line-width': 2, 'line-dasharray': [2, 3] } });
   map.addLayer({ id: 'lanes', type: 'line', source: 'lanes', layout: { 'line-cap': 'round' }, paint: { 'line-color': COLOURS.lane, 'line-width': 1.6, 'line-opacity': 0.75, 'line-dasharray': [2, 3] } });
   map.addLayer({ id: 'ahead-casing', type: 'line', source: 'ahead', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.75 } });
   map.addLayer({ id: 'ahead', type: 'line', source: 'ahead', layout: { 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 2.2, 'line-dasharray': [2, 2] } });
@@ -65,7 +68,9 @@ const decorate = (button: HTMLElement, view: VesselView, selected: boolean): voi
 
 const setLines = (map: MapLibreMap, id: string, data: GeoJSON.FeatureCollection): void => { (map.getSource(id) as GeoJSONSource | undefined)?.setData(data); };
 
-export function ShipmentMap({ dashboard, selected, focusId, onSelect }: Selection) {
+export function ShipmentMap({ dashboard, selected, focusId, onSelect, onOpen, onDismiss, inspected, showPopup }: Selection) {
+  const [popupHost, setPopupHost] = useState<HTMLElement | null>(null);
+  const popup = useRef<Popup | null>(null);
   const container = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState<Readonly<{ lib: MapLibre; map: MapLibreMap }> | null>(null);
   const [failed, setFailed] = useState(false);
@@ -73,6 +78,8 @@ export function ShipmentMap({ dashboard, selected, focusId, onSelect }: Selectio
   const markers = useRef(new Map<string, Marker>());
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const inspectedFrame = useRef<string | null>(null);
+  const fleetFramed = useRef(false);
   const framed = useRef<string | undefined>(undefined);
 
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), TICK_MS); return () => window.clearInterval(timer); }, []);
@@ -88,7 +95,7 @@ export function ShipmentMap({ dashboard, selected, focusId, onSelect }: Selectio
       const lib: MapLibre = 'default' in module ? (module as unknown as { default: MapLibre }).default : module;
       lib.setWorkerUrl(new URL(workerUrl, window.location.href).href);
       const map = new lib.Map({
-        container: host, style: style(window.location.origin), center: [30, 24], zoom: 1.15, minZoom: 0.6, maxZoom: 7,
+        container: host, style: style(window.location.origin), center: [30, 24], zoom: 1.15, minZoom: -0.5, maxZoom: 7,
         attributionControl: false, dragRotate: false, pitchWithRotate: false, cooperativeGestures: false,
       });
       created = map;
@@ -112,7 +119,7 @@ export function ShipmentMap({ dashboard, selected, focusId, onSelect }: Selectio
     setLines(map, 'lanes', layers.lanes); setLines(map, 'sailed', layers.sailed); setLines(map, 'ahead', layers.ahead);
     const known = markers.current;
     const live = new Set(views.map(view => view.id));
-    known.forEach((marker, id) => { if (!live.has(id) && !id.startsWith('port:')) { marker.remove(); known.delete(id); } });
+    known.forEach((marker, id) => { if (!live.has(id) && !id.includes(':')) { marker.remove(); known.delete(id); } });
     views.forEach(view => {
       const existing = known.get(view.id);
       const marker = existing ?? new lib.Marker({ element: vesselElement(id => onSelectRef.current(id), view), anchor: 'center' }).setLngLat([...view.position]).addTo(map);
@@ -135,6 +142,11 @@ export function ShipmentMap({ dashboard, selected, focusId, onSelect }: Selectio
   }, [ready, dashboard]);
 
   useEffect(() => {
+    if (ready && views.length && !fleetFramed.current && !focusId) {
+      fleetFramed.current = true;
+      ready.map.fitBounds([[-180, -50], [180, 65]], { padding: 45, duration: 0, maxZoom: 1.15 });
+    }
+    if (!focusId) framed.current = undefined;
     if (!ready || !focusId || framed.current === focusId) return;
     const view = views.find(item => item.id === focusId);
     const bounds = view && boundsOf(view.route);
@@ -143,10 +155,68 @@ export function ShipmentMap({ dashboard, selected, focusId, onSelect }: Selectio
     ready.map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: FRAME_PADDING, maxZoom: 4.2, duration: 900 });
   }, [ready, focusId, views]);
 
+  useEffect(() => {
+    if (!ready || !container.current) return;
+    const observer = new ResizeObserver(() => ready.map.resize());
+    observer.observe(container.current);
+    return () => observer.disconnect();
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready || !selectedId || !showPopup) { setPopupHost(null); return; }
+    const host = document.createElement('div');
+    const card = new ready.lib.Popup({ closeButton: false, closeOnClick: false, focusAfterOpen: false, offset: 22, maxWidth: '290px', className: 'shipment-popup' });
+    popup.current = card;
+    setPopupHost(host);
+    card.setDOMContent(host);
+    return () => { card.remove(); popup.current = null; };
+  }, [ready, selectedId, showPopup]);
+
+  useEffect(() => {
+    const view = views.find(view => view.id === selectedId);
+    if (ready && view && popup.current) { popup.current.setLngLat([...view.position]); if (!popup.current.isOpen()) popup.current.addTo(ready.map); }
+  }, [ready, selectedId, views, showPopup]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const { map, lib } = ready;
+    const extra: Marker[] = [];
+    const alternatives = (dashboard?.intelligence?.diversions ?? []).filter(option => !selectedId || option.shipmentId === selectedId);
+    const seen = new Set<string>();
+    alternatives.forEach(option => {
+      if (seen.has(option.name)) return;
+      seen.add(option.name);
+      const node = element('div', 'alternative-port');
+      node.append(element('span', 'alternative-dot'), element('span', '', option.name));
+      node.title = 'Potential diversion · carrier confirmation required';
+      extra.push(new lib.Marker({ element: node, anchor: 'left' }).setLngLat([...option.coordinates]).addTo(map));
+    });
+    (dashboard?.intelligence?.items ?? []).filter(item => item.coordinates && item.relevance.some(reason => !selectedId || reason.shipmentId === selectedId)).forEach(item => {
+      const node = element('button', 'news-marker', '!') as HTMLButtonElement;
+      node.type = 'button'; node.setAttribute('aria-label', item.evidence.title); node.title = item.evidence.title;
+      node.addEventListener('click', () => { const id = item.relevance[0]?.shipmentId; if (id) onSelectRef.current(id); });
+      extra.push(new lib.Marker({ element: node }).setLngLat([...item.coordinates!] as [number, number]).addTo(map));
+    });
+    return () => extra.forEach(marker => marker.remove());
+  }, [ready, dashboard?.intelligence, selectedId]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const port = dashboard?.ports.find(port => port.id === inspected?.replaces);
+    setLines(ready.map, 'alternative', inspected && port ? { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[...port.coordinates], [...inspected.coordinates]] } }] } : emptyLines);
+    if (!inspected) inspectedFrame.current = null;
+    if (inspected && port && inspectedFrame.current !== inspected.id) {
+      inspectedFrame.current = inspected.id;
+      ready.map.fitBounds([[Math.min(port.coordinates[0], inspected.coordinates[0]), Math.min(port.coordinates[1], inspected.coordinates[1])], [Math.max(port.coordinates[0], inspected.coordinates[0]), Math.max(port.coordinates[1], inspected.coordinates[1])]], { padding: 100, maxZoom: 5, duration: 600 });
+    }
+  }, [ready, inspected, dashboard?.ports]);
+
   return <div className="map-canvas">
     <div ref={container} className="map-gl" role="group" aria-label="Shipment map. Select a vessel with the markers or the shipment list." />
+    {selected && showPopup && (popupHost ? createPortal(<div className="vessel-popup-card"><button className="popup-dismiss" onClick={onDismiss} aria-label="Close ship popup">×</button><button className="popup-open" onClick={onOpen}><span className="section-kicker">{selected.reference}</span><strong>{selected.vessel}</strong><span className="popup-eta">ETA {new Date(selected.eta).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC</span><span className={`risk-badge ${selected.risk}`}>{riskLabel[selected.risk]}</span><span className="popup-brief">{shipmentBrief(selected).text}</span><span className="popup-source">{shipmentBrief(selected).source}</span><span className="popup-cta">Open voyage & news →</span></button></div>, popupHost) : failed && <button className="map-fallback-open" onClick={onOpen}>Open {selected.vessel} · voyage & news →</button>)}
+    {inspected && <p className="alternative-map-caption">{inspected.name} · indicative port connection, not a navigable route</p>}
     {failed && <p className="map-fallback" role="status">The map could not be drawn. The shipment list still shows every route and ETA.</p>}
-    <div className="map-legend" aria-hidden="true"><span><i className="legend-dot on-track" />On schedule</span><span><i className="legend-dot watch" />Watch</span><span><i className="legend-dot delayed" />Delayed</span></div>
+    <div className="map-legend" aria-hidden="true"><span><i className="legend-dot on-track" />Low</span><span><i className="legend-dot watch" />Moderate</span><span><i className="legend-dot delayed" />High</span></div>
   </div>;
 }
 
