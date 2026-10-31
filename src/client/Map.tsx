@@ -12,6 +12,7 @@ import { WarningGroup } from './WarningGroup';
 import { clusterWarnings } from './warning-clusters';
 import { warningLabel, warningTone } from './warning-severity';
 import { PortDetails } from './PortDetails';
+import { MapLegend, type MapLayer, type MapVisibility } from './MapLegend';
 import './warning-markers.css';
 
 type MapLibre = typeof import('maplibre-gl');
@@ -68,6 +69,7 @@ export function ShipmentMap(props: Selection) {
   const [failed, setFailed] = createSignal(false);
   const [now, setNow] = createSignal(Date.now());
   const [projection, setProjection] = createSignal<Projection>('mercator');
+  const [visible, setVisible] = createSignal<MapVisibility>({ ships: true, routes: true, ports: true, warnings: true, diversions: true });
   let framed: string | undefined;
   const [warningHost, setWarningHost] = createSignal<HTMLElement>();
   let warningPopup: Popup | undefined;
@@ -88,6 +90,14 @@ export function ShipmentMap(props: Selection) {
   const views = createMemo(() => vesselViews(props.dashboard?.shipments ?? [], now()));
   const ports = createMemo(() => portFeatures(props.dashboard?.ports ?? [], props.dashboard?.portStatus, props.dashboard?.board));
   const clearDetails = (): void => { setWarningGroup(null); setWarningId(null); setPortPlace(null); };
+  const toggleLayer = (layer: MapLayer, shown: boolean): void => {
+    setVisible(previous => ({ ...previous, [layer]: shown }));
+    if (shown) return;
+    if (layer === 'ships') props.onDismiss();
+    if (layer === 'warnings') { setWarningId(null); setWarningGroup(null); }
+    const place = portPlace();
+    if (place && layer === ('replaces' in place ? 'diversions' : 'ports')) setPortPlace(null);
+  };
   const tick = window.setInterval(() => setNow(Date.now()), 4_000);
   onCleanup(() => window.clearInterval(tick));
   onMount(() => {
@@ -127,6 +137,15 @@ export function ShipmentMap(props: Selection) {
   });
   createEffect(() => { ready()?.map.setProjection({ type: projection() }); });
   createEffect(() => {
+    const map = ready()?.map;
+    if (!map) return;
+    for (const id of ['lanes', 'sailed', 'ahead', 'corridors', 'corridor-hit']) {
+      map.setLayoutProperty(id, 'visibility', visible().routes ? 'visible' : 'none');
+    }
+    map.setLayoutProperty('alternative', 'visibility', visible().routes && visible().diversions ? 'visible' : 'none');
+    if (!visible().routes) map.getCanvas().style.cursor = '';
+  });
+  createEffect(() => {
     const current = ready();
     if (!current) return;
     const layers = routeLayers(views(), props.selected?.id);
@@ -156,7 +175,7 @@ export function ShipmentMap(props: Selection) {
   createEffect(() => {
     const current = ready();
     const selected = props.selected;
-    if (!current || !selected || !props.showPopup) { popup?.remove(); popup = undefined; setPopupHost(undefined); return; }
+    if (!current || !selected || !props.showPopup || !visible().ships) { popup?.remove(); popup = undefined; setPopupHost(undefined); return; }
     const host = document.createElement('div');
     const position = untrack(() => views().find(v => v.id === selected.id)?.position) ?? selected.coordinates;
     popup?.remove();
@@ -172,7 +191,7 @@ export function ShipmentMap(props: Selection) {
     const current = ready();
     if (!current) return;
     const info = props.corridor?.intelligence ?? props.dashboard?.intelligence;
-    const alternatives = props.inspected ? [props.inspected] : (info?.diversions ?? []).filter(d => props.corridor || d.shipmentId === props.selected?.id);
+    const alternatives = !visible().diversions ? [] : props.inspected ? [props.inspected] : (info?.diversions ?? []).filter(d => props.corridor || d.shipmentId === props.selected?.id);
     const owned: Marker[] = [];
     for (const option of [...new Map(alternatives.map(d => [d.name, d])).values()]) {
       const node = element('button', 'alternative-port');
@@ -189,6 +208,7 @@ export function ShipmentMap(props: Selection) {
   createEffect(() => {
     const current = ready();
     if (!current) return;
+    if (!visible().warnings) return;
     const items = visibleWarnings();
     const { map, lib } = current;
     let owned: Marker[] = [];
@@ -267,15 +287,16 @@ export function ShipmentMap(props: Selection) {
     <Show when={popupHost()}>{host => <Portal mount={host()}><button class="popup-dismiss" aria-label="Close ship popup" onClick={props.onDismiss}>×</button><button class="popup-open" onClick={props.onOpen}><span class="reference">{props.selected?.reference}</span><strong>{props.selected?.vessel}</strong><span class="popup-eta">ETA {props.selected && new Date(props.selected.eta).toLocaleString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} UTC</span><span class={`risk-badge ${props.selected?.risk}`}>{props.selected && riskLabel[props.selected.risk]}</span><span class="popup-brief">{props.selected && shipmentBrief(props.selected).text}</span><span class="popup-source">{props.selected && shipmentBrief(props.selected).source}</span><span class="popup-cta">Open voyage briefing →</span></button></Portal>}</Show>
     <div class="map-projection" role="group" aria-label="Map projection" style={{ position: 'absolute', top: '18px', left: '18px', display: 'flex', gap: '4px', 'z-index': '3' }}><button type="button" aria-pressed={projection() === 'mercator'} onClick={() => setProjection('mercator')}>Map</button><button type="button" aria-pressed={projection() === 'globe'} onClick={() => setProjection('globe')}>Globe</button></div>
     <button type="button" class="map-whole-world" style={{ position: 'absolute', top: '18px', right: '18px', 'z-index': '3' }} onClick={() => ready()?.map.fitBounds(WORLD, { padding: 25, duration: 700 })}>Whole world</button>
+    <MapLegend visible={visible()} onToggle={toggleLayer} />
     <Show when={ready()}>{runtime => <div style={{ display: 'none' }}>
-      <For each={ports().features}>{port => <MapMarker runtime={runtime()} position={port.geometry.coordinates}><button type="button" class="city-marker" data-port-id={port.properties.id} aria-haspopup="dialog" title={port.properties.label.replace('\n', ': ')} aria-label={`${port.properties.name} port details`} onClick={event => openPort(event, port.properties.id)} style={{ position: 'relative', display: 'block', padding: '0', cursor: 'pointer', width: '10px', height: '10px', border: `1px solid ${PORT_COLOURS[port.properties.risk]}`, background: port.properties.risk === 'unreported' ? '#111315' : PORT_COLOURS[port.properties.risk] }}><span class="port-label city-name">{port.properties.name}</span><Show when={(port.properties.anchored ?? 0) > 0}><span class="city-count" style={{ position: 'absolute', left: '12px', top: '-9px', 'border-radius': '50%', background: PORT_COLOURS[port.properties.risk], color: '#111315', 'font-size': '10px', 'font-weight': '700', 'min-width': '15px', height: '15px', 'text-align': 'center', 'line-height': '15px' }}>{port.properties.anchored}</span></Show></button></MapMarker>}</For>
-      <For each={views()}>{ship => <MapMarker runtime={runtime()} position={ship.position}><button type="button" class={`pixel-vessel ${ship.risk}${props.selected?.id === ship.id ? ' selected' : ''}`} aria-label={`${ship.vessel}, ${riskLabel[ship.risk]}`} aria-pressed={props.selected?.id === ship.id} title={`${ship.vessel} · ${riskLabel[ship.risk]}`} onClick={() => { clearDetails(); props.onSelect(ship.id); }} style={{ position: 'relative', padding: '5px', color: RISK_COLOURS[ship.risk], background: 'transparent', border: props.selected?.id === ship.id ? '1px solid #8cc3a1' : '1px solid transparent' }}>
+      <For each={visible().ports ? ports().features : []}>{port => <MapMarker runtime={runtime()} position={port.geometry.coordinates}><button type="button" class="city-marker" data-port-id={port.properties.id} aria-haspopup="dialog" title={port.properties.label.replace('\n', ': ')} aria-label={`${port.properties.name} port details`} onClick={event => openPort(event, port.properties.id)} style={{ position: 'relative', display: 'block', padding: '0', cursor: 'pointer', width: '10px', height: '10px', border: `1px solid ${PORT_COLOURS[port.properties.risk]}`, background: port.properties.risk === 'unreported' ? '#111315' : PORT_COLOURS[port.properties.risk] }}><span class="port-label city-name">{port.properties.name}</span><Show when={(port.properties.anchored ?? 0) > 0}><span class="city-count" style={{ position: 'absolute', left: '12px', top: '-9px', 'border-radius': '50%', background: PORT_COLOURS[port.properties.risk], color: '#111315', 'font-size': '10px', 'font-weight': '700', 'min-width': '15px', height: '15px', 'text-align': 'center', 'line-height': '15px' }}>{port.properties.anchored}</span></Show></button></MapMarker>}</For>
+      <For each={visible().ships ? views() : []}>{ship => <MapMarker runtime={runtime()} position={ship.position}><button type="button" class={`pixel-vessel ${ship.risk}${props.selected?.id === ship.id ? ' selected' : ''}`} aria-label={`${ship.vessel}, ${riskLabel[ship.risk]}`} aria-pressed={props.selected?.id === ship.id} title={`${ship.vessel} · ${riskLabel[ship.risk]}`} onClick={() => { clearDetails(); props.onSelect(ship.id); }} style={{ position: 'relative', padding: '5px', color: RISK_COLOURS[ship.risk], background: 'transparent', border: props.selected?.id === ship.id ? '1px solid #8cc3a1' : '1px solid transparent' }}>
         <svg class="pixel-ship" width="30" height="20" viewBox="0 0 15 10" shape-rendering="crispEdges" aria-hidden="true"><path fill="currentColor" d="M6 0h1v2h3v3h3v1h2v2h-2v1H2V8H0V6h3V3h3zm-1 4v1h2V4zm3 0v1h1V4z" /></svg>
         <Show when={ship.risk !== 'on-track'}><span class="pixel-vessel-alert" aria-hidden="true" style={{ position: 'absolute', top: '-7px', right: '-7px', color: RISK_COLOURS[ship.risk] }}>{ship.risk === 'watch' ? '▲' : '!'}</span></Show>
         <Show when={props.selected?.id === ship.id}><span class="pixel-vessel-name" style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', color: '#e8e4d6', 'white-space': 'nowrap', 'font-size': '11px' }}>{ship.vessel}</span></Show>
       </button></MapMarker>}</For>
     </div>}</Show>
-    <Show when={props.inspected}><div class="alternative-map-caption">{props.inspected?.name} · indicative connection; revised ETA unconfirmed</div></Show>
+    <Show when={props.inspected && visible().diversions}><div class="alternative-map-caption">{props.inspected?.name} · indicative connection; revised ETA unconfirmed</div></Show>
     <Show when={failed()}><p class="map-fallback" role="status">The map could not be drawn. The fleet list retains every ship and ETA.</p></Show>
     <p class="map-interaction-hint" style={{ position: 'absolute', bottom: '18px', width: '100%', 'text-align': 'center', color: '#aaa99e', 'font-size': '11px', 'pointer-events': 'none' }}>Drag to pan · Scroll to zoom</p>
   </div>;
