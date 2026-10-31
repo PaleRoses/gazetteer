@@ -1,0 +1,136 @@
+/* Shared geometry: square surfaces and controls, without changing map symbols. */
+.map-projection,
+.map-projection button,
+.map-whole-world,
+.selected-voyage-link,
+.alternative-map-caption,
+.map-fallback-open,
+.map-gl .maplibregl-ctrl-group,
+.map-gl .maplibregl-ctrl-group button,
+.intelligence-title h2 > span,
+.news-filters button,
+.news-page-header select,
+.news-warning,
+.news-card,
+.news-tag,
+.news-empty,
+.diversion-card,
+.operations-nav > button,
+.operations-nav > button > span,
+.route-card,
+.route-health,
+.endpoint-status,
+.route-member,
+.fleet-dialog,
+.fleet-form input,
+.fleet-form select,
+.remove-confirm,
+.fleet-add,
+.alerts-header h1 > span,
+.alert-settings,
+.alert-settings input,
+.notification-button,
+.alert-card,
+.alert-symbol,
+.alert-source,
+.alerts-empty,
+.scenario-isolation,
+.scenario-controls,
+.scenario-controls select,
+.scenario-controls input,
+.scenario-results,
+.scenario-changed,
+.agent-board-filters input,
+.agent-board-filters select,
+.agent-message article,
+.agent-message-icon,
+.agent-message-tag,
+.agent-message pre,
+.agent-board-empty button {
+  border-radius: 0;
+}
+
+.selected-voyage-link,
+.map-gl .maplibregl-ctrl-group {
+  box-shadow: none;
+}
+
+.fleet-dialog {
+  box-shadow: 6px 6px 0 #00000040;
+}
+
+/* A fine frame and hard offset replace the floating, rounded bubble treatment. */
+.map-gl :is(.shipment-popup, .warning-popup) .maplibregl-popup-content {
+  border: 1px solid #59605e;
+  border-radius: 0;
+  box-shadow: 4px 4px 0 #00000055;
+}
+
+.map-gl .warning-dialog,
+.map-gl .popup-open {
+  border-radius: 0;
+  background: var(--panel);
+  color: var(--bone);
+}
+
+.map-gl .popup-open:hover {
+  background: var(--raised);
+}
+
+.map-gl :is(.warning-tags span, .warning-severity, .port-condition,
+  .port-no-bulletin, .warning-group-zoom, .warning-group-back) {
+  border-radius: 0;
+}
+
+.map-gl :is(.warning-eyebrow, .port-popover .warning-eyebrow, .popup-cta) {
+  color: var(--bone);
+}
+
+.map-gl :is(.warning-dialog > header, .warning-relevance, .warning-ships,
+  .warning-group-item, .popup-cta) {
+  border-color: var(--line);
+}
+
+.map-gl :is(.warning-description, .warning-observed, .warning-relevance p,
+  .warning-ships > p, .warning-ships small, .warning-group-body > p,
+  .warning-group-item small, .warning-impact-note, .port-country,
+  .port-no-bulletin, .port-popover-metrics dt, .popup-eta, .popup-source,
+  .popup-dismiss) {
+  color: var(--muted);
+}
+
+.map-gl :is(.warning-tags span, .port-condition, .warning-group-zoom,
+  .warning-group-back) {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .2px;
+}
+
+/* Incoming vessels and affected ships read as a list, rather than nested cards. */
+.map-gl .warning-ships button {
+  margin: 0;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--bone);
+}
+
+.map-gl .warning-ships button:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.map-gl .warning-group-item {
+  background: transparent;
+  color: var(--bone);
+}
+
+.map-gl :is(.warning-ships button, .warning-group-item):hover {
+  background: var(--raised);
+}
+
+.map-gl :is(.warning-group-zoom, .warning-group-back) {
+  color: var(--bone);
+  background: transparent;
+  border-color: var(--line);
+}

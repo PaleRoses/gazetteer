@@ -22,6 +22,7 @@ import { RouteCard, RouteDetails, routeName } from './Routes';
 import { readView, viewHash, type View } from './navigation';
 import { shipmentBrief, assessmentFor } from './brief';
 import './styles.css';
+import './sharp-ui.css';
 
 const minute = (eta: string | undefined): string => (eta ?? '').slice(0, 16);
 const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'CONNECTING', live: 'STREAMING', polling: 'POLLING · 5 S' };
