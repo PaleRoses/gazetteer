@@ -98,6 +98,15 @@ describe('vessel views', () => {
 
 describe('route layers', () => {
   const views = vesselViews(shipments, now.getTime());
+  test('the faint voyage context retains both endpoints while the selected ship uses its split overlay', () => {
+    const voyages = routeLayers(views, 'gz-1043').voyages.features;
+    expect(voyages.some(feature => feature.properties?.id === 'gz-1043')).toBe(false);
+    const other = need(voyages[0]);
+    const view = need(views.find(value => value.id === other.properties?.id));
+    expect(other.geometry.coordinates[0]).toEqual([...need(view.route[0])]);
+    expect(other.geometry.coordinates.at(-1)).toEqual([...need(view.route.at(-1))]);
+    expect(other.properties?.risk).toBe(view.risk);
+  });
   test('the selected voyage splits at the ship: the sailed leg ends where the remaining leg begins', () => {
     const layers = routeLayers(views, 'gz-1043');
     const sailed = need(layers.sailed.features[0]).geometry.coordinates;

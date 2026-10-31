@@ -36,7 +36,8 @@ const style = (origin: string): StyleSpecification => ({
     { id: 'corridors', type: 'line', source: 'corridors', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.corridor, 'line-width': 5, 'line-opacity': 0.3 } },
     { id: 'corridor-hit', type: 'line', source: 'corridors', paint: { 'line-color': COLOURS.corridor, 'line-width': 24, 'line-opacity': 0.01 } },
     { id: 'alternative', type: 'line', source: 'alternative', paint: { 'line-color': COLOURS.alternative, 'line-width': 2, 'line-dasharray': [3, 3] } },
-    { id: 'lanes', type: 'line', source: 'lanes', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['match', ['get', 'risk'], 'delayed', riskColour.delayed, 'watch', riskColour.watch, riskColour['on-track']], 'line-width': 1.3, 'line-dasharray': [2, 3], 'line-opacity': 0.32 } },
+    { id: 'voyages', type: 'line', source: 'voyages', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['match', ['get', 'risk'], 'delayed', riskColour.delayed, 'watch', riskColour.watch, riskColour['on-track']], 'line-width': 1.2, 'line-opacity': 0.22 } },
+    { id: 'lanes', type: 'line', source: 'lanes', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['match', ['get', 'risk'], 'delayed', riskColour.delayed, 'watch', riskColour.watch, riskColour['on-track']], 'line-width': 1.4, 'line-dasharray': [2, 2.5], 'line-opacity': 0.5 } },
     { id: 'sailed', type: 'line', source: 'sailed', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': selectionColour, 'line-width': 2, 'line-dasharray': [0.1, 2.6], 'line-opacity': 0.45 } },
     { id: 'ahead', type: 'line', source: 'ahead', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': selectionColour, 'line-width': 2.4, 'line-dasharray': [0.1, 2.4], 'line-opacity': 0.95 } },
   ],
@@ -122,7 +123,7 @@ export function ShipmentMap(props: Selection) {
       if (disposed) return;
       lib.setWorkerUrl(workerUrl);
       const base = style(window.location.origin);
-      const map = new lib.Map({ container: host, style: { ...base, sources: { ...base.sources, lanes: { type: 'geojson', data: empty }, sailed: { type: 'geojson', data: empty }, ahead: { type: 'geojson', data: empty }, corridors: { type: 'geojson', data: empty }, alternative: { type: 'geojson', data: empty } } }, center: [15, 18], zoom: 0.8, minZoom: 0, maxZoom: 9, attributionControl: false, dragRotate: false, pitchWithRotate: false });
+      const map = new lib.Map({ container: host, style: { ...base, sources: { ...base.sources, voyages: { type: 'geojson', data: empty }, lanes: { type: 'geojson', data: empty }, sailed: { type: 'geojson', data: empty }, ahead: { type: 'geojson', data: empty }, corridors: { type: 'geojson', data: empty }, alternative: { type: 'geojson', data: empty } } }, center: [15, 18], zoom: 0.8, minZoom: 0, maxZoom: 9, attributionControl: false, dragRotate: false, pitchWithRotate: false });
       created = map;
       const updatePortLabels = () => host.classList.toggle('port-labels-visible', map.getZoom() >= 4);
       updatePortLabels();
@@ -156,7 +157,7 @@ export function ShipmentMap(props: Selection) {
   createEffect(() => {
     const map = ready()?.map;
     if (!map) return;
-    for (const id of ['lanes', 'sailed', 'ahead', 'corridors', 'corridor-hit']) {
+    for (const id of ['voyages', 'lanes', 'sailed', 'ahead', 'corridors', 'corridor-hit']) {
       map.setLayoutProperty(id, 'visibility', visible().routes ? 'visible' : 'none');
     }
     map.setLayoutProperty('alternative', 'visibility', visible().routes && visible().diversions ? 'visible' : 'none');
@@ -166,7 +167,7 @@ export function ShipmentMap(props: Selection) {
     const current = ready();
     if (!current) return;
     const layers = routeLayers(views(), props.selected?.id);
-    setFeatures(current.map, 'lanes', layers.lanes); setFeatures(current.map, 'sailed', layers.sailed); setFeatures(current.map, 'ahead', layers.ahead);
+    setFeatures(current.map, 'voyages', layers.voyages); setFeatures(current.map, 'lanes', layers.lanes); setFeatures(current.map, 'sailed', layers.sailed); setFeatures(current.map, 'ahead', layers.ahead);
   });
   createEffect(() => {
     const current = ready();
@@ -354,5 +355,3 @@ export function ShipmentMap(props: Selection) {
     <p class="gz-map-hint">Drag to pan · Scroll to zoom</p>
   </div>;
 }
-const backdrop = new URL('./world-coastline.svg', import.meta.url).href;
-export function MapBackdrop() { return <div class="map-canvas"><svg class="world-map" viewBox="0 30 1000 420" aria-hidden="true"><image href={backdrop} width="1000" height="500" /></svg></div>; }

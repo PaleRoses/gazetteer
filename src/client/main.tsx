@@ -12,7 +12,7 @@ import './sharp-ui.css';
 import './styles/shell.css';
 import { AlertsPage, VesselEditor, VoyageFacts, createAlertNotifications } from './FleetOperations';
 import { commentsSchema, dashboardSchema, invitationSchema, membersSchema, request, sessionSchema, workspaceSchema, type Invitation, type Session } from './api';
-import { MapBackdrop, ShipmentMap } from './Map';
+import { ShipmentMap } from './Map';
 import { mergeComment, type CommentEvent } from './feed';
 import { createChangeFlash, createWorkspaceFeed, type FeedMode } from './live';
 import { ActorLine } from './ActorLine';
@@ -45,6 +45,8 @@ const ErrorNote = (props: Readonly<{ message: string }>) => <p class="error-note
 
 function Brand() { return <a class="brand" href="/" aria-label="Gazetteer home">gazetteer</a>; }
 
+const pixelWorld = new URL('./world-pixels.svg', import.meta.url).href;
+
 function Authentication(props: Readonly<{ onSession: (session: Session) => void; demo: boolean }>) {
   const [mode, setMode] = createSignal<'signup' | 'login'>('signup');
   const [busy, setBusy] = createSignal(false);
@@ -59,7 +61,7 @@ function Authentication(props: Readonly<{ onSession: (session: Session) => void;
     setBusy(false);
     if (result.ok) props.onSession(result.value); else setError(result.error);
   }
-  return <main class="auth-shell"><section class="auth-story"><Brand /><div class="auth-map"><MapBackdrop /></div><div class="auth-copy"><span class="eyebrow"><Radio size={14} /> A SHARED VIEW OF WHAT'S NEXT</span><h1>Cargo moves.<br />Stay ahead.</h1><p>Your ships, their arrival times, and the changes that matter. All in one shared workspace.</p><div class="auth-features"><span><MapPin size={16} />Follow every ship</span><span><TriangleAlert size={16} />See what needs attention</span><span><Users size={16} />Make the next call together</span></div></div><div class="auth-foot"><span>GAZETTEER / OPERATIONS</span><span>Clarity from origin to destination.</span></div></section>
+  return <main class="auth-shell"><section class="auth-story"><Brand /><div class="auth-map"><img src={pixelWorld} alt="" /></div><div class="auth-copy"><span class="eyebrow"><Radio size={14} /> A SHARED VIEW OF WHAT'S NEXT</span><h1>Cargo moves.<br />Stay ahead.</h1><p>Your ships, their arrival times, and the changes that matter. All in one shared workspace.</p><div class="auth-features"><span><MapPin size={16} />Follow every ship</span><span><TriangleAlert size={16} />See what needs attention</span><span><Users size={16} />Make the next call together</span></div></div><div class="auth-foot"><span>GAZETTEER / OPERATIONS</span><span>Clarity from origin to destination.</span></div></section>
     <section class="auth-panel"><div class="auth-form-wrap"><Show when={props.demo}><button type="button" class="demo-skip" disabled={busy()} onClick={() => { void enterDemo(props.onSession).then(failed => { if (failed) setError(failed); }); }}><span class="demo-skip-label"><FlaskConical size={20} />Skip — open the demo workspace</span><small>No account needed. Simulated fleet, live map.</small><ArrowRight size={22} /></button><p class="demo-or"><span>or sign in with your account</span></p></Show><span class="demo-tag"><FlaskConical size={13} /> SYNTHETIC DEMO</span><h2>{invited ? 'Join your team.' : signup() ? 'Your next clear view.' : 'Welcome back.'}</h2><p>{invited ? 'Sign in with your invited email, then accept your workspace invitation.' : signup() ? 'Create an account to explore your shared ship workspace.' : 'Sign in to pick up where your team left off.'}</p>
       <Tabs.Root value={mode()} onValueChange={details => { setMode(details.value === 'login' ? 'login' : 'signup'); setError(null); }}><Tabs.List class="auth-tabs"><Tabs.Trigger value="signup">Create account</Tabs.Trigger><Tabs.Trigger value="login">Sign in</Tabs.Trigger></Tabs.List></Tabs.Root>
       <form onSubmit={submit}><Show when={signup()}><label>Your name<input name="name" autocomplete="name" maxLength={80} required placeholder="Alex Morgan" /></label></Show><label>Email<input name="email" type="email" autocomplete="email" required placeholder="you@company.com" /></label><label>Password<input name="password" type="password" autocomplete={signup() ? 'new-password' : 'current-password'} minLength={12} required placeholder="At least 12 characters" /></label><Show when={signup()}><label>Workspace name <span class="optional">optional</span><input name="workspaceName" maxLength={100} placeholder="Your logistics team" /></label></Show><Show when={error()}>{message => <ErrorNote message={message()} />}</Show><button class="primary full" disabled={busy()}>{busy() ? 'Connecting…' : signup() ? 'Create workspace' : 'Sign in'}<ArrowRight size={16} /></button></form>
