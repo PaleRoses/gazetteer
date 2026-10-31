@@ -19,6 +19,8 @@ export type Hub = Readonly<{
   /** Publishes only when the shipment state differs from the last dashboard published for the workspace. */
   publishDashboard(workspaceId: string, dashboard: Dashboard): boolean;
   subscribers(workspaceId: string): number;
+  /** Workspaces with at least one open stream. */
+  active(): readonly string[];
 }>;
 
 const signature = (dashboard: Dashboard): string => JSON.stringify({ ...dashboard, updatedAt: null });
@@ -48,6 +50,7 @@ export function createHub(): Hub {
       return true;
     },
     subscribers: workspaceId => listeners.get(workspaceId)?.size ?? 0,
+    active: () => [...listeners.keys()],
   };
 }
 
