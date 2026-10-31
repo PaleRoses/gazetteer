@@ -33,7 +33,7 @@ export async function registerParticipant(workspaceKey: string, name: string, ch
   return { token: registration.token, channel };
 }
 
-const participant = (identity: RelayIdentity): Promise<RelayAgentClient> => new AgentRelay({ agentToken: identity.token, retryPolicy }).workspace.reconnect({ apiToken: identity.token });
+export const participant = (identity: RelayIdentity): Promise<RelayAgentClient> => new AgentRelay({ agentToken: identity.token, retryPolicy }).workspace.reconnect({ apiToken: identity.token });
 
 export async function joinChannel(identity: RelayIdentity, createChannel: boolean): Promise<void> {
   const client = await participant(identity);
