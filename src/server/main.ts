@@ -12,7 +12,7 @@ if (!configuration.ok) {
   console.error(configuration.errors.join('\n'));
   process.exit(1);
 }
-const { port, hostname, origin, mail } = configuration.value;
+const { port, hostname, origin, mail, relay } = configuration.value;
 const dataDir = resolve(configuration.value.dataDir);
 const assets = resolve('dist');
 if (!await Bun.file(resolve(assets, 'index.html')).exists()) {
@@ -21,7 +21,7 @@ if (!await Bun.file(resolve(assets, 'index.html')).exists()) {
 }
 await mkdir(dataDir, { recursive: true, mode: 0o700 });
 const access = createAccess(resolve(dataDir, 'access.sqlite'));
-const monitoring = await createMonitoring({ dataDir: resolve(dataDir, 'actors'), workspaceIds: access.workspaceIds(), hasWorkspace: workspaceId => access.workspaceIds().includes(workspaceId) });
+const monitoring = await createMonitoring({ relay, dataDir: resolve(dataDir, 'actors'), workspaceIds: access.workspaceIds(), hasWorkspace: workspaceId => access.workspaceIds().includes(workspaceId) });
 /** The live AIS firehose: one reader for the whole process. GAZETTEER_INGEST=off turns it off. */
 const ingest = process.env.GAZETTEER_INGEST === 'off' ? undefined : startIngest();
 const bookings = createBookings(resolve(dataDir, 'bookings.sqlite'));

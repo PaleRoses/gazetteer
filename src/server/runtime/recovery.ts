@@ -61,6 +61,8 @@ type Member = Readonly<{ key: string; role: Role; city: PortId; client: Common; 
 
 export type RecoveryDeps = Readonly<{
   clients: Clients; workspaceKey: string; bookingsPath: string;
+  /** With Relay off, members are ready at once and never join: the board is the local log. */
+  mirror?: boolean;
   /** The ship whose cargo act 2 is about, read from its actor (persisted truth): the anchor must not move when the server restarts. */
   meridianStar: (workspaceId: string) => Promise<Pick<Shipment, 'id' | 'vessel' | 'baselineEta'> | null>;
   limit: <A>(operation: () => Promise<A>) => Promise<A>;
@@ -136,7 +138,7 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
     limit,
     tasksOf: workspaceId => bringUp(workspaceId).map((member): StartupTask => ({
       key: member.key, run: async () => (await member.initialize()).status === 'ok',
-      follow: async () => (await member.client.join(workspaceId, deps.workspaceKey, false)).status === 'ok',
+      ...(deps.mirror === true ? { follow: async () => (await member.client.join(workspaceId, deps.workspaceKey, false)).status === 'ok' } : {}),
     })),
     onReady: (workspaceId, key) => {
       void membersOf(workspaceId).find(member => member.key === key)?.client.resume().catch(() => undefined);

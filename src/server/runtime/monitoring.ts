@@ -66,9 +66,11 @@ export type Monitoring = Readonly<{
   ask(workspaceId: string, shipmentId: string, question: string): Promise<ShipAnswer>;
   close(): Promise<void>;
 }>;
-export async function createMonitoring(options: Readonly<{ dataDir?: string; workspaceIds: readonly string[]; hasWorkspace?: (workspaceId: string) => boolean }>): Promise<Monitoring> {
-  const workspaceKey = process.env.RELAY_WORKSPACE_KEY;
-  if (!workspaceKey) throw new Error('Agent Relay is not configured. Run npm run setup:relay first.');
+export async function createMonitoring(options: Readonly<{ relay?: 'off' | 'mirror'; dataDir?: string; workspaceIds: readonly string[]; hasWorkspace?: (workspaceId: string) => boolean }>): Promise<Monitoring> {
+  /** Off (the default) never constructs a Relay client: the board is the local log. Mirror joins Relay in the background and mirrors the posts to it. */
+  const mirror = options.relay === 'mirror';
+  const workspaceKey = mirror ? process.env.RELAY_WORKSPACE_KEY : '';
+  if (workspaceKey === undefined || (mirror && !workspaceKey)) throw new Error('Agent Relay is not configured. Run npm run setup:relay first, or leave GAZETTEER_RELAY off.');
   const project = resolve(import.meta.dir, '../../..');
   const dataDir = resolve(project, options.dataDir ?? resolve(process.env.DATA_DIR ?? '.data', 'actors'));
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
@@ -105,8 +107,8 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   });
 
   const hub = createHub();
-  const relay = new AgentRelay({ workspaceKey });
-  const board = createBoardModel(workspaceId => recentBoard(request => relay.messages.list(relayChannel(workspaceId), request)), { onHydrated: workspaceId => { if (hub.subscribers(workspaceId) > 0) void announce(workspaceId); } });
+  const relay = mirror ? new AgentRelay({ workspaceKey }) : null;
+  const board = createBoardModel(workspaceId => relay ? recentBoard(request => relay.messages.list(relayChannel(workspaceId), request)) : Promise.resolve([]), { onHydrated: workspaceId => { if (hub.subscribers(workspaceId) > 0) void announce(workspaceId); } });
   /** Relay is rate limited and slow: every Relay-touching actor call from here shares eight slots. */
   const relayLimit = createLimiter(8);
 
@@ -122,11 +124,11 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const memberTask = (key: string, after: string | undefined, run: () => Promise<RelayOutcome<null>>, join: () => Promise<RelayOutcome<null>>, sync: () => Promise<RelayOutcome<unknown>>): StartupTask => ({
     key, ...(after ? { after } : {}),
     run: async () => (await run()).status === 'ok',
-    follow: async () => {
+    ...(mirror ? { follow: async () => {
       if ((await join()).status !== 'ok') return false;
       void relayLimit(sync).catch(() => undefined);
       return true;
-    },
+    } } : {}),
   });
   /** The first actor port in registry order creates the workspace channel; every other actor joins after it. */
   const tasksOf = (workspaceId: string): readonly StartupTask[] => {
@@ -218,7 +220,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       shipments: retained, ports, ...(posts ? { board: posts, portStatus: cityStatuses(ports, retained, posts) } : {}),
       updatedAt: new Date().toISOString(), mode: process.env.GAZETTEER_LIVE_SOURCES === 'off' ? 'simulation' : 'mixed',
       runtime: 'Terse Durable Actors · retained state', relay: 'Agent Relay · simulated and live disruptions, each labelled',
-      relayHealth: { state: relayHealth.failingSince ? 'reconnecting' : 'live', since: relayHealth.failingSince, lastPostAt: relayHealth.lastPostAt },
+      relayHealth: mirror ? { state: relayHealth.failingSince ? 'reconnecting' : 'live', since: relayHealth.failingSince, lastPostAt: relayHealth.lastPostAt } : { state: 'off', since: null, lastPostAt: null },
       ...(recovery.view(workspaceId) ? { recovery: recovery.view(workspaceId) } : {}),
       ...(status.complete ? {} : { startup: { ready: status.ready, total: status.total, ...(queued > 0 ? { queued } : {}) } }),
       ...(status.joined === status.total ? {} : { relayMembership: { joined: status.joined, total: status.total } }),
@@ -273,6 +275,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const publishCity = createCoalescer(async key => {
     const [workspaceId, id, element] = key.split('\u0000') as [string, PortId, CityElement];
     const outgoing = await watch(workspaceId, id, element).unpublished();
+    if (outgoing && !mirror) return watch(workspaceId, id, element).acknowledge({ board: outgoing.board.map(message => message.id), disruptions: outgoing.disruptions.map(item => item.id) });
     if (!outgoing?.relay || outgoing.board.length + outgoing.disruptions.length === 0) return;
     const { relay } = outgoing;
     const sent = await relayLimit(() => transmit(outgoing, {
@@ -285,6 +288,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const publishShip = createCoalescer(async key => {
     const [workspaceId, id] = key.split('\u0000') as [string, string];
     const outgoing = await shipment(workspaceId, id).unpublished();
+    if (outgoing && !mirror) return shipment(workspaceId, id).acknowledge(outgoing.board.map(message => message.id));
     if (!outgoing?.relay || outgoing.board.length === 0) return;
     const { relay } = outgoing;
     const sent = await relayLimit(() => transmit(outgoing, { post: message => postBoard(relay, message), publish: () => Promise.resolve(relaySuccess(null)) }));
@@ -321,9 +325,10 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     if (spoken.some(count => count > 0) && round + 1 < rounds) return settle(workspaceId, round + 1);
   };
   const recovery = createRecovery({
-    clients: actorClients(transport), workspaceKey, bookingsPath: resolve(dataDir, '..', 'bookings.sqlite'), limit: relayLimit,
+    mirror, clients: actorClients(transport), workspaceKey, bookingsPath: resolve(dataDir, '..', 'bookings.sqlite'), limit: relayLimit,
     meridianStar: workspaceId => shipment(workspaceId, 'gz-1042').snapshot(),
     send: async outgoing => {
+      if (!mirror) return { board: outgoing.board.map(message => message.id), disruptions: outgoing.disruptions.map(item => item.id), failure: null };
       const { relay } = outgoing;
       if (!relay) return { board: [], disruptions: [], failure: null };
       const sent = await relayLimit(() => transmit(outgoing, { post: message => postBoard(relay, message), publish: () => Promise.resolve(relaySuccess(null)) }));
@@ -357,7 +362,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   });
   const hasWorkspace = options.hasWorkspace ?? (workspaceId => options.workspaceIds.includes(workspaceId));
   const seq = fileSeqStore(resolve(dataDir, '..', 'relay-seq'));
-  const live = await startRelayLive({
+  const live = !mirror ? null : await startRelayLive({
     workspaceKey, sinceSeq: await seq.load(), onCursor: value => { void seq.save(value); },
     onError: error => console.error('Relay live stream:', error instanceof Error ? error.message : 'unknown error'),
     onMessage: ({ channel, message }) => {
@@ -370,7 +375,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
         .then(count => (count > 0 ? refresh(workspaceId) : undefined));
     },
   });
-  if (live.status === 'unavailable') console.warn(live.message);
+  if (live?.status === 'unavailable') console.warn(live.message);
   return {
     dashboard,
     ask: (workspaceId, shipmentId, question) => shipment(workspaceId, shipmentId).ask(question)
@@ -441,7 +446,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       startup.close();
       recovery.close();
       delivery.close();
-      if (live.status === 'ok') await live.value.close();
+      if (live?.status === 'ok') await live.value.close();
       await runtime.stop();
       operations.close();
     },

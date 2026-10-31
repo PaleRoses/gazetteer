@@ -10,6 +10,8 @@ type StartupConfiguration = Readonly<{
   origin: string;
   dataDir: string;
   mail: MailConfiguration;
+  /** `off` (the default): the board is a local log and Agent Relay is never called. `mirror`: actors also join Relay in the background and their posts are mirrored to it. */
+  relay: 'off' | 'mirror';
 }>;
 
 export type ConfigurationResult =
@@ -29,6 +31,7 @@ const environmentSchema = z.object({
   DATA_DIR: z.string().trim().min(1, 'DATA_DIR must not be empty.').default('.data'),
   RESEND_API_KEY: optionalText,
   MAIL_FROM: optionalText,
+  GAZETTEER_RELAY: z.enum(['off', 'mirror'], 'GAZETTEER_RELAY must be off or mirror.').default('off'),
 });
 
 const supportsActors = (version: string): boolean => {
@@ -41,13 +44,13 @@ export function readStartupConfig(environment: Environment, runtimeVersion: stri
   if (!supportsActors(runtimeVersion)) return { ok: false, errors: ['Gazetteer requires Bun 1.4.2 or newer. Install dependencies, then use npm start to run the pinned Bun runtime.'] };
   const parsed = environmentSchema.safeParse(environment);
   if (!parsed.success) return { ok: false, errors: parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`) };
-  const { PORT: port, HOST: hostname, APP_ORIGIN: origin, DATA_DIR: dataDir, RESEND_API_KEY: key, MAIL_FROM: from } = parsed.data;
+  const { PORT: port, HOST: hostname, APP_ORIGIN: origin, DATA_DIR: dataDir, RESEND_API_KEY: key, MAIL_FROM: from, GAZETTEER_RELAY: relay } = parsed.data;
   if (Boolean(key) !== Boolean(from)) return { ok: false, errors: ['Email delivery requires both RESEND_API_KEY and MAIL_FROM. Configure both, or remove both to use manual invitation links.'] };
   return {
     ok: true,
     value: {
       port, hostname, origin: origin ? new URL(origin).origin : `http://localhost:${port}`, dataDir,
-      mail: key && from ? { kind: 'resend', key, from } : { kind: 'manual' },
+      mail: key && from ? { kind: 'resend', key, from } : { kind: 'manual' }, relay,
     },
   };
 }

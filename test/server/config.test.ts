@@ -6,14 +6,20 @@ const runtime = '1.4.4';
 describe('startup configuration', () => {
   test('uses local defaults with honest manual invitation mode', () => {
     expect(readStartupConfig({}, runtime)).toEqual({ ok: true, value: {
-      port: 4310, hostname: '127.0.0.1', origin: 'http://localhost:4310', dataDir: '.data', mail: { kind: 'manual' },
+      port: 4310, hostname: '127.0.0.1', origin: 'http://localhost:4310', dataDir: '.data', mail: { kind: 'manual' }, relay: 'off',
     } });
   });
 
   test('normalizes a reachable origin and configured mail without claiming delivery', () => {
     expect(readStartupConfig({ PORT: '8080', HOST: '0.0.0.0', APP_ORIGIN: 'https://demo.example/', DATA_DIR: '/data', RESEND_API_KEY: 'example-key', MAIL_FROM: 'Gazetteer <demo@example.com>' }, runtime)).toEqual({ ok: true, value: {
-      port: 8080, hostname: '0.0.0.0', origin: 'https://demo.example', dataDir: '/data', mail: { kind: 'resend', key: 'example-key', from: 'Gazetteer <demo@example.com>' },
+      port: 8080, hostname: '0.0.0.0', origin: 'https://demo.example', dataDir: '/data', mail: { kind: 'resend', key: 'example-key', from: 'Gazetteer <demo@example.com>' }, relay: 'off',
     } });
+  });
+
+  test('Agent Relay is off unless GAZETTEER_RELAY says mirror, and nothing else is accepted', () => {
+    expect(readStartupConfig({}, runtime)).toMatchObject({ ok: true, value: { relay: 'off' } });
+    expect(readStartupConfig({ GAZETTEER_RELAY: 'mirror' }, runtime)).toMatchObject({ ok: true, value: { relay: 'mirror' } });
+    expect(readStartupConfig({ GAZETTEER_RELAY: 'on' }, runtime).ok).toBe(false);
   });
 
   test.each(['', '0', '-1', '65536', '4310.5', 'NaN'])('rejects invalid PORT %j', port => {
