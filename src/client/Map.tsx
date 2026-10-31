@@ -307,7 +307,7 @@ export function ShipmentMap(props: Selection) {
     <Show when={ready()}>{runtime => <div class="gz-map-staging">
       <Index each={ports()}>{port => <MapMarker runtime={runtime()} position={port().geometry.coordinates}>
         <button type="button" class={`gz-city ${port().properties.risk}`} data-port-id={port().properties.id} aria-haspopup="dialog" title={port().properties.label.replace('\n', ': ')} aria-label={`${port().properties.name} port details`} onClick={event => openPort(event, port().properties.id)}>
-          <Show when={port().properties.anchored !== null}><span class="gz-city-count">{port().properties.anchored}</span></Show>
+          <Show when={(port().properties.anchored ?? 0) > 0}><span class="gz-city-count">{port().properties.anchored}</span></Show>
           <span class="port-label city-name">{port().properties.name}</span>
           <Show when={props.selected?.destination === port().properties.id}><span class="gz-city-pill">{port().properties.name}</span></Show>
         </button>
