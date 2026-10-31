@@ -2,6 +2,7 @@ import { portIds } from '../core/ports';
 import { identitySchema, voyageSchema, operationsSchema } from '../core/operations';
 import { z } from 'zod';
 import { boardMessage, portStatus } from '../core/board';
+import { plan as recoveryPlan } from '../core/recovery';
 import type { Comment, Dashboard, Shipment, User, Workspace } from '../core/types';
 
 const coordinate = z.tuple([z.number(), z.number()]);
@@ -32,6 +33,14 @@ const intelligenceSchema = z.object({
 });
 /** A post that breaks the board protocol is dropped by itself; it never takes the fleet, the ports or the other posts down with it. */
 const boardPosts = z.array(z.unknown()).transform(items => items.flatMap(item => { const parsed = boardMessage.safeParse(item); return parsed.success ? [parsed.data] : []; }));
+const reservation = z.object({
+  id: z.string(), caseId: z.string(), resource: z.string(), start: z.string(), end: z.string(), priceEur: z.number(),
+  status: z.enum(['held', 'confirmed', 'released', 'expired']), expiresAt: z.string(), heldBy: z.string(), confirmedAt: z.string().nullable(),
+});
+const recoveryView = z.object({
+  case: z.object({ caseId: z.string(), method: z.literal('rule-based'), plan: recoveryPlan.nullable(), delivered: z.string().nullable() }).nullable(),
+  reservations: z.array(reservation),
+});
 export const dashboardSchema: z.ZodType<Dashboard> = z.object({
   shipments: z.array(shipment),
   ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })),
@@ -39,7 +48,7 @@ export const dashboardSchema: z.ZodType<Dashboard> = z.object({
   portStatus: z.array(portStatus).optional(), board: boardPosts.optional(),
   relayHealth: z.object({ state: z.enum(['live', 'reconnecting', 'off']), since: z.string().nullable(), lastPostAt: z.string().nullable() }).optional(),
   startup: z.object({ ready: z.number(), total: z.number(), queued: z.number().optional() }).optional(),
-  operations: operationsSchema.optional(), intelligence: intelligenceSchema.optional(),
+  operations: operationsSchema.optional(), intelligence: intelligenceSchema.optional(), recovery: recoveryView.optional(),
   routes: z.array(z.object({ id: z.string(), endpoints: z.tuple([portId, portId]), path: z.array(coordinate), shipmentIds: z.array(z.string()), risk: z.enum(['on-track', 'watch', 'delayed']), attention: z.number(), maxDelayHours: z.number(), summary: z.string(), intelligence: intelligenceSchema.optional() })).optional(),
 });
 const userSchema: z.ZodType<User> = z.object({ id: z.string(), name: z.string(), email: z.string() });

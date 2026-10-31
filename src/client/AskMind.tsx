@@ -24,16 +24,18 @@ export function AskMind(props: Readonly<{ workspaceId: string; ship: Shipment; d
   const answered = createMemo(() => { const value = ask(); return value.state === 'answered' ? value : undefined; });
   const away = createMemo(() => { const value = ask(); return value.state === 'unavailable' ? value : undefined; });
   const failed = createMemo(() => { const value = ask(); return value.state === 'failed' ? value : undefined; });
+  async function put(question: string): Promise<boolean> {
+    if (question === '' || busy()) return false;
+    setAsk({ state: 'asking', question });
+    const result = await request(`/api/workspaces/${props.workspaceId}/shipments/${props.ship.id}/ask`, askAnswerSchema, { question });
+    setAsk(askOutcome(question, result));
+    return result.ok;
+  }
   async function submit(event: SubmitEvent & { currentTarget: HTMLFormElement }) {
     event.preventDefault();
     const form = event.currentTarget;
     const value = new FormData(form).get('question');
-    const question = typeof value === 'string' ? value.trim() : '';
-    if (question === '' || busy()) return;
-    setAsk({ state: 'asking', question });
-    const result = await request(`/api/workspaces/${props.workspaceId}/shipments/${props.ship.id}/ask`, askAnswerSchema, { question });
-    setAsk(askOutcome(question, result));
-    if (result.ok) form.reset();
+    if (await put(typeof value === 'string' ? value.trim() : '')) form.reset();
   }
   return <section class="detail-section ask-mind" aria-labelledby="ask-title">
     <h3 id="ask-title">Ask {props.ship.agent}</h3>
@@ -41,7 +43,7 @@ export function AskMind(props: Readonly<{ workspaceId: string; ship: Shipment; d
     <form onSubmit={submit}><label class="sr-only" for="ask-question">Question for {props.ship.agent}</label><textarea id="ask-question" name="question" rows={2} maxLength={500} required placeholder={props.ship.risk === 'on-track' ? 'What could still delay you?' : 'Why are you late?'} disabled={busy()} /><button class="text-button" disabled={busy()}>{busy() ? `${props.ship.agent} is thinking…` : `Ask ${props.ship.agent}`}<Send size={13} /></button></form>
     <Switch>
       <Match when={answered()}>{value => <article class="mind-answer"><span class="mind-question">You asked: {value().question}</span><span class="mind-name">{value().mind} answers</span><p>{value().answer}</p><Show when={value().cited.length > 0} fallback={<small class="muted">Cites nothing from the board.</small>}><span class="mind-cites-label">Cites</span><ul class="mind-cites"><For each={resolveCitationIds(value().cited, props.dashboard)}>{citation => <li><Cited citation={citation} dashboard={props.dashboard} /></li>}</For></ul></Show></article>}</Match>
-      <Match when={away()}>{value => <p class="mind-away" role="status"><TriangleAlert size={15} /><span><strong>The mind is unavailable.</strong> {value().message}</span></p>}</Match>
+      <Match when={away()}>{value => <div class="mind-away" role="status"><TriangleAlert size={15} /><span><strong>{props.ship.agent} is unavailable.</strong> {value().message}</span><button type="button" class="text-button" onClick={() => { void put(value().question); }}>Ask again</button></div>}</Match>
       <Match when={failed()}>{value => <p class="error-note" role="alert"><TriangleAlert size={15} />{value().message}</p>}</Match>
     </Switch>
   </section>;
