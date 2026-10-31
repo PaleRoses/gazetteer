@@ -2,6 +2,7 @@ import { Actor, Persisted } from 'durable-actors';
 import { relaySuccess, type Disruption, type PortId, type RelayOutcome, type Shipment } from '../shared';
 import { assessmentFromEnv, assessNotices, type AssessmentCache } from './assessment';
 import { pollPort } from './sources';
+import { emptyTelemetryState, mmsiPattern, telemetrySourceFromEnv, watchShipment, type TelemetryState } from './telemetry';
 import { toDisruption } from './sources/disruption';
 import type { Cursor } from './realtime/cursor';
 import { attemptRelay, joinChannel, publishDisruption, readDisruptionsSince, registerParticipant, relayChannel, type RelayIdentity } from './relay';
@@ -11,8 +12,9 @@ type PortState = Readonly<{
   portId: PortId; relay: RelayIdentity; ready: boolean;
   outbox: readonly Disruption[]; published: readonly string[]; checkedAt: string | null;
 }>;
-type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null }>;
+type ShipmentState = Readonly<{ shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState }>;
 const assessment = assessmentFromEnv(process.env);
+const telemetrySource = telemetrySourceFromEnv(process.env);
 /** Provider failures are data inside the sources layer, so a dead feed leaves the outbox untouched. */
 const pollLive = async (portId: PortId): Promise<readonly Disruption[]> => (await pollPort(portId)).map(toDisruption);
 const enqueueLive = (state: PortState, incoming: readonly Disruption[]): readonly Disruption[] =>
@@ -93,13 +95,15 @@ export class ShipmentAgent extends Actor {
     this.alarm.set(this.nextCheckAt);
   }
 
-  async initialize(workspaceId: string, shipment: Shipment, workspaceKey: string): Promise<RelayOutcome<null>> {
+  async initialize(workspaceId: string, shipment: Shipment, workspaceKey: string, mmsi?: string): Promise<RelayOutcome<null>> {
+    if (mmsi !== undefined && !mmsiPattern.test(mmsi)) return { status: 'unavailable', message: 'MMSI must be nine digits.' };
+    if (mmsi && this.state && this.state.mmsi !== mmsi) this.state = { ...this.state, mmsi };
     if (this.state?.ready) return relaySuccess(null);
     await this.scheduleCheck();
     if (!this.state) {
       const registration = await attemptRelay(() => registerParticipant(workspaceKey, this.id, relayChannel(workspaceId)), 'Agent Relay registration is unavailable. Retry initialization.');
       if (registration.status === 'unavailable') return registration;
-      this.state = { shipment, relay: registration.value, ready: false, checkedAt: null };
+      this.state = { shipment, relay: registration.value, ready: false, checkedAt: null, ...(mmsi ? { mmsi } : {}) };
     }
     const connection = await connect(this.state, false);
     if (connection.status === 'unavailable') return connection;
@@ -112,6 +116,10 @@ export class ShipmentAgent extends Actor {
   async check(): Promise<RelayOutcome<Shipment>> {
     await this.scheduleCheck();
     if (!this.state) return { status: 'unavailable', message: 'Shipment monitoring has not been initialized.' };
+    if (this.state.mmsi) {
+      const watched = await watchShipment({ source: telemetrySource, assess: assessment }, this.state.shipment, this.state.mmsi, this.state.telemetry ?? emptyTelemetryState, this.state.assessmentCache ?? {});
+      this.state = { ...this.state, shipment: watched.shipment, telemetry: watched.state, assessmentCache: watched.cache };
+    }
     const current = this.state;
     const connection = await connect(current, false);
     if (connection.status === 'unavailable') return connection;
