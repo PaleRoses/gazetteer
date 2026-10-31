@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { Activity, Anchor, ArrowRight, Radio, Ship } from 'lucide-solid';
-import type { BoardMessage } from '../board';
-import type { Dashboard, Port } from '../shared';
+import type { BoardMessage } from '../core/board';
+import type { Dashboard, Port } from '../core/types';
 import { boardAuthor, boardExplanation, boardKinds, boardPort, boardRisk, boardTime, filterBoard, readableBoardSummary } from './board-view';
 import './agent-board.css';
 
@@ -11,7 +11,7 @@ function MessageCard(props: Readonly<{ message: BoardMessage; ports: readonly Po
   const tone = () => { const item = message(); return (item.kind === 'ship.assessment' || item.kind === 'port.bulletin') ? item.risk : 'neutral'; };
   const provenance = () => {
     const item = message();
-    if (item.kind === 'ship.assessment') return item.method === 'ai-assessed' ? `AI assessment · ${Math.round(item.confidence * 100)}% confidence` : item.method === 'deterministic-fallback' ? 'Rule-based fallback' : 'Rule-based assessment';
+    if (item.kind === 'ship.assessment') return item.method === 'ai-assessed' ? (item.confidence === null ? 'AI assessment · confidence unavailable' : `AI assessment · ${Math.round(item.confidence * 100)}% confidence`) : item.method === 'deterministic-fallback' ? 'Rule-based fallback' : 'Rule-based assessment';
     if (item.kind === 'ship.observation') return `Position source: ${item.provider}`;
     return 'Agent report';
   };

@@ -1,7 +1,8 @@
-import type { IntelligenceItem } from '../shared';
+import { highestSeverity } from './warning-severity';
+import type { IntelligenceItem, WarningSeverity } from '../core/types';
 
 export type ScreenPoint = Readonly<{ x: number; y: number }>;
-export type WarningCluster = Readonly<{ id: string; items: readonly IntelligenceItem[]; center: ScreenPoint }>;
+export type WarningCluster = Readonly<{ id: string; items: readonly IntelligenceItem[]; center: ScreenPoint; severity: WarningSeverity | undefined }>;
 
 /** Group overlapping pins in screen pixels, so zooming naturally separates them. */
 export function clusterWarnings(items: readonly IntelligenceItem[], project: (coordinates: readonly [number, number]) => ScreenPoint, radius = 44): readonly WarningCluster[] {
@@ -21,6 +22,7 @@ export function clusterWarnings(items: readonly IntelligenceItem[], project: (co
   return [...groups.values()].map(indices => ({
     id: JSON.stringify(indices.map(index => unique[index]!.evidence.id)),
     items: indices.map(index => unique[index]!),
+    severity: highestSeverity(indices.map(index => unique[index]!)),
     center: { x: indices.reduce((sum, index) => sum + points[index]!.x, 0) / indices.length, y: indices.reduce((sum, index) => sum + points[index]!.y, 0) / indices.length },
   }));
 }

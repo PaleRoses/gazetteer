@@ -1,7 +1,7 @@
 import { For, Show } from 'solid-js';
 import { ArrowRight, Route, Ship } from 'lucide-solid';
-import { corridorId } from '../routes';
-import type { Dashboard, MonitoredRoute, Shipment } from '../shared';
+import { corridorId } from '../core/route-monitoring';
+import type { Dashboard, MonitoredRoute, Shipment } from '../core/types';
 import { riskLabel } from './brief';
 
 export const routeName = (route: MonitoredRoute, dashboard: Dashboard): string => route.endpoints.map(id => dashboard.ports.find(p => p.id === id)?.name ?? id).join(' ↔ ');

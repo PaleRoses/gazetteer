@@ -1,11 +1,13 @@
+import { SocietyPanel } from './SocietyPanel';
+import { date, EvidenceCard, portName, RiskBadge, time } from './presentation';
 import { AlertsPage, VesselEditor, VoyageFacts, createAlertNotifications } from './FleetOperations';
-import type { Operation } from '../operations';
+import type { Operation } from '../core/operations';
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, type JSX } from 'solid-js';
 import { render, Portal } from 'solid-js/web';
 import { Dialog, Menu, Tabs } from '@ark-ui/solid';
 import { Bell, Activity, Newspaper, Anchor, ArrowDownRight, ArrowRight, Check, ChevronDown, Compass, FlaskConical, Layers3, LogOut, MapPin, MessageSquare, Plus, Radio, Route as RouteIcon, Search, Send, Ship, TriangleAlert, Users, X } from 'lucide-solid';
 import { z } from 'zod';
-import type { Comment, Dashboard, Diversion, Shipment, Workspace } from '../shared';
+import type { Comment, Dashboard, Diversion, Shipment, Workspace } from '../core/types';
 import { commentsSchema, dashboardSchema, invitationSchema, membersSchema, request, sessionSchema, workspaceSchema, type Invitation, type Session } from './api';
 import { MapBackdrop, ShipmentMap } from './Map';
 import { mergeComment, type CommentEvent } from './feed';
@@ -18,10 +20,8 @@ import { readView, viewHash, type View } from './navigation';
 import { riskLabel, shipmentBrief, assessmentFor } from './brief';
 import './styles.css';
 
-const date = (value: string): string => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-const time = (value: string): string => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
 const minute = (eta: string | undefined): string => (eta ?? '').slice(0, 16);
-const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'CONNECTING', live: 'LIVE', polling: 'POLLING · 5 S' };
+const feedLabel: Readonly<Record<FeedMode, string>> = { connecting: 'CONNECTING', live: 'STREAMING', polling: 'POLLING · 5 S' };
 const textField = (data: FormData, key: string): string => { const value = data.get(key); return typeof value === 'string' ? value : ''; };
 const DECLINED_DEMO = 'gazetteer.demo.declined';
 const DEMO_EMAIL = 'demo@gazetteer.local';
@@ -36,7 +36,6 @@ async function enterDemo(onSession: (session: Session) => void): Promise<string 
 const ErrorNote = (props: Readonly<{ message: string }>) => <p class="error-note" role="alert"><TriangleAlert size={15} />{props.message}</p>;
 
 function Brand() { return <a class="brand" href="/" aria-label="Gazetteer home"><span class="brand-mark"><Compass size={25} stroke-width={1.5} /></span>Gazetteer<span class="brand-dot">.</span></a>; }
-function RiskBadge(props: Readonly<{ risk: Shipment['risk'] }>) { return <span class={`risk-badge ${props.risk}`}><Show when={props.risk !== 'on-track'} fallback={<span class="status-dot" />}><TriangleAlert size={11} /></Show>{riskLabel[props.risk]}</span>; }
 
 function Authentication(props: Readonly<{ onSession: (session: Session) => void; demo: boolean }>) {
   const [mode, setMode] = createSignal<'signup' | 'login'>('signup');
@@ -116,23 +115,21 @@ function ShipmentDetails(props: Readonly<{ shipmentId: string; dashboard: Dashbo
     const result = await request(path, commentsSchema, { body }); setSending(false);
     if (result.ok) { setComments(result.value.comments); form.reset(); } else setError(result.error);
   }
-  const portName = (id: string): string => props.dashboard.ports.find(port => port.id === id)?.name ?? id;
   const flashing = () => changeFlash() || etaFlash();
-  return <Show when={shipment()}>{current => { const s = current; return <aside class="detail-panel" aria-label={`Details for ${s().vessel}`}>
+  return <Show when={shipment()}>{current => { const s = current; return <aside class="detail-panel" id="shipment-details" aria-label={`Details for ${s().vessel}`}>
     <div class="detail-title"><div><span class="section-kicker">SHIPMENT DETAILS</span><h2>{s().vessel}</h2><span class="reference">{s().reference}</span></div><span class="detail-ship"><Ship size={24} stroke-width={1.4} /></span></div>
-    <div class="detail-route"><span>{portName(s().origin)}</span><ArrowRight size={15} /><span>{portName(s().destination)}</span></div><div class="cargo-line">{s().cargo}<span>·</span>{s().containers} containers</div>
+    <div class="detail-route"><span>{portName(props.dashboard.ports, s().origin)}</span><ArrowRight size={15} /><span>{portName(props.dashboard.ports, s().destination)}</span></div><div class="cargo-line">{s().cargo}<span>·</span>{s().containers} containers</div>
     <section class="eta-card" classList={{ flash: etaFlash() }}><div class="eta-heading"><span>CURRENT ETA</span><RiskBadge risk={s().risk} /></div><div class="eta-date">{date(s().eta)}<small>{time(s().eta)} UTC</small></div><div class="eta-delta" classList={{ changed: s().delayHours > 0 }}><Show when={s().delayHours > 0} fallback={<><Check size={14} />No change to arrival schedule</>}><ArrowDownRight size={15} />+{s().delayHours}h from original schedule<span>Was {date(s().baselineEta)}</span></Show></div></section>
-    <section class="detail-section what-changed" classList={{ flash: flashing() }}><h3>{shipmentBrief(s()).source}<Show when={flashing()}><span class="live-chip">UPDATED</span></Show></h3><p>{shipmentBrief(s()).text}</p><p class="assessment-note">{assessmentFor(s())?.method === 'ai-assessed' ? `AI model: ${assessmentFor(s())?.model}. Based on cited evidence.` : 'Scenario assessment. Live notices may not yet be reflected in this estimate.'}</p><Show when={s().action}>{action => <div class="action-box"><TriangleAlert size={16} /><div><strong>Action needed</strong><p>{action()}</p></div></div>}</Show></section>
+    <section class="detail-section what-changed" classList={{ flash: flashing() }}><h3>{shipmentBrief(s()).source}<Show when={flashing()}><span class="live-chip">UPDATED</span></Show></h3><p>{shipmentBrief(s()).text}</p><p class="assessment-note">{assessmentFor(s())?.method === 'ai-assessed' ? `AI model: ${assessmentFor(s())?.model}. Based on cited evidence.` : s().voyage ? 'Voyage plan supplied by an operator. Positions and scenario assessments are simulated.' : 'Scenario assessment. Live notices may not yet be reflected in this estimate.'}</p><Show when={s().action}>{action => <div class="action-box"><TriangleAlert size={16} /><div><strong>Action needed</strong><p>{action()}</p></div></div>}</Show></section>
     <section class="detail-section"><h3>Route milestones</h3><ol class="milestones"><For each={s().milestones}>{milestone => <li class={milestone.status}><span class="milestone-node"><Show when={milestone.status === 'complete'}><Check size={10} /></Show></span><div><strong>{milestone.label}</strong><small>{date(milestone.at)} · {time(milestone.at)} UTC</small></div><Show when={milestone.status === 'current'}><span class="current-label">CURRENT</span></Show></li>}</For></ol></section>
-    <section class="detail-section"><h3>Supporting evidence<span class="mini-sim">{[...new Set(s().evidence.map(item => item.source === 'live' ? 'LIVE' : 'SIMULATED'))].join(' + ') || 'SIMULATED'}</span></h3><Show when={s().evidence.length > 0} fallback={<p class="muted">No disruption reported in this demo.</p>}><For each={s().evidence}>{evidence => <article class="evidence"><div><Show when={evidence.source === 'live'} fallback={<FlaskConical size={14} />}><Radio size={14} /></Show><strong>{evidence.title}</strong></div><p>{evidence.detail}</p><small>{evidence.source === 'live' ? <>Live · <a href={evidence.url} target="_blank" rel="noreferrer">{evidence.provider}</a></> : 'Scenario source'} · {date(evidence.observedAt)}, {time(evidence.observedAt)} UTC</small></article>}</For></Show></section>
+    <section class="detail-section"><h3>Supporting evidence</h3><Show when={s().evidence.length > 0} fallback={<p class="muted">No supporting evidence has been attached to this shipment.</p>}><For each={s().evidence}>{evidence => <EvidenceCard evidence={evidence} />}</For></Show></section>
     <section class="detail-section comments"><h3><MessageSquare size={15} />Team notes<span class="note-count">{comments().length}</span></h3><Show when={comments().length === 0}><p class="muted">Keep the next handoff in view. Add a note for your team.</p></Show><For each={comments()}>{item => <article class="comment"><div><strong>{item.author}</strong><small>{date(item.createdAt)}, {time(item.createdAt)}</small></div><p>{item.body}</p></article>}</For><form onSubmit={comment}><label class="sr-only" for="comment-body">Add a team note</label><textarea id="comment-body" name="body" placeholder="Add a note for your team…" maxLength={4000} required rows={2} /><button class="text-button" disabled={sending()}>{sending() ? 'Posting…' : 'Post note'}<Send size={13} /></button></form><Show when={error() ?? loadError()}>{message => <ErrorNote message={message()} />}</Show></section>
   </aside>; }}</Show>;
 }
 
 function ShipmentCard(props: Readonly<{ shipment: Shipment; ports: Dashboard['ports']; selected: boolean; onSelect: (id: string) => void }>) {
   const flash = createChangeFlash(() => minute(props.shipment.eta));
-  const portName = (id: string): string | undefined => props.ports.find(port => port.id === id)?.name;
-  return <button class="shipment-card" classList={{ selected: props.selected, flash: flash() }} onClick={() => props.onSelect(props.shipment.id)} aria-pressed={props.selected}><div class="shipment-card-top"><span class="small-ship"><Ship size={17} /></span><RiskBadge risk={props.shipment.risk} /></div><h2>{props.shipment.vessel}</h2><span class="reference">{props.shipment.reference}</span><div class="shipment-card-route">{portName(props.shipment.origin)}<ArrowRight size={12} />{portName(props.shipment.destination)}</div><div class="shipment-card-footer"><span>ETA <strong>{date(props.shipment.eta)}</strong></span><Show when={props.shipment.delayHours > 0} fallback={<span class="containers">{props.shipment.containers} containers</span>}><span class="delay">+{props.shipment.delayHours}h</span></Show></div></button>;
+  return <button class="shipment-card" classList={{ selected: props.selected, flash: flash() }} onClick={() => props.onSelect(props.shipment.id)} aria-pressed={props.selected}><div class="shipment-card-top"><span class="small-ship"><Ship size={17} /></span><RiskBadge risk={props.shipment.risk} /></div><h2>{props.shipment.vessel}</h2><span class="reference">{props.shipment.reference}</span><div class="shipment-card-route">{portName(props.ports, props.shipment.origin)}<ArrowRight size={12} />{portName(props.ports, props.shipment.destination)}</div><div class="shipment-card-footer"><span>ETA <strong>{date(props.shipment.eta)}</strong></span><Show when={props.shipment.delayHours > 0} fallback={<span class="containers">{props.shipment.containers} containers</span>}><span class="delay">+{props.shipment.delayHours}h</span></Show></div></button>;
 }
 
 function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
@@ -198,7 +195,7 @@ function WorkspaceOperations(props: Readonly<{ workspaceId: string }>) {
     <Show when={editing()} keyed>{item => <Show when={dashboard()}>{current => <VesselEditor shipment={item === 'new' ? undefined : item} dashboard={current()} busy={operating()} error={operationError()} execute={operate} close={() => setEditing(null)} />}</Show>}</Show>
     <Show when={view().kind === 'alerts'}><AlertsPage dashboard={dashboard()} busy={operating()} error={operationError()} execute={operate} openVoyage={openVoyage} notifications={notifications} /></Show>
     <Show when={view().kind === 'news'}><NewsPage dashboard={dashboard()} onInspect={option => { openVoyage(option.shipmentId); setInspected(option); }} /></Show>
-    <Show when={view().kind === 'activity'}><AgentBoard dashboard={dashboard()} connection={feed.mode()} /></Show>
+    <Show when={view().kind === 'activity'}><div class="activity-page"><details class="activity-evidence"><summary>Port risk & attributed evidence chains</summary><Show when={dashboard()}>{current => <SocietyPanel dashboard={current()} onSelectShip={openVoyage} />}</Show></details><AgentBoard dashboard={dashboard()} connection={feed.mode()} /></div></Show>
     <Show when={!feedPage()}>
     <Show when={detail()}><header class="voyage-header"><button class="back-overview" onClick={closeDetail}>← {view().kind === 'route' ? 'All routes' : returnRoute() ? 'Back to route' : 'All shipments'}</button><div><h1 ref={detailHeading} tabIndex={-1}>{route() && dashboard() ? routeName(route()!, dashboard()!) : selected()?.vessel ?? 'Loading briefing…'}</h1><p>{view().kind === 'route' ? 'Route monitoring · approximate port-to-port corridor' : `${selected()?.reference ?? ''} · Voyage briefing`}</p></div><Show when={route()?.risk ?? selected()?.risk}>{risk => <RiskBadge risk={risk()} />}</Show></header></Show>
     <main class={`operations-layout ${detail() ? 'drilldown-layout' : 'overview-layout'}`}>

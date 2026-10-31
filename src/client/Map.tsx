@@ -4,12 +4,13 @@ import { riskLabel, shipmentBrief } from './brief';
 import { WarningDetails } from './WarningDetails';
 import { WarningGroup } from './WarningGroup';
 import { clusterWarnings } from './warning-clusters';
+import { warningLabel, warningTone } from './warning-severity';
 import { PortDetails } from './PortDetails';
 import type { GeoJSONSource, Map as MapLibreMap, Marker, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
-import type { Dashboard, Diversion, MonitoredRoute, Port, Shipment } from '../shared';
-import { boundsOf, graticule, routeLayers, vesselViews, type VesselView } from './map-model';
+import type { Dashboard, Diversion, MonitoredRoute, Port, Shipment } from '../core/types';
+import { boundsOf, graticule, portFeatures, routeLayers, vesselViews, type VesselView } from './map-model';
 
 type MapLibre = typeof import('maplibre-gl');
 type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; showPopup: boolean; inspected: Diversion | null; corridor?: MonitoredRoute; routeMode?: boolean; onRoute: (id: string) => void }>;
@@ -72,7 +73,7 @@ const decorate = (button: HTMLElement, view: VesselView, selected: boolean): voi
   button.style.zIndex = selected ? '3' : view.risk === 'on-track' ? '1' : '2';
 };
 
-const setLines = (map: MapLibreMap, id: string, data: GeoJSON.FeatureCollection): void => { (map.getSource(id) as GeoJSONSource | undefined)?.setData(data); };
+const setFeatures = (map: MapLibreMap, id: string, data: GeoJSON.FeatureCollection): void => { (map.getSource(id) as GeoJSONSource | undefined)?.setData(data); };
 
 export function ShipmentMap(props: Selection) {
   let container: HTMLDivElement | undefined;
@@ -135,6 +136,7 @@ export function ShipmentMap(props: Selection) {
   });
 
   const views = createMemo(() => vesselViews(props.dashboard?.shipments ?? [], now()));
+  const portData = createMemo(() => portFeatures(props.dashboard?.ports ?? [], props.dashboard?.portStatus));
   const selectedId = () => props.selected?.id;
 
   createEffect(() => {
@@ -144,7 +146,7 @@ export function ShipmentMap(props: Selection) {
     const list = views();
     const chosen = selectedId();
     const layers = routeLayers(list, chosen);
-    setLines(map, 'lanes', layers.lanes); setLines(map, 'sailed', layers.sailed); setLines(map, 'ahead', layers.ahead);
+    setFeatures(map, 'lanes', layers.lanes); setFeatures(map, 'sailed', layers.sailed); setFeatures(map, 'ahead', layers.ahead);
     const live = new Set(list.map(view => view.id));
     markers.forEach((marker, id) => { if (!live.has(id) && !id.includes(':')) { marker.remove(); markers.delete(id); } });
     list.forEach(view => {
@@ -165,11 +167,13 @@ export function ShipmentMap(props: Selection) {
     markers.forEach((marker, key) => { if (key.startsWith('port:') && !portKeys.has(key)) { marker.remove(); markers.delete(key); } });
     dashboard.ports.forEach(port => {
       const key = `port:${port.id}`;
-      if (markers.has(key)) return;
-      const node = element('button', 'port-marker');
+      const feature = portData().features.find(item => item.properties.id === port.id);
+      const existing = markers.get(key)?.getElement();
+      if (existing) { existing.className = `port-marker ${feature?.properties.risk ?? 'normal'}`; existing.querySelector('.port-label')!.textContent = feature?.properties.label.replace('\n', ' · ') ?? port.name; return; }
+      const node = element('button', `port-marker ${feature?.properties.risk ?? 'normal'}`);
       node.setAttribute('type', 'button'); node.setAttribute('aria-label', `${port.name} port details`); node.setAttribute('aria-haspopup', 'dialog'); node.dataset.portId = port.id;
       node.addEventListener('click', event => { event.stopPropagation(); props.onDismiss(); setWarningGroup(null); setWarningId(null); warningTrigger = node; setPortPlace(port); map.panTo([...port.coordinates], { duration: 250 }); });
-      node.append(element('span', 'port-dot'), element('span', 'port-label', port.name));
+      node.append(element('span', 'port-dot'), element('span', 'port-label', feature?.properties.label.replace('\n', ' · ') ?? port.name));
       markers.set(key, new lib.Marker({ element: node, anchor: 'left', offset: [-4, 0] }).setLngLat([...port.coordinates] as [number, number]).addTo(map));
     });
   });
@@ -178,7 +182,7 @@ export function ShipmentMap(props: Selection) {
     const current = ready();
     if (!current) return;
     const corridors = props.corridor ? [props.corridor] : props.routeMode ? props.dashboard?.routes ?? [] : [];
-    setLines(current.map, 'corridors', { type: 'FeatureCollection', features: corridors.filter(r => r.path.length > 1).map(r => ({ type: 'Feature', properties: { id: r.id }, geometry: { type: 'LineString', coordinates: r.path.map(p => [...p]) } })) });
+    setFeatures(current.map, 'corridors', { type: 'FeatureCollection', features: corridors.filter(r => r.path.length > 1).map(r => ({ type: 'Feature', properties: { id: r.id }, geometry: { type: 'LineString', coordinates: r.path.map(p => [...p]) } })) });
   });
   createEffect(() => {
     const current = ready();
@@ -224,7 +228,7 @@ export function ShipmentMap(props: Selection) {
     }
     const option = props.inspected;
     const port = props.dashboard?.ports.find(p => p.id === option?.replaces);
-    setLines(current.map, 'alternative', { type: 'FeatureCollection', features: option && port ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[...port.coordinates], [...option.coordinates]] } }] : [] });
+    setFeatures(current.map, 'alternative', { type: 'FeatureCollection', features: option && port ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[...port.coordinates], [...option.coordinates]] } }] : [] });
     onCleanup(() => owned.forEach(m => m.remove()));
   });
 
@@ -246,10 +250,10 @@ export function ShipmentMap(props: Selection) {
         const item = group.items[0]!;
         const location = map.unproject([group.center.x, group.center.y]);
         const coordinates: readonly [number, number] = [location.lng, location.lat];
-        const node = element('button', multi ? 'news-marker news-cluster' : 'news-marker', multi ? String(group.items.length) : '!');
+        const node = element('button', `news-marker warning-${warningTone(group.severity)}${multi ? ' news-cluster' : ''}`, multi ? String(group.items.length) : '!');
         node.setAttribute('type', 'button'); node.setAttribute('aria-haspopup', 'dialog');
-        node.setAttribute('aria-label', multi ? `${group.items.length} warnings in this area` : item.evidence.title);
-        node.title = multi ? `${group.items.length} warnings — click to explore` : item.evidence.title;
+        node.setAttribute('aria-label', multi ? `${group.items.length} warnings in this area; highest: ${warningLabel(group.severity)}` : `${warningLabel(group.severity)} warning: ${item.evidence.title}`);
+        node.title = multi ? `${group.items.length} warnings · Highest: ${warningLabel(group.severity)} — click to explore` : `${warningLabel(group.severity)} · ${item.evidence.title}`;
         node.dataset.warningId = multi ? group.id : item.evidence.id;
         node.addEventListener('click', event => {
           event.stopPropagation(); props.onDismiss(); setPortPlace(null); warningTrigger = node;

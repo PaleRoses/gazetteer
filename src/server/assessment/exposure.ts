@@ -1,8 +1,8 @@
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import { lineString, point } from '@turf/helpers';
-import { ports } from '../../domain';
-import { voyageRoute } from '../../sea-routes';
-import type { Disruption, Shipment } from '../../shared';
+import { ports } from '../../core/ports';
+import { voyageRoute } from '../../core/routes';
+import type { Disruption, Shipment } from '../../core/types';
 
 export type Position = readonly [number, number];
 export type NoticeGeometry = Readonly<{ center: Position; radiusKm: number }>;

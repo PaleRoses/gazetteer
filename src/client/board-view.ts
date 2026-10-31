@@ -1,6 +1,6 @@
-import type { BoardKind, BoardMessage } from '../board';
-import type { Port } from '../shared';
-import { concerns } from '../board';
+import type { BoardKind, BoardMessage } from '../core/board';
+import type { Port } from '../core/types';
+import { concerns } from '../core/board';
 
 export const boardKinds: Readonly<Record<BoardKind, string>> = {
   'port.bulletin': 'Port bulletin', 'ship.observation': 'Vessel observation',

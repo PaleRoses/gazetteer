@@ -1,7 +1,8 @@
-import type { PortId, ReportContext } from '../../shared';
+import type { ReportContext, WarningSeverity } from '../../core/types';
+import { type PortId } from '../../core/ports';
 
 export type NoticeKind = 'cyclone' | 'flood' | 'volcano' | 'earthquake' | 'weather' | 'security';
-export type NoticeSeverity = 'minor' | 'moderate' | 'severe' | 'extreme';
+export type NoticeSeverity = WarningSeverity;
 export type NoticeProvider = 'gdacs' | 'nws' | 'usgs' | 'ap' | 'marad' | 'reuters';
 export type LonLat = readonly [number, number];
 

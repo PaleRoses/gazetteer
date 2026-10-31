@@ -1,5 +1,7 @@
-import { assessDisruption, ports } from '../../domain';
-import type { Evidence, Risk, Shipment } from '../../shared';
+import { assessDisruption } from '../../core/demo';
+import { shiftEta } from '../../core/eta';
+import { ports } from '../../core/ports';
+import type { Evidence, Risk, Shipment } from '../../core/types';
 import type { Signal } from '../telemetry/watcher';
 import type { Telemetry } from '../telemetry/telemetry';
 import type { Assessment } from './schema';
@@ -7,16 +9,15 @@ import type { AssessableNotice } from './exposure';
 
 export type Method = 'ai-assessed' | 'deterministic-fallback';
 export type Basis = 'port-notice' | 'live-telemetry';
-export type { AssessmentRecord } from '../../shared';
-import type { AssessmentRecord } from '../../shared';
+export type { AssessmentRecord } from '../../core/types';
+import type { AssessmentRecord } from '../../core/types';
 export type AssessedShipment = Shipment & Readonly<{ assessments?: readonly AssessmentRecord[]; telemetry?: Telemetry; signals?: readonly Signal[] }>;
 /** An assessment can describe a port notice or live telemetry; telemetry evidence travels as signals. */
 export type Subject = Readonly<{ id: string; basis: Basis; label: string; evidence: readonly Evidence[] }>;
 export type Provenanced = Readonly<{ assessment: Assessment; model: string; assessedAt: string }>;
 
-const afterHours = (at: string, hours: number): string => new Date(Date.parse(at) + hours * 3_600_000).toISOString();
 const severity: Readonly<Record<Risk, number>> = { 'on-track': 0, watch: 1, delayed: 2 };
-const worse = (a: Risk, b: Risk): Risk => severity[a] >= severity[b] ? a : b;
+export const worse = (a: Risk, b: Risk): Risk => severity[a] >= severity[b] ? a : b;
 const portName = (id: string): string => ports.find(port => port.id === id)?.name ?? id;
 const record = (shipment: AssessedShipment, entry: AssessmentRecord): readonly AssessmentRecord[] => [...(shipment.assessments ?? []), entry];
 
@@ -37,12 +38,11 @@ export function applySubject(shipment: AssessedShipment, subject: Subject, { ass
   const label = `${subject.label} assessed by ${model}`;
   if (!assessment.affected) return { ...shipment, ...settled, change: `${label}: no change to the arrival estimate. ${assessment.rationale}` };
   const { low, likely, high } = assessment.delayHours;
-  const delayHours = shipment.delayHours + likely;
+  const shifted = shiftEta(shipment, likely);
   return {
-    ...shipment, ...settled, delayHours, eta: afterHours(shipment.baselineEta, delayHours), risk: worse(shipment.risk, assessment.risk),
+    ...shifted, ...settled, risk: worse(shipment.risk, assessment.risk),
     change: `${label}: +${likely}h likely (range ${low}-${high}h, confidence ${Math.round(assessment.confidence * 100)}%). ${assessment.rationale}`,
     action: assessment.action ?? shipment.action,
-    milestones: shipment.milestones.map(milestone => milestone.status === 'complete' ? milestone : { ...milestone, at: afterHours(milestone.at, likely) }),
     evidence: [...shipment.evidence, ...subject.evidence.filter(item => !shipment.evidence.some(known => known.id === item.id))],
   };
 }

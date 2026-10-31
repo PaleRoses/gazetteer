@@ -1,17 +1,18 @@
-import { identitySchema, voyageSchema, operationsSchema } from '../operations';
+import { portIds } from '../core/ports';
+import { identitySchema, voyageSchema, operationsSchema } from '../core/operations';
 import { z } from 'zod';
-import { boardMessage, portStatus } from '../board';
-import type { Comment, Dashboard, Shipment, User, Workspace } from '../shared';
+import { boardMessage, portStatus } from '../core/board';
+import type { Comment, Dashboard, Shipment, User, Workspace } from '../core/types';
 
 const coordinate = z.tuple([z.number(), z.number()]);
-const portId = z.enum(['singapore', 'rotterdam', 'shanghai', 'los-angeles', 'jebel-ali']);
-export const evidenceSchema = z.discriminatedUnion('source', [
+const portId = z.enum(portIds);
+const evidenceSchema = z.discriminatedUnion('source', [
   z.object({ id: z.string(), source: z.literal('simulation'), title: z.string(), detail: z.string(), observedAt: z.string() }),
   z.object({ id: z.string(), source: z.literal('live'), provider: z.string(), url: z.string().url().refine(value => /^https?:/.test(value)), title: z.string(), detail: z.string(), observedAt: z.string(), report: z.object({ kind: z.enum(['news', 'advisory']), region: z.string(), reviewedAt: z.string(), validUntil: z.string().optional() }).optional() }),
 ]);
 const shipment: z.ZodType<Shipment> = z.object({
   identity: identitySchema.optional(), voyage: voyageSchema.optional(),
-  id: z.string(), vessel: z.string(), reference: z.string(), cargo: z.string(), containers: z.number(),
+  id: z.string(), vessel: z.string(), agent: z.string(), reference: z.string(), cargo: z.string(), containers: z.number(),
   origin: portId, destination: portId, via: z.array(portId), coordinates: coordinate, route: z.array(coordinate),
   baselineEta: z.string(), eta: z.string(), risk: z.enum(['on-track', 'watch', 'delayed']), delayHours: z.number(),
   change: z.string(), action: z.string().nullable(),
@@ -24,8 +25,8 @@ const shipment: z.ZodType<Shipment> = z.object({
   })).optional(),
   appliedDisruptions: z.array(z.string()),
 });
-export const intelligenceSchema = z.object({
-  items: z.array(z.object({ evidence: evidenceSchema, coordinates: coordinate.nullable(), relevance: z.array(z.object({ shipmentId: z.string(), kind: z.enum(['route', 'diversion', 'context']), reason: z.string(), diversionId: z.string().optional() })) })),
+const intelligenceSchema = z.object({
+  items: z.array(z.object({ severity: z.enum(['minor', 'moderate', 'severe', 'extreme']).optional(), evidence: evidenceSchema, coordinates: coordinate.nullable(), relevance: z.array(z.object({ shipmentId: z.string(), kind: z.enum(['route', 'diversion', 'context']), reason: z.string(), diversionId: z.string().optional() })) })),
   diversions: z.array(z.object({ id: z.string(), shipmentId: z.string(), name: z.string(), replaces: portId, coordinates: coordinate, reason: z.string(), constraint: z.string() })),
   checkedAt: z.string(), unavailableProviders: z.array(z.string()), sourcesEnabled: z.boolean(),
 });
@@ -43,7 +44,7 @@ export const invitationSchema = z.discriminatedUnion('delivery', [
 ]);
 export const membersSchema = z.object({ members: z.array(z.object({ id: z.string(), name: z.string(), email: z.string(), role: z.enum(['owner', 'member']) })) });
 export type Session = z.infer<typeof sessionSchema>;
-export type Member = z.infer<typeof membersSchema>['members'][number];
+type Member = z.infer<typeof membersSchema>['members'][number];
 export type Invitation = z.infer<typeof invitationSchema>;
 export type ApiResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: string; status: number }>;
 export async function request<T>(path: string, schema: z.ZodType<T>, body?: unknown, signal?: AbortSignal): Promise<ApiResult<T>> {

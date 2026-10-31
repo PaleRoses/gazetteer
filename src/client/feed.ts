@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Comment, Dashboard } from '../shared';
+import type { Comment, Dashboard } from '../core/types';
 import { commentSchema, dashboardSchema } from './api';
 
 export type CommentEvent = Readonly<{ shipmentId: string; comment: Comment }>;

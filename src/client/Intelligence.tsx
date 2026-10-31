@@ -1,11 +1,11 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { ArrowRight, ExternalLink, Newspaper, Route, TriangleAlert } from 'lucide-solid';
-import type { Dashboard, Diversion, Evidence, Intelligence, NewsRelevance, Shipment } from '../shared';
+import type { Dashboard, Diversion, Evidence, Intelligence, NewsRelevance, Shipment } from '../core/types';
 
 const labels = { route: 'Planned route', diversion: 'Diversion', context: 'Regional context' } as const;
 const reportOf = (evidence: Evidence) => evidence.source === 'live' ? evidence.report : undefined;
 const observed = (value: string) => new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
-export function EvidenceCard(props: Readonly<{ evidence: Evidence; reasons: readonly NewsRelevance[] }>) {
+function EvidenceCard(props: Readonly<{ evidence: Evidence; reasons: readonly NewsRelevance[] }>) {
   return <article class="news-card"><div class="news-tags"><For each={[...new Set(props.reasons.map(r => r.kind))]}>{kind => <span class={`news-tag ${kind}`}>{labels[kind]}</span>}</For><Show when={reportOf(props.evidence)}>{report => <span class="news-tag security">{report().kind === 'news' ? 'Security news' : 'Security advisory'}</span>}</Show><span class="news-source">{props.evidence.source === 'live' ? props.evidence.provider.toUpperCase() : 'SIMULATED'}</span></div><h3>{props.evidence.title}</h3><p>{props.evidence.detail}</p><Show when={reportOf(props.evidence)}>{report => <p class="editorial-note">Curated · reviewed {report().reviewedAt.slice(0, 10)}{report().validUntil ? ` · Advisory scheduled expiry ${report().validUntil}` : ''}</p>}</Show><Show when={!props.reasons.length}><p class="editorial-note">Regional watch · no tracked voyage matched to this report.</p></Show><div class="news-reasons"><For each={[...new Set(props.reasons.map(r => r.reason))]}>{reason => <p><Route size={12} />{reason}</p>}</For></div><footer><time dateTime={props.evidence.observedAt}>{reportOf(props.evidence)?.kind === 'advisory' ? 'Issued ' : reportOf(props.evidence) ? 'Published / updated ' : ''}{reportOf(props.evidence)?.kind === 'advisory' ? props.evidence.observedAt.slice(0, 10) : `${observed(props.evidence.observedAt)} UTC`}</time><Show when={props.evidence.source === 'live' ? props.evidence : null}>{e => <a href={e().url} target="_blank" rel="noreferrer">Source<ExternalLink size={11} /></a>}</Show></footer></article>;
 }
 export function IntelligencePanel(props: Readonly<{ dashboard: Dashboard; hideHeading?: boolean; shipment?: Shipment; routeName?: string; coverage?: Intelligence; inspected: string | null; onInspect: (option: Diversion | null) => void }>) {

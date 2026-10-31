@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { Newspaper } from 'lucide-solid';
-import type { Dashboard, Diversion } from '../shared';
+import type { Dashboard, Diversion } from '../core/types';
 import { IntelligencePanel } from './Intelligence';
 import { routeName } from './Routes';
 

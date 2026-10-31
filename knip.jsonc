@@ -1,0 +1,16 @@
+// Every ignoreIssues entry is a lane still mid-wiring: delete the entry when its exports have callers.
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["src/server/main.ts","src/server/agents/index.ts","src/client/main.tsx","scripts/*.ts","test/**/*.test.ts"],
+  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts", "test/**/*.ts"],
+  "ignoreIssues": {
+    // board protocol schemas the port and ship agents are still wiring
+    "src/core/board.ts": ["exports", "types"],
+    // decision modules whose exports the actors adopt as the board wiring lands
+    "src/server/agents/**": ["exports", "types"],
+    // board transport, inbox and outbox surface whose callers are still being wired
+    "src/server/relay/**": ["exports", "types"],
+    // model assessment not yet fully wired into the ship agent
+    "src/server/assessment/**": ["exports", "types"]
+  }
+}

@@ -7,7 +7,7 @@ const km = { units: 'kilometers' } as const;
 
 export const distanceKm = (from: LonLat, to: LonLat): number => distance(point([...from]), point([...to]), km);
 
-export const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
+const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 
 /** Nearest point of a bbox to a position; the position itself when inside. */
 const nearestInBbox = (box: Extract<NoticeGeometry, { kind: 'bbox' }>, at: LonLat): LonLat =>

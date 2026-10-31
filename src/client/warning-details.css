@@ -12,3 +12,14 @@
 
 
 .news-marker.news-cluster{width:38px;height:38px;min-width:38px;min-height:38px;font-size:14px;background:#e7ad44;border:3px solid #fff;box-shadow:0 0 0 4px #e9b75a44,0 3px 8px #173b6233}.warning-group-body>p{font-size:12px;line-height:1.6;color:#61768b;margin:0 0 12px}.warning-group-item{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;background:#fff;border:0;border-top:1px solid #e5ebef;padding:13px 0;color:#29465e;cursor:pointer}.warning-group-item strong{font-size:12px;line-height:1.5;display:block}.warning-group-item small{display:block;color:#748797;font-size:10px;margin-top:5px}.warning-group-item svg{flex-shrink:0}.warning-group-item:hover{color:#18568d;background:#f6f9fc}.warning-group-zoom,.warning-group-back{display:flex;align-items:center;gap:7px;color:#265f8d;background:#eff5fa;padding:8px 10px;border:1px solid #d6e3ef;border-radius:5px;font-size:12px;cursor:pointer;margin-bottom:12px}.warning-group-item:focus-visible,.warning-group-zoom:focus-visible,.warning-group-back:focus-visible{outline:2px solid #215f9b;outline-offset:2px}
+
+/* Severity colors apply equally to individual pins and counted clusters. */
+.warning-yellow{--warning-fill:#f5c542;--warning-ink:#624500;--warning-soft:#fff3ca;--warning-ring:#f5c54255}
+.warning-red{--warning-fill:#c9363e;--warning-ink:#fff;--warning-soft:#ffe5e7;--warning-ring:#c9363e44}
+.warning-unknown{--warning-fill:#758697;--warning-ink:#fff;--warning-soft:#edf1f5;--warning-ring:#75869744}
+.news-marker[class*="warning-"]{background:var(--warning-fill);color:var(--warning-ink)}
+.news-marker.news-cluster[class*="warning-"]{box-shadow:0 0 0 4px var(--warning-ring),0 3px 8px #173b6233}
+.news-marker[class*="warning-"]:hover{background:var(--warning-fill);box-shadow:0 0 0 5px var(--warning-ring);filter:brightness(1.08)}
+.warning-severity,.warning-tags .warning-severity{display:inline-block;border-radius:4px;padding:3px 6px;background:var(--warning-soft);color:#624500;font-size:10px;font-weight:700;line-height:1.5;margin-bottom:5px}
+.warning-severity.warning-red,.warning-dialog.warning-red .warning-eyebrow{color:#a7232b}
+.warning-severity.warning-unknown,.warning-dialog.warning-unknown .warning-eyebrow{color:#536577}

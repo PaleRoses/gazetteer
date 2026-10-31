@@ -2,8 +2,8 @@ import { createEffect, createSignal, For, Show, type Accessor } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { Dialog } from '@ark-ui/solid';
 import { Bell, Check, Plus, Save, Ship, Trash2, X } from 'lucide-solid';
-import type { Dashboard, Shipment } from '../shared';
-import { defaultAlertPreferences, vesselInputSchema, type Operation } from '../operations';
+import type { Dashboard, Shipment } from '../core/types';
+import { defaultAlertPreferences, vesselInputSchema, type Operation } from '../core/operations';
 import './fleet-operations.css';
 
 type Execute = (operation: Operation) => Promise<boolean>;
@@ -15,6 +15,8 @@ export function VesselEditor(props: { shipment?: Shipment; dashboard: Dashboard;
   const [invalid, setInvalid] = createSignal<string | null>(null);
   const [removing, setRemoving] = createSignal(false);
   const ship = props.shipment;
+  // Keep option nodes stable while SSE refreshes the dashboard during an edit.
+  const availablePorts = props.dashboard.ports;
   const departure = ship?.voyage?.departure ?? ship?.milestones[0]?.at ?? new Date().toISOString();
   const eta = ship?.eta ?? new Date(Date.now() + 7 * 86400000).toISOString();
   async function submit(event: SubmitEvent & { currentTarget: HTMLFormElement }) {
@@ -30,12 +32,12 @@ export function VesselEditor(props: { shipment?: Shipment; dashboard: Dashboard;
     <form onSubmit={submit} class="fleet-form"><label class="full-row">Vessel name<input name="vessel" value={ship?.vessel ?? ''} required maxLength={100} placeholder="e.g. Gulf Horizon" /></label>
       <label>IMO number<input name="imo" inputmode="numeric" value={ship?.identity?.imo ?? ''} maxLength={7} placeholder="7 digits" /></label><label>MMSI<input name="mmsi" inputmode="numeric" value={ship?.identity?.mmsi ?? ''} maxLength={9} placeholder="9 digits" /></label>
       <p class="form-hint full-row">{ship ? 'Identifiers are optional for seeded demo vessels.' : 'Provide at least one identifier. IMO check digits are validated.'}</p>
-      <label>Previous / departure port<select name="origin" value={ship?.origin ?? 'jebel-ali'}><For each={props.dashboard.ports}>{port => <option value={port.id}>{port.name}</option>}</For></select></label>
-      <label>Destination port<select name="destination" value={ship?.destination ?? 'singapore'}><For each={props.dashboard.ports}>{port => <option value={port.id}>{port.name}</option>}</For></select></label>
-      <label class="full-row">Intermediate ports<select name="via" value={ship?.via.join(',') ?? ''}><option value="">Direct voyage</option><Show when={ship && ship.via.length > 1}><option value={ship!.via.join(',')}>{ship!.via.join(' → ')}</option></Show><For each={props.dashboard.ports}>{port => <option value={port.id}>{port.name}</option>}</For></select></label>
+      <label>Previous / departure port<select name="origin" value={ship?.origin ?? 'jebel-ali'}><For each={availablePorts}>{port => <option value={port.id}>{port.name}</option>}</For></select></label>
+      <label>Destination port<select name="destination" value={ship?.destination ?? 'singapore'}><For each={availablePorts}>{port => <option value={port.id}>{port.name}</option>}</For></select></label>
+      <label class="full-row">Intermediate ports<select name="via" value={ship?.via.join(',') ?? ''}><option value="">Direct voyage</option><Show when={ship && ship.via.length > 1}><option value={ship!.via.join(',')}>{ship!.via.join(' → ')}</option></Show><For each={availablePorts}>{port => <option value={port.id}>{port.name}</option>}</For></select></label>
       <label>Departure · UTC<input name="departure" type="datetime-local" value={departure.slice(0, 16)} required /></label><label>Expected arrival · UTC<input name="eta" type="datetime-local" value={eta.slice(0, 16)} required /></label>
       <label class="full-row">Operator-reported status<select name="status" value={ship?.voyage?.status ?? (ship ? 'underway' : 'planned')}><option value="planned">Planned</option><option value="underway">Underway — departed</option><option value="stopped">Stopped</option><option value="arrived">Arrived at destination</option></select></label>
-      <p class="form-hint full-row">Demo covers these five ports. Saving sets a new ETA baseline and clears earlier risk assessments for this voyage. Departure and arrival alerts use your reported status.</p>
+      <p class="form-hint full-row">Demo covers the ports in this catalogue. Saving sets a new ETA baseline and clears earlier risk assessments for this voyage. Departure and arrival alerts use your reported status.</p>
       <Show when={invalid() ?? props.error}>{message => <p class="error-note full-row" role="alert">{message()}</p>}</Show>
       <div class="fleet-form-actions full-row"><Show when={ship}><button type="button" class="danger-button" disabled={props.busy} onClick={() => setRemoving(!removing())}><Trash2 size={14} />Remove from fleet</button></Show><button class="primary" disabled={props.busy}>{ship ? <Save size={15} /> : <Plus size={15} />}{props.busy ? 'Saving…' : ship ? 'Save voyage' : 'Add vessel'}</button></div>
       <Show when={removing() && ship}><div class="remove-confirm full-row"><p>Remove {ship?.vessel} from this shared fleet? Its agent will stop monitoring. Existing alerts and team notes are retained.</p><button type="button" class="danger-button" disabled={props.busy} onClick={async () => { if (await props.execute({ action: 'remove', id: ship!.id })) props.close(); }}>Confirm removal</button><button type="button" onClick={() => setRemoving(false)}>Keep vessel</button></div></Show>
@@ -101,7 +103,7 @@ export function AlertsPage(props: { dashboard?: Dashboard | null; busy: boolean;
     </section>
     <Show when={props.error}><p role="alert" class="error-note">{props.error}</p></Show>
     <div class="alert-list-heading"><h2>{all() ? 'Recent alerts' : 'Needs acknowledgement'}</h2><button class="text-button" onClick={() => setAll(!all())}>{all() ? 'Show open only' : 'Include acknowledged'}</button></div>
-    <div class="alert-list"><For each={all() ? alerts() : pending()}>{alert => <article class="alert-card" classList={{ acknowledged: !!alert.acknowledgedAt }}><div class="alert-symbol">{alert.acknowledgedAt ? <Check size={19} /> : <Bell size={19} />}</div><div class="alert-copy"><div class="alert-meta"><span class={`alert-source ${alert.source}`}>{alert.source}</span><span>{stamp(alert.createdAt)}</span></div><h3>{alert.vessel} <span>· {alert.title}</span></h3><p>{alert.detail}</p><div class="alert-actions"><Show when={props.dashboard?.shipments.some(s => s.id === alert.shipmentId)} fallback={<span>Vessel removed from fleet</span>}><button onClick={() => props.openVoyage(alert.shipmentId)}><Ship size={13} />Open voyage</button></Show><Show when={!alert.acknowledgedAt} fallback={<span>Acknowledged {stamp(alert.acknowledgedAt!)}</span>}><button disabled={props.busy} onClick={() => { void props.execute({ action: 'acknowledge', id: alert.id }); }}><Check size={14} />Acknowledge</button></Show></div></div></article>}</For>
+    <div class="alert-list"><For each={all() ? alerts() : pending()}>{alert => <article class="alert-card" classList={{ acknowledged: !!alert.acknowledgedAt }}><div class="alert-symbol">{alert.acknowledgedAt ? <Check size={19} /> : <Bell size={19} />}</div><div class="alert-copy"><div class="alert-meta"><span class={`alert-source ${alert.source}`}>{alert.source}</span><span>{stamp(alert.createdAt)}</span></div><h3>{alert.vessel} <span>· {alert.title}</span></h3><p>{props.dashboard?.ports.reduce((text, port) => text.replaceAll(port.id, port.name), alert.detail.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, stamp)) ?? alert.detail}</p><div class="alert-actions"><Show when={props.dashboard?.shipments.some(s => s.id === alert.shipmentId)} fallback={<span>Vessel removed from fleet</span>}><button onClick={() => props.openVoyage(alert.shipmentId)}><Ship size={13} />Open voyage</button></Show><Show when={!alert.acknowledgedAt} fallback={<span>Acknowledged {stamp(alert.acknowledgedAt!)}</span>}><button disabled={props.busy} onClick={() => { void props.execute({ action: 'acknowledge', id: alert.id }); }}><Check size={14} />Acknowledge</button></Show></div></div></article>}</For>
       <Show when={(all() ? alerts() : pending()).length === 0}><div class="alerts-empty"><Check size={28} /><h2>{props.dashboard ? 'Nothing needs your attention' : 'Loading fleet alerts…'}</h2><p>Alerts appear when a monitored change crosses a threshold. Try revising a vessel’s ETA or running the Singapore disruption scenario.</p></div></Show></div>
   </main>;
 }

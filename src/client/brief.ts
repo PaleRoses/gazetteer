@@ -1,4 +1,4 @@
-import type { AssessmentRecord, Shipment } from '../shared';
+import type { AssessmentRecord, Shipment } from '../core/types';
 
 export const riskLabel = { 'on-track': 'Low risk', watch: 'Moderate risk', delayed: 'High risk' } as const;
 export const assessmentFor = (shipment: Shipment): AssessmentRecord | undefined => {

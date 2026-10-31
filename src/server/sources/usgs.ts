@@ -10,7 +10,7 @@ const feature = z.object({
     tsunami: z.number(), type: z.string(), status: z.string().optional(),
   }),
 });
-export const usgsEnvelope = z.object({ features: z.array(z.unknown()) });
+const usgsEnvelope = z.object({ features: z.array(z.unknown()) });
 
 /** USGS magnitude bands; a tsunami-flagged event is never below moderate. */
 export const usgsSeverity = (magnitude: number, tsunami: boolean): NoticeSeverity => {
@@ -37,7 +37,7 @@ export const normalizeUsgs = (raw: unknown, fetchedAt: string): readonly Notice[
   }) : [];
 };
 
-export const usgsUrl = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson';
+const usgsUrl = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson';
 
 export const fetchUsgs = async (now: Date, fetcher: Fetcher = fetch, timeoutMs = 15_000): Promise<FetchResult> => {
   const response = await getJson('usgs', usgsUrl, userAgent, fetcher, timeoutMs);

@@ -13,7 +13,7 @@
  *
  * Not GFW: the vessel's position against the planned route and the speed the ETA needs (see watcher.ts).
  */
-import { distanceKm } from '../../sea-routes';
+import { distanceKm } from '../../core/routes';
 import type { LonLat } from './telemetry';
 
 export const gfwDefaults = {
@@ -22,8 +22,6 @@ export const gfwDefaults = {
 
 export type PortState = 'AT_SEA' | 'IN_PORT' | 'STOPPED';
 export type PortEvent = 'PORT_ENTRY' | 'PORT_EXIT' | 'PORT_STOP_BEGIN' | 'PORT_STOP_END';
-const inPortStates: readonly PortState[] = ['IN_PORT', 'STOPPED'];
-
 /** InOutEventsBase.transition_map, verbatim. */
 const transitions: Readonly<Record<PortState, Readonly<Record<PortState, readonly PortEvent[]>>>> = {
   AT_SEA: { AT_SEA: [], IN_PORT: ['PORT_ENTRY'], STOPPED: ['PORT_ENTRY', 'PORT_STOP_BEGIN'] },
@@ -43,10 +41,8 @@ export const isInPort = (parameters: GfwParameters, previousInPort: boolean, dis
 export const isStopped = (parameters: GfwParameters, previousStopped: boolean, speedKnots: number): boolean =>
   speedKnots <= parameters.stoppingKnots ? true : speedKnots >= parameters.startingKnots ? false : previousStopped;
 
-export const portStateOf = (inPort: boolean, stopped: boolean): PortState => inPort ? (stopped ? 'STOPPED' : 'IN_PORT') : 'AT_SEA';
+const portStateOf = (inPort: boolean, stopped: boolean): PortState => inPort ? (stopped ? 'STOPPED' : 'IN_PORT') : 'AT_SEA';
 export const portEvents = (from: PortState | null, to: PortState): readonly PortEvent[] => from === null ? [] : transitions[from][to];
-export const isInPortState = (state: PortState): boolean => inPortStates.includes(state);
-
 /** GapDetector._gap_condition: a gap is a silence strictly longer than the threshold; an open gap is the time elapsed since the last position. */
 export const isOpenGap = (parameters: GfwParameters, silentHours: number): boolean => silentHours > parameters.gapHours;
 

@@ -63,13 +63,13 @@ There is no password reset, account email verification, membership removal, prod
 
 ## Ownership
 
-- `src/domain.ts`: pure, idempotent synthetic shipment impact and demo catalog.
-- `src/shared.ts`: shared domain values.
-- `src/server/actors.ts`: one persisted Terse actor per port/shipment, workspace-scoped; one-minute alarms.
-- `src/server/relay.ts`: actual Agent Relay SDK, channel publication and replay.
-- `src/server/monitoring.ts`: Terse local lifecycle and typed actor calls; no second actor implementation.
-- `src/server/access.ts`: SQLite accounts, hashed session/invitation tokens, owner/member checks and shared comments.
-- `src/server/http.ts`: validated HTTP requests, membership checks, origin protection, invitation delivery.
+- `src/core/demo.ts`: pure, idempotent synthetic shipment impact and demo catalog.
+- `src/core/types.ts`: shared domain values.
+- `src/server/agents/`: one persisted Terse actor per port/shipment, workspace-scoped; one-minute alarms.
+- `src/server/relay/`: actual Agent Relay SDK, channel publication and replay.
+- `src/server/runtime/monitoring.ts`: Terse local lifecycle and typed actor calls; no second actor implementation.
+- `src/server/access/access.ts`: SQLite accounts, hashed session/invitation tokens, owner/member checks and shared comments.
+- `src/server/http/api.ts`: validated HTTP requests, membership checks, origin protection, invitation delivery.
 - `src/client`: map, shipment details and shared-workspace UI.
 
 The port actor retains a disruption outbox; shipment actors replay Relay events through the pure assessment. Durable state lives under `DATA_DIR` (default `.data`). Keep that directory and `.env` across restarts; do not commit either. Startup fails explicitly if Relay is not configured.
@@ -103,3 +103,13 @@ Focused tests cover deterministic impact, duplicate delivery, persistent account
 ## Shared route monitoring
 
 Open **Routes** to monitor port-to-port corridors across shipments in both directions. A route drilldown brings together its member voyages, endpoint bulletins, full-corridor news and diversion candidates. Risk badges describe the highest assessed shipment risk, with delays explicitly attributed to member shipments. Routes update from the same Terse/Agent Relay snapshots as the shipment view. See [route-monitoring.md](docs/route-monitoring.md) for semantics and verification.
+
+## Fleet, voyage plans and alerts
+
+**Shipments → Add vessel** creates a persistent workspace watchlist entry using a manually entered name and IMO or MMSI. IMO checksums and duplicate identifiers are validated; this is not a vessel-registry lookup or a live AIS subscription. Each entry gets its own Terse ship actor and participates in the workspace's Agent Relay flow. Remove an entry through **Edit voyage** to stop its monitoring.
+
+A voyage briefing shows identity, previous/departure port, next port, departure, ETA, reported status and who entered the plan. **Edit voyage** supports the port catalogue, intermediate calls and UTC dates. Saving replaces the plan and ETA baseline, clears previous assessments, and lets the actor assess the revised voyage. Positions remain illustrative; reporting arrival or departure is an operator action, never inferred from an elapsed ETA.
+
+**Alerts** stores ETA changes (including cumulative small changes), reported arrivals/departures, prolonged operator-reported stops, and stale telemetry when a timestamp exists. Thresholds, episode deduplication and acknowledgements persist in `.data/operations.sqlite`, scoped to the workspace. Sources remain labelled operator, simulation or live. Desktop notifications require the user's browser permission and an open workspace tab; there is no closed-browser push, email or SMS delivery. A fresh tab does not replay historical alerts as notifications. The inbox retains the most recent 250 alerts in its view.
+
+Run `npm run verify` before pushing directly to `main`; fetch and integrate upstream changes first.

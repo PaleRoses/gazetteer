@@ -1,6 +1,6 @@
 import { createMemo, For, onCleanup, onMount, Show } from 'solid-js';
 import { Anchor, ArrowRight, X } from 'lucide-solid';
-import type { Dashboard, Diversion, Port, Shipment } from '../shared';
+import type { Dashboard, Diversion, Port, Shipment } from '../core/types';
 import { boardRisk, boardTime } from './board-view';
 import { riskLabel } from './brief';
 import './port-details.css';

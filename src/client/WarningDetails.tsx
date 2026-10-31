@@ -1,7 +1,8 @@
 import { createMemo, For, onCleanup, onMount, Show } from 'solid-js';
 import { ArrowRight, ExternalLink, TriangleAlert, X } from 'lucide-solid';
-import type { Dashboard, IntelligenceItem } from '../shared';
+import type { Dashboard, IntelligenceItem } from '../core/types';
 import './warning-details.css';
+import { warningLabel, warningTone } from './warning-severity';
 
 const relevanceLabel = { route: 'Planned route', diversion: 'Potential diversion', context: 'Regional context' } as const;
 const observed = (value: string) => new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
@@ -23,10 +24,10 @@ export function WarningDetails(props: Readonly<{
     const reasons = props.item?.relevance ?? [];
     return (props.dashboard?.shipments ?? []).filter(ship => reasons.some(reason => reason.shipmentId === ship.id));
   });
-  return <section ref={content} class="warning-dialog" role="dialog" aria-label={props.item?.evidence.title} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); props.onClose(); } }}>
+  return <section ref={content} class={`warning-dialog warning-${warningTone(props.item?.severity)}`} role="dialog" aria-label={props.item?.evidence.title} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); props.onClose(); } }}>
       <Show when={props.item}>{item => <>
         <header><span class="warning-eyebrow"><TriangleAlert size={16} />MAP WARNING</span><button ref={closeButton} class="icon-button" aria-label="Close warning details" onClick={props.onClose}><X size={20} /></button></header>
-        <div class="warning-body"><Show when={props.onBack}><button class="warning-group-back" onClick={() => props.onBack?.()}>← All warnings in this group</button></Show><div class="warning-tags"><For each={[...new Set(item().relevance.map(reason => reason.kind))]}>{kind => <span>{relevanceLabel[kind]}</span>}</For><span>{liveSource()?.report ? (liveSource()?.report?.kind === 'advisory' ? 'Security advisory' : 'Security news') : item().evidence.source === 'live' ? 'Live report' : 'Simulated report'}</span></div>
+        <div class="warning-body"><Show when={props.onBack}><button class="warning-group-back" onClick={() => props.onBack?.()}>← All warnings in this group</button></Show><div class="warning-tags"><span class={`warning-severity warning-${warningTone(item().severity)}`}>{warningLabel(item().severity)}</span><For each={[...new Set(item().relevance.map(reason => reason.kind))]}>{kind => <span>{relevanceLabel[kind]}</span>}</For><span>{liveSource()?.report ? (liveSource()?.report?.kind === 'advisory' ? 'Security advisory' : 'Security news') : item().evidence.source === 'live' ? 'Live report' : 'Simulated report'}</span></div>
           <h2>{item().evidence.title}</h2>
           <p class="warning-description">{item().evidence.detail}</p>
           <p class="warning-observed">{liveSource()?.report?.kind === 'advisory' ? 'Issued' : liveSource()?.report ? 'Published / updated' : 'Observed'} <time dateTime={item().evidence.observedAt}>{liveSource()?.report?.kind === 'advisory' ? item().evidence.observedAt.slice(0, 10) : `${observed(item().evidence.observedAt)} UTC`}</time></p>

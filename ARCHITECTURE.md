@@ -6,7 +6,7 @@ Every ship and every port is its own durable AI actor (Terse Durable Actors). Ea
 
 ```
 src/
-  core/                    framework-free contracts and pure logic; imported by client and server
+  core/                    framework-free contracts and pure logic; imported by client and server; relative imports carry explicit .js specifiers
     types.ts               Shipment, Port, Evidence, Disruption, Dashboard
     board.ts               the board protocol (zod): port.bulletin, ship.observation, ship.assessment, ship.eta
     demo.ts                demo catalog and the deterministic assessment
@@ -18,13 +18,18 @@ src/
     http/                  the API (routing, membership, CSRF) and the SSE events route
     access/                accounts, sessions, workspaces, invitations, comments
     runtime/               Terse lifecycle, typed actor stubs, the workspace read model and its publishing
+      hub.ts               the workspace event hub the SSE route subscribes to
+      startup.ts           the startup limiter and progress tracker
     agents/
       index.ts             the Terse entrypoint: exports the actor classes and nothing else
+      alarm.ts             the one alarm interval both actors share
       port/                PortAgent and its pure decisions (risk, bulletin, status)
       ship/                ShipmentAgent and its pure decisions (what to post, what to assess)
     relay/                 Agent Relay client, bounded cursor, live follower, board transport, board read model
+      connect.ts           the join-the-channel step both actors share
     sources/               live disruption feeds (GDACS, NWS, USGS) and their exposure
     telemetry/             live AIS feeds and the watcher (Global Fishing Watch event definitions)
+    ingest/                the one AIS reader per process: feeds on Effect at the edge (pipeline, Digitraffic MQTT), a synchronous core (H3 port-zone routing, conflation, rings, per-port anchorage counters)
     assessment/            the evidence-grounded model assessment and its labelled fallback
   client/                  the web app; imports src/core only
 scripts/                   setup-relay, build-geodata, the probes
@@ -33,11 +38,13 @@ test/                      mirrors src/ path for path
 
 ## Laws
 
-1. Dependencies point one way: `core` ← `sources | telemetry | assessment | relay` ← `agents` ← `runtime` ← `http` ← `main`. `client` imports `core` and nothing under `server`. dependency-cruiser enforces this.
+1. Dependencies point one way: `core` ← `sources | telemetry | assessment | relay` ← `agents` ← `runtime` ← `http` ← `main`. `ingest` sits beside the leaf layers: it reads `sources/geo` and `telemetry/gfw`, nothing imports it but `runtime`. `effect` is imported only by `ingest/pipeline.ts`, `ingest/digitraffic.ts`, `runtime` and `scripts`; the core files (`hub`, `anchorage`, `ring`, `zones`, `frame`) and every actor-reachable layer stay free of it. `client` imports `core` and nothing under `server`. dependency-cruiser enforces this.
 2. Actor classes are thin. State lives in actor fields, decisions are pure functions in the same folder, and effects (Relay, fetch, the model) are passed in. Provider failures are values (`RelayOutcome`), never throws inside an actor. One alarm per actor, restored once by `resume()` at startup.
 3. One home per algorithm. Geodesy is turf; routes live in `core/routes.ts`; the board protocol lives in `core/board.ts`. A second implementation is a defect.
 4. No barrels. Import from the module that defines the thing. The only index is `agents/index.ts`, because Terse needs one entrypoint.
 5. No dead code. knip runs clean. Probes and generators live in `scripts/`, not `src/`.
 6. Every test can fail: it breaks when the behaviour breaks. No count pinning, no restating the implementation.
 7. Provenance is data. Synthetic is labelled simulated; live carries its provider, URL and fetch time; an AI method is not live evidence.
-8. `npm run verify` (tsc, knip, dependency-cruiser, bun test, vite build) passes before every commit to main.
+8. `npm run verify` (tsc, knip, dependency-cruiser, bun test, check-actors, vite build) passes before every commit to main.
+9. Relative imports in `src/core/` use explicit `.js` specifiers. Terse type-checks the actors' public type surface with nodenext, and an extensionless relative import reachable from an actor signature breaks the actor build. `scripts/check-actors.ts`, part of verify, starts the real actor build to prove it.
+10. Effects at the edges are Effect programs (`effect`): feeds are Streams, retries and reconnects are Schedules with one home, resources live under Scope, live and simulation are Layers. `core/`, the pure decisions and every actor's public signatures stay free of Effect types. zod is the only schema authority.

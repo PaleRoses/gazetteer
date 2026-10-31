@@ -16,6 +16,13 @@ export type Assessment = z.infer<typeof assessmentSchema>;
 export type Verdict = Readonly<{ status: 'valid'; assessment: Assessment }> | Readonly<{ status: 'rejected'; reason: string }>;
 
 const reject = (reason: string): Verdict => ({ status: 'rejected', reason });
+const citing = z.looseObject({ citedEvidence: z.array(z.string()) });
+
+/** A mind's citations of ids it was never shown are dropped before validation; anything else about the output is left to the validator. */
+export const keepShown = (raw: unknown, shown: readonly string[]): unknown => {
+  const parsed = citing.safeParse(raw);
+  return parsed.success ? { ...parsed.data, citedEvidence: parsed.data.citedEvidence.filter(id => shown.includes(id)) } : raw;
+};
 
 /** The model's output is untrusted: it must parse, be ordered, and cite only evidence it was given. */
 export function validateAssessment(raw: unknown, allowedEvidence: readonly string[]): Verdict {
