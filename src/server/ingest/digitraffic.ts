@@ -2,8 +2,9 @@ import mqtt from 'mqtt';
 import { Cause, Effect, Queue, Stream } from 'effect';
 import { z } from 'zod';
 import { knownCog, knownSog } from '../telemetry/telemetry';
+import { feed as constants } from './constants';
 import type { FeedEvent } from './frame';
-import { feedBufferSize, FeedError, type Feed } from './pipeline';
+import { FeedError, type Feed } from './pipeline';
 
 /** Fintraffic Digitraffic marine AIS over MQTT (CC BY 4.0): keyless, Baltic coverage. https://www.digitraffic.fi/en/marine-traffic/ */
 const digitrafficUrl = 'wss://meri.digitraffic.fi:443/mqtt';
@@ -46,7 +47,7 @@ export const digitrafficFeed = (connect: Connect = mqtt.connect as unknown as Co
   Stream.callback<FeedEvent, FeedError>(queue => Effect.acquireRelease(
     Effect.sync(() => {
       const fail = (reason: string): void => { Queue.failCauseUnsafe(queue, Cause.fail(new FeedError({ reason }))); };
-      const client = connect(digitrafficUrl, { clientId: clientId(), reconnectPeriod: 0, connectTimeout: 15_000 });
+      const client = connect(digitrafficUrl, { clientId: clientId(), reconnectPeriod: 0, connectTimeout: constants.connectTimeoutMillis });
       client.on('connect', () => client.subscribe(digitrafficTopics));
       client.on('message', (topic: string, payload: Uint8Array) => { Queue.offerUnsafe(queue, decode(topic, payload)); });
       client.on('error', (error: unknown) => fail(`digitraffic: ${error instanceof Error ? error.message : String(error)}`));
@@ -54,4 +55,4 @@ export const digitrafficFeed = (connect: Connect = mqtt.connect as unknown as Co
       return client;
     }),
     client => Effect.promise(() => client.endAsync(true)),
-  ), { bufferSize: feedBufferSize, strategy: 'sliding' });
+  ), { bufferSize: constants.bufferSize, strategy: 'sliding' });

@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { anchoredMinDwellSeconds } from '../../../src/server/ingest/anchorage';
-import { createIngest, limits } from '../../../src/server/ingest/hub';
-import { ringCapacity, ringStepSeconds } from '../../../src/server/ingest/ring';
+import { anchoredMinDwellSeconds, gate, memory, ring } from '../../../src/server/ingest/constants';
+import { createIngest } from '../../../src/server/ingest/hub';
 import { at, cargo, frame, laPort } from './fixtures';
 
 const subscriber = { workspaceId: 'w', shipmentId: 's' };
@@ -35,8 +34,8 @@ describe('port counts over all traffic', () => {
     const ingest = fresh();
     ingest.push(known(367000004)); ingest.push(known(367000005));
     ingest.push(position(367000004, 1_000, at.berth));
-    ingest.push(position(367000005, 1_000 + limits.vesselTtlSeconds, at.berth));
-    ingest.flush(1_000 + limits.vesselTtlSeconds + 1);
+    ingest.push(position(367000005, 1_000 + memory.vesselTtlSeconds, at.berth));
+    ingest.flush(1_000 + memory.vesselTtlSeconds + 1);
     expect(ingest.counts('los-angeles').berthed).toBe(1);
     expect(ingest.stats().vessels).toBe(1);
   });
@@ -48,7 +47,7 @@ describe('port counts over all traffic', () => {
     ingest.push(known(367000006)); ingest.push(position(367000006, 110, at.berth));
     expect(ingest.flush(115).traffic[0]).toMatchObject({ portId: 'los-angeles', berthed: 1 });
     expect(ingest.flush(120).traffic).toHaveLength(0);
-    expect(ingest.flush(115 + limits.heartbeatSeconds).traffic).toHaveLength(1);
+    expect(ingest.flush(115 + gate.heartbeatSeconds).traffic).toHaveLength(1);
   });
 
   test('invalid frames are counted and change nothing', () => {
@@ -92,8 +91,8 @@ describe('tracked vessels', () => {
     expect(ingest.flush(1_040).deliveries).toHaveLength(1);
     ingest.push(position(mmsi, 1_050, [10.01, 50], 0.1));
     expect(ingest.flush(1_060).deliveries).toHaveLength(1);
-    ingest.push(position(mmsi, 1_060 + limits.heartbeatSeconds, [10.01, 50], 0.1));
-    expect(ingest.flush(1_070 + limits.heartbeatSeconds).deliveries).toHaveLength(1);
+    ingest.push(position(mmsi, 1_060 + gate.heartbeatSeconds, [10.01, 50], 0.1));
+    expect(ingest.flush(1_070 + gate.heartbeatSeconds).deliveries).toHaveLength(1);
   });
 
   test('an older frame never replaces a newer one', () => {
@@ -112,13 +111,23 @@ describe('tracked vessels', () => {
 
   test('the ring keeps one point a minute, wraps at a day, and the set of rings is bounded', () => {
     const ingest = tracked();
-    Array.from({ length: ringCapacity + 10 }, (_, index) => ingest.push(position(mmsi, 1_000 + index * ringStepSeconds, [10, 50], 10)));
-    ingest.push(position(mmsi, 1_000 + (ringCapacity + 9) * ringStepSeconds + 5, [10, 50], 10));
+    Array.from({ length: ring.capacity + 10 }, (_, index) => ingest.push(position(mmsi, 1_000 + index * ring.stepSeconds, [10, 50], 10)));
+    ingest.push(position(mmsi, 1_000 + (ring.capacity + 9) * ring.stepSeconds + 5, [10, 50], 10));
     const points = ingest.ring(mmsi)!.points();
-    expect(points).toHaveLength(ringCapacity);
-    expect(points[0]!.at).toBe(1_000 + 10 * ringStepSeconds);
+    expect(points).toHaveLength(ring.capacity);
+    expect(points[0]!.at).toBe(1_000 + 10 * ring.stepSeconds);
     expect(points.every((point, index) => index === 0 || point.at > points[index - 1]!.at)).toBe(true);
-    Array.from({ length: limits.maxRings + 50 }, (_, index) => { ingest.track(368_000_000 + index, subscriber); ingest.push(position(368_000_000 + index, 5_000, [10, 50])); });
-    expect(ingest.stats().rings).toBe(limits.maxRings);
+    Array.from({ length: ring.maxRings + 50 }, (_, index) => { ingest.track(368_000_000 + index, subscriber); ingest.push(position(368_000_000 + index, 5_000, [10, 50])); });
+    expect(ingest.stats().rings).toBe(ring.maxRings);
+  });
+});
+
+describe('the active-vessel window', () => {
+  test('counts every valid vessel the feed carried in the last hour, in or out of a port, and forgets the silent ones', () => {
+    const ingest = fresh();
+    ingest.push(position(367000030, 1_000, [10, 50])); ingest.push(position(367000031, 1_000 + memory.activeWindowSeconds, at.berth));
+    expect(ingest.stats().active).toBe(2);
+    ingest.flush(1_000 + memory.activeWindowSeconds + 1);
+    expect(ingest.stats().active).toBe(1);
   });
 });

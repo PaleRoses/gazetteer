@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { anchoredMinDwellSeconds, step, type VesselState } from '../../../src/server/ingest/anchorage';
+import { step, type VesselState } from '../../../src/server/ingest/anchorage';
+import { anchoredMinDwellSeconds } from '../../../src/server/ingest/constants';
 import { buildRouter } from '../../../src/server/ingest/zones';
 import { at, frame, laPort } from './fixtures';
 

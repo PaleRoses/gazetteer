@@ -1,4 +1,5 @@
 import { Data, Duration, Effect, Schedule, Stream, type Scope } from 'effect';
+import { feed as constants } from './constants';
 import type { FeedEvent } from './frame';
 import type { Flush, Ingest } from './hub';
 
@@ -6,13 +7,11 @@ export class FeedError extends Data.TaggedError('FeedError')<{ readonly reason: 
 export type Feed = Stream.Stream<FeedEvent, FeedError>;
 
 /** Exponential from one second, jittered, capped at a minute: a feed that keeps failing is retried for as long as the process lives. */
-const reconnectPolicy = Schedule.exponential('1 second').pipe(
+const reconnectPolicy = Schedule.exponential(Duration.seconds(constants.reconnectBaseSeconds)).pipe(
   Schedule.jittered,
-  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.seconds(60)))),
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.seconds(constants.reconnectCapSeconds)))),
 );
 
-const flushIntervalMillis = 5_000;
-export const feedBufferSize = 8_192;
 
 /**
  * The one reader. The feed is retried on `reconnectPolicy`, events are applied to the core in arrival batches, a scoped fiber flushes on
@@ -22,7 +21,7 @@ export const runIngest = (
   feed: Feed, ingest: Ingest, onFlush: (flush: Flush) => void, clock: () => number = () => Date.now() / 1000,
 ): Effect.Effect<void, FeedError, Scope.Scope> =>
   Effect.gen(function* () {
-    yield* Effect.forkScoped(Effect.repeat(Effect.sync(() => onFlush(ingest.flush(clock()))), Schedule.spaced(Duration.millis(flushIntervalMillis))));
+    yield* Effect.forkScoped(Effect.repeat(Effect.sync(() => onFlush(ingest.flush(clock()))), Schedule.spaced(Duration.millis(constants.flushMillis))));
     yield* Stream.runForEachArray(Stream.retry(feed, reconnectPolicy), events => Effect.sync(() => { events.forEach(ingest.push); }));
     yield* Effect.sync(() => { onFlush(ingest.flush(clock())); });
   });

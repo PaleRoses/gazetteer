@@ -1,7 +1,7 @@
+import { ring as constants } from './constants';
 import type { Frame } from './frame';
 
-export const ringStepSeconds = 60;
-export const ringCapacity = 24 * 60 * 60 / ringStepSeconds;
+const { capacity: ringCapacity, stepSeconds: ringStepSeconds } = constants;
 
 export type Ring = Readonly<{ add: (frame: Frame) => void; size: () => number; points: () => readonly Readonly<{ at: number; lat: number; lon: number; sogKnots: number | null }>[] }>;
 

@@ -1,4 +1,5 @@
 import { gfwDefaults, isStopped } from '../telemetry/gfw';
+import { anchoredMinDwellSeconds } from './constants';
 import type { Frame } from './frame';
 import type { ZoneRef } from './zones';
 
@@ -6,9 +7,6 @@ type VesselMode = 'approach' | 'anchored' | 'berthed';
 export type VesselState = Readonly<{ portId: string; mode: VesselMode; stopped: boolean; pendingSince: number | null; since: number; at: number }>;
 export type Counts = { anchored: number; berthed: number; approach: number };
 export const emptyCounts = (): Counts => ({ anchored: 0, berthed: 0, approach: 0 });
-
-/** A vessel stopped in the anchorage becomes "anchored" after this long stationary; it keeps ships slowing through the anchorage out of the count. This lane's estimate. */
-export const anchoredMinDwellSeconds = 30 * 60;
 
 /**
  * Pure: one vessel's state after one frame. `undefined` means not in the port's area. Stopped/moving is GFW's `_is_stopped` hysteresis

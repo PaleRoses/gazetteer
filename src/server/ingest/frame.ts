@@ -1,3 +1,5 @@
+import { cargoTankerTypes, mmsiRange } from './constants';
+
 /** One normalised AIS position report. MMSI is a number (Map<number> beats Map<string>); `at` is epoch seconds; `null` is "not available". */
 export type Frame = Readonly<{
   mmsi: number; at: number; lat: number; lon: number; sogKnots: number | null; cogDeg: number | null; navStatus: number | null;
@@ -9,8 +11,8 @@ export type FeedEvent =
   | Readonly<{ kind: 'static'; mmsi: number; shipType: number }>
   | Readonly<{ kind: 'invalid' }>;
 
-export const isCargoOrTanker = (shipType: number | undefined): boolean => shipType !== undefined && shipType >= 70 && shipType <= 89;
+export const isCargoOrTanker = (shipType: number | undefined): boolean => shipType !== undefined && shipType >= cargoTankerTypes.from && shipType <= cargoTankerTypes.to;
 
 export const validFrame = (frame: Frame): boolean =>
-  Number.isInteger(frame.mmsi) && frame.mmsi >= 100_000_000 && frame.mmsi <= 999_999_999
+  Number.isInteger(frame.mmsi) && frame.mmsi >= mmsiRange.min && frame.mmsi <= mmsiRange.max
   && Math.abs(frame.lat) <= 90 && Math.abs(frame.lon) <= 180 && Number.isFinite(frame.at);
