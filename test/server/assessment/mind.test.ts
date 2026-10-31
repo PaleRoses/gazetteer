@@ -47,6 +47,8 @@ describe('the ship mind is locked to its own tools', () => {
     expect(options.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Read', 'Write', 'Edit', 'WebFetch', 'WebSearch', 'Task']));
     expect(options.maxTurns).toBeLessThanOrEqual(4);
     expect(options.model).toBe('claude-haiku-5-5');
+    expect(String(options.systemPrompt)).toStartWith(`You are ${meridian.agent}, the mind aboard ${meridian.vessel}.`);
+    expect(meridian.agent).not.toBe(meridian.vessel);
     expect(options.pathToClaudeCodeExecutable).toBe('/opt/claude');
     expect(options.outputFormat?.schema.$schema).toBe('http://json-schema.org/draft-07/schema#');
     expect(options.env).toMatchObject({ CLAUDE_CONFIG_DIR: config.mindsDir, HOME: config.mindsDir, ANTHROPIC_CUSTOM_HEADERS: 'anthropic-workspace-id: wrkspc_test' });

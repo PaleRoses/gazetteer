@@ -29,7 +29,7 @@ export function buildPrompt(shipment: Shipment, notice: AssessableNotice, now: s
   return JSON.stringify({
     now,
     shipment: {
-      id: shipment.id, reference: shipment.reference, vessel: shipment.vessel, cargo: shipment.cargo, containers: shipment.containers,
+      id: shipment.id, agent: shipment.agent, reference: shipment.reference, vessel: shipment.vessel, cargo: shipment.cargo, containers: shipment.containers,
       origin: portName(shipment.origin), callsAhead: [...shipment.via, shipment.destination].map(portName),
       currentPosition: shipment.coordinates, baselineEta: shipment.baselineEta, currentEta: shipment.eta, accumulatedDelayHours: shipment.delayHours,
       milestones: shipment.milestones,
@@ -50,7 +50,7 @@ export function buildTelemetryPrompt(shipment: Shipment, observation: Observatio
   return JSON.stringify({
     now,
     shipment: {
-      id: shipment.id, reference: shipment.reference, vessel: shipment.vessel, cargo: shipment.cargo, containers: shipment.containers,
+      id: shipment.id, agent: shipment.agent, reference: shipment.reference, vessel: shipment.vessel, cargo: shipment.cargo, containers: shipment.containers,
       origin: portName(shipment.origin), callsAhead: [...shipment.via, shipment.destination].map(portName),
       baselineEta: shipment.baselineEta, currentEta: shipment.eta, accumulatedDelayHours: shipment.delayHours, milestones: shipment.milestones,
     },

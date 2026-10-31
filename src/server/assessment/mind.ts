@@ -46,7 +46,7 @@ export function boundedPool(size: number): Pool {
 const mindPool = boundedPool(mindConcurrency);
 
 const mindInstructions = [
-  'You are the mind of this one ship. Your tools are your senses: read_board (what port and peer-ship agents posted that bears on your route),',
+  'Your tools are your senses: read_board (what port and peer-ship agents posted that bears on your route),',
   'read_track (your own live telemetry window) and port_status (one port by id or name). Look before you decide, then return the decision as structured output.',
   'Cite only ids the input or your tools showed you.',
 ].join(' ');
@@ -95,6 +95,9 @@ const shipServer = (context: MindContext) => createSdkMcpServer({
 const denyForeign: CanUseTool = async (name, input) =>
   allowedShipTools.includes(name) ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: `${name} is not one of this ship's tools` };
 
+/** Who the mind is comes from the actor's persisted state, never from the model: the star is the mind, the vessel is the hull. */
+const identity = (context: MindContext): string => `You are ${context.shipment.agent}, the mind aboard ${context.shipment.vessel}.`;
+
 /** The child sees only this environment: its home and config are the minds directory, never the user's ~/.claude. */
 const mindEnv = (config: MindConfig): Readonly<Record<string, string>> => ({
   PATH: config.path, HOME: config.mindsDir, CLAUDE_CONFIG_DIR: config.mindsDir,
@@ -106,7 +109,7 @@ const mindEnv = (config: MindConfig): Readonly<Record<string, string>> => ({
 const decisionSchema = z.toJSONSchema(assessmentSchema, { target: 'draft-7' }) as Record<string, unknown>;
 
 const mindOptions = (config: MindConfig, request: ModelRequest, abortController: AbortController): Options => ({
-  model: config.model, systemPrompt: `${request.system}\n${mindInstructions}`,
+  model: config.model, systemPrompt: `${identity(request.context)}\n${request.system}\n${mindInstructions}`,
   tools: [], allowedTools: [...allowedShipTools], disallowedTools: [...builtinTools], canUseTool: denyForeign,
   settingSources: [], strictMcpConfig: true, mcpServers: { [server]: shipServer(request.context) },
   maxTurns, persistSession: true, cwd: config.mindsDir, env: { ...mindEnv(config) }, abortController, pathToClaudeCodeExecutable: config.executable,
