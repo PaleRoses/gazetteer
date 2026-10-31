@@ -1,6 +1,7 @@
 import type { Operations, VesselIdentity, Voyage } from './operations.js';
 import type { BoardMessage, PortStatus } from './board.js';
 import type { PortId } from './ports.js';
+import type { RecoveryView } from './reservations.js';
 export type Risk = 'on-track' | 'watch' | 'delayed';
 export type RelayOutcome<A> = Readonly<{ status: 'ok'; value: A }> | Readonly<{ status: 'unavailable'; message: string }>;
 export const relaySuccess = <A>(value: A): RelayOutcome<A> => ({ status: 'ok', value });
@@ -36,6 +37,8 @@ export type Dashboard = Readonly<{
   startup?: Readonly<{ ready: number; total: number; queued?: number }>;
   /** The board transport, as data: `reconnecting` since T while posts fail, `live` with the last acknowledged post at T. Never a status code. */
   relayHealth?: Readonly<{ state: 'live' | 'reconnecting'; since: string | null; lastPostAt: string | null }>;
+  /** Act 2: the cargo agent's case and the workspace's reservations; absent until the recovery actors have started. */
+  recovery?: RecoveryView;
 }>;
 
 /** Assessment provenance travels with the shipment; the client never invents a risk score. */

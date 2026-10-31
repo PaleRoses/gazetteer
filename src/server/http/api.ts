@@ -15,7 +15,7 @@ type Mail = Readonly<{ key: string; from: string }>;
 type MailTransport = (request: Request) => Promise<Response>;
 type InvitationDelivery = Readonly<{ delivery: 'accepted'; messageId: string }>
   | Readonly<{ delivery: 'unconfirmed'; warning: string }>;
-type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask' | 'operate'>>; origin: string; ingest?: IngestFeed; bookings?: Pick<Bookings, 'list'>; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
+type Options = Readonly<{ access: Access; monitoring: Pick<Monitoring, 'dashboard' | 'simulate'> & Partial<Pick<Monitoring, 'subscribe' | 'publishComment' | 'ask' | 'operate' | 'withdrawTruck' | 'restartCargo'>>; origin: string; ingest?: IngestFeed; bookings?: Pick<Bookings, 'list'>; demo?: boolean; mail?: Mail; mailTransport?: MailTransport }>;
 type App = Readonly<{ Bindings: Readonly<{ clientKey: string }>; Variables: Readonly<{ user: User; token: string | undefined; membership: Workspace }> }>;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response => Response.json(body, {
@@ -45,7 +45,7 @@ const body = <S extends z.ZodType>(schema: S) => zValidator('json', schema, resu
 const loopbackHosts: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
 const demoOperator = { email: 'demo@gazetteer.local', name: 'Demo operator', workspaceName: 'Demo fleet' } as const;
 const tooMany = (): Response => json({ error: 'Too many sign-in attempts. Try again in a minute.' }, 429, { 'Retry-After': '60' });
-const workspaceResources = ['operations', 'dashboard', 'events', 'disruptions', 'members', 'invitations', 'bookings'] as const;
+const workspaceResources = ['operations', 'dashboard', 'events', 'disruptions', 'members', 'invitations', 'bookings', 'withdraw-truck', 'restart-cargo'] as const;
 /** Ids are matched as written in the URL, never percent-decoded: `gz%2D1042` is not `gz-1042`. Segments: '', api, workspaces, <workspace>, shipments, <shipment>, comments. */
 const segment = (c: Context, index: number): string => new URL(c.req.url).pathname.split('/')[index] ?? '';
 const workspaceOf = (c: Context): string => segment(c, 3);
@@ -123,6 +123,8 @@ export function createApi({ access, monitoring, origin, ingest, bookings, demo =
       const input = c.req.valid('json');
       return monitoringResponse(await monitoring.simulate(workspaceOf(c), input.portId, input.delayHours));
     })
+    .post('/api/workspaces/:workspaceId/withdraw-truck', member, async c => monitoring.withdrawTruck ? monitoringResponse(await monitoring.withdrawTruck(workspaceOf(c))) : json({ error: 'Not found' }, 404))
+    .post('/api/workspaces/:workspaceId/restart-cargo', member, async c => monitoring.restartCargo ? monitoringResponse(await monitoring.restartCargo(workspaceOf(c))) : json({ error: 'Not found' }, 404))
     .post('/api/workspaces/:workspaceId/invitations', member, jsonOnly, body(z.object({ email })), async c => {
       const user = c.get('user');
       const invitation = access.invite(user.id, workspaceOf(c), c.req.valid('json').email);

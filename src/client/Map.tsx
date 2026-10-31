@@ -1,11 +1,15 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, Index, onCleanup, onMount, Show, untrack, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
+import { Menu } from '@ark-ui/solid';
+import { ChevronDown } from 'lucide-solid';
 import type { GeoJSONSource, Map as MapLibreMap, Marker, Popup, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type { Dashboard, Diversion, MonitoredRoute, Port, Shipment } from '../core/types';
 import type { LngLat } from '../core/routes';
-import { boundsOf, graticule, portFeatures, routeLayers, vesselViews } from './map-model';
+import { boundsOf, cameraFor, fleetPorts, portFeatures, regions, routeLayers, statusLine, vesselViews, type Bounds, type Region } from './map-model';
+import { PixelShip, RiskMark } from './sprites';
+import './styles/map.css';
 import { riskLabel, shipmentBrief } from './brief';
 import { WarningDetails } from './WarningDetails';
 import { WarningGroup } from './WarningGroup';
@@ -17,29 +21,24 @@ type MapLibre = typeof import('maplibre-gl');
 type Runtime = Readonly<{ lib: MapLibre; map: MapLibreMap }>;
 type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; showPopup: boolean; inspected: Diversion | null; corridor?: MonitoredRoute; routeMode?: boolean; onRoute: (id: string) => void }>;
 type Projection = 'mercator' | 'globe';
-const COLOURS = { ocean: '#111315', land: '#1f211d', coast: '#3b3e37', grid: '#3b3e37', route: '#8cc3a1', corridor: '#e8e4d6', alternative: '#b9a7d6' } as const;
-const RISK_COLOURS = { 'on-track': '#e8e4d6', watch: '#e0a03a', delayed: '#e5603f' } as const;
-const PORT_COLOURS = { normal: '#e8e4d6', elevated: '#e0a03a', severe: '#e5603f', unreported: '#aaa99e' } as const;
+const COLOURS = { ocean: '#0b0b0b', land: '#2a2a2a', coast: '#3a3a3a', route: '#5fe3c0', corridor: '#d8d8d8', alternative: '#b9a7d6' } as const;
 const FRAME_PADDING = { top: 90, bottom: 75, left: 70, right: 70 } as const;
-const WORLD: [[number, number], [number, number]] = [[-180, -58], [180, 76]];
+const WORLD = regions[0];
 const style = (origin: string): StyleSpecification => ({
   version: 8, projection: { type: 'mercator' },
-  sources: { land: { type: 'geojson', data: `${origin}/geo/land.geojson` }, graticule: { type: 'geojson', data: graticule(30) } },
+  sources: { land: { type: 'geojson', data: `${origin}/geo/land.geojson` } },
   layers: [
     { id: 'ocean', type: 'background', paint: { 'background-color': COLOURS.ocean } },
-    { id: 'graticule', type: 'line', source: 'graticule', paint: { 'line-color': COLOURS.grid, 'line-width': 0.5, 'line-opacity': 0.12 } },
     { id: 'land', type: 'fill', source: 'land', paint: { 'fill-color': COLOURS.land } },
-    { id: 'coast', type: 'line', source: 'land', paint: { 'line-color': COLOURS.coast, 'line-width': 0.7 } },
-    { id: 'corridors', type: 'line', source: 'corridors', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.corridor, 'line-width': 5, 'line-opacity': 0.35 } },
+    { id: 'coast', type: 'line', source: 'land', paint: { 'line-color': COLOURS.coast, 'line-width': 0.8 } },
+    { id: 'corridors', type: 'line', source: 'corridors', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.corridor, 'line-width': 5, 'line-opacity': 0.3 } },
     { id: 'corridor-hit', type: 'line', source: 'corridors', paint: { 'line-color': COLOURS.corridor, 'line-width': 24, 'line-opacity': 0.01 } },
     { id: 'alternative', type: 'line', source: 'alternative', paint: { 'line-color': COLOURS.alternative, 'line-width': 2, 'line-dasharray': [3, 3] } },
-    { id: 'lanes', type: 'line', source: 'lanes', layout: { 'line-cap': 'round' }, paint: { 'line-color': ['match', ['get', 'risk'], 'watch', RISK_COLOURS.watch, 'delayed', RISK_COLOURS.delayed, RISK_COLOURS['on-track']], 'line-width': 1.4, 'line-opacity': 0.28, 'line-dasharray': [2, 4] } },
-    { id: 'ahead', type: 'line', source: 'ahead', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 2.2, 'line-dasharray': [2, 2], 'line-opacity': 0.9 } },
-    { id: 'sailed', type: 'line', source: 'sailed', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 2.5, 'line-opacity': 0.9 } },
+    { id: 'sailed', type: 'line', source: 'sailed', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 2, 'line-dasharray': [0.1, 2.6], 'line-opacity': 0.45 } },
+    { id: 'ahead', type: 'line', source: 'ahead', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 2.4, 'line-dasharray': [0.1, 2.4], 'line-opacity': 0.95 } },
   ],
 });
 
-/** One managed native marker per declarative child; no mutable marker registry or reconciliation loop. */
 function MapMarker(props: Readonly<{ runtime: Runtime; position: LngLat; children: JSX.Element }>) {
   let element: HTMLDivElement | undefined;
   const [marker, setMarker] = createSignal<Marker>();
@@ -50,7 +49,7 @@ function MapMarker(props: Readonly<{ runtime: Runtime; position: LngLat; childre
     onCleanup(() => value.remove());
   });
   createEffect(() => { marker()?.setLngLat([...props.position]); });
-  return <div ref={element}>{props.children}</div>;
+  return <div ref={element} class="map-marker">{props.children}</div>;
 }
 const setFeatures = (map: MapLibreMap, id: string, data: GeoJSON.FeatureCollection): void => { (map.getSource(id) as GeoJSONSource | undefined)?.setData(data); };
 const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -60,6 +59,7 @@ const element = (tag: string, className: string, text?: string): HTMLElement => 
   if (text !== undefined) node.textContent = text;
   return node;
 };
+const lngLatBounds = (bounds: Bounds): [[number, number], [number, number]] => [[bounds[0], bounds[1]], [bounds[2], bounds[3]]];
 
 export function ShipmentMap(props: Selection) {
   let container: HTMLDivElement | undefined;
@@ -67,7 +67,12 @@ export function ShipmentMap(props: Selection) {
   const [failed, setFailed] = createSignal(false);
   const [now, setNow] = createSignal(Date.now());
   const [projection, setProjection] = createSignal<Projection>('mercator');
-  let framed: string | undefined;
+  const [region, setRegion] = createSignal<Region | undefined>(WORLD);
+  const [lastFocus, setLastFocus] = createSignal(props.focusId);
+  const shipments = createMemo(() => props.dashboard?.shipments ?? []);
+  const views = createMemo(() => vesselViews(shipments(), now()));
+  const ports = createMemo(() => fleetPorts(portFeatures(props.dashboard?.ports ?? [], props.dashboard?.portStatus, props.dashboard?.board), shipments()).features);
+  let framed: string | null = null;
   const [warningHost, setWarningHost] = createSignal<HTMLElement>();
   let warningPopup: Popup | undefined;
   const [warningGroup, setWarningGroup] = createSignal<{ ids: readonly string[]; coordinates: readonly [number, number] } | null>(null);
@@ -81,37 +86,41 @@ export function ShipmentMap(props: Selection) {
   const detailPosition = createMemo(() => warning()?.coordinates ?? portPlace()?.coordinates ?? (groupedWarnings().length ? warningGroup()?.coordinates : undefined), undefined, {
     equals: (left, right) => left?.[0] === right?.[0] && left?.[1] === right?.[1],
   });
-  const [frameWidth, setFrameWidth] = createSignal(0);
   const [popupHost, setPopupHost] = createSignal<HTMLElement | undefined>();
   let popup: Popup | undefined;
-  const views = createMemo(() => vesselViews(props.dashboard?.shipments ?? [], now()));
-  const ports = createMemo(() => portFeatures(props.dashboard?.ports ?? [], props.dashboard?.portStatus, props.dashboard?.board));
   const clearDetails = (): void => { setWarningGroup(null); setWarningId(null); setPortPlace(null); };
   const tick = window.setInterval(() => setNow(Date.now()), 4_000);
   onCleanup(() => window.clearInterval(tick));
+  const frame = (map: MapLibreMap, bounds: Bounds, duration: number): void => {
+    const { clientWidth, clientHeight } = map.getContainer();
+    if (clientWidth === 0 || clientHeight === 0) return;
+    const camera = cameraFor(bounds, clientWidth, clientHeight, 25);
+    map.easeTo({ center: [...camera.center], zoom: camera.zoom, duration });
+  };
   onMount(() => {
     const host = container;
     if (!host) return;
     let disposed = false;
     let created: MapLibreMap | undefined;
-    const resize = new ResizeObserver(() => { created?.resize(); setFrameWidth(host.clientWidth); });
+    const resize = new ResizeObserver(() => { created?.resize(); });
     resize.observe(host);
     onCleanup(() => { resize.disconnect(); popup?.remove(); warningPopup?.remove(); disposed = true; created?.remove(); });
     void import('maplibre-gl').then(lib => {
       if (disposed) return;
       lib.setWorkerUrl(workerUrl);
       const base = style(window.location.origin);
-      const map = new lib.Map({ container: host, style: { ...base, sources: { ...base.sources, lanes: { type: 'geojson', data: empty }, sailed: { type: 'geojson', data: empty }, ahead: { type: 'geojson', data: empty }, corridors: { type: 'geojson', data: empty }, alternative: { type: 'geojson', data: empty } } }, center: [15, 18], zoom: 0.8, minZoom: 0, maxZoom: 9, attributionControl: false, dragRotate: false, pitchWithRotate: false });
+      const map = new lib.Map({ container: host, style: { ...base, sources: { ...base.sources, sailed: { type: 'geojson', data: empty }, ahead: { type: 'geojson', data: empty }, corridors: { type: 'geojson', data: empty }, alternative: { type: 'geojson', data: empty } } }, center: [15, 18], zoom: 0.8, minZoom: 0, maxZoom: 9, attributionControl: false, dragRotate: false, pitchWithRotate: false });
       created = map;
       map.touchZoomRotate.disableRotation();
       map.addControl(new lib.AttributionControl({ compact: true, customAttribution: 'Natural Earth · SeaRoute lanes · positions simulated' }), 'bottom-right');
-      map.addControl(new lib.NavigationControl({ showCompass: false }), 'bottom-right');
       map.on('load', () => {
         map.on('click', 'corridor-hit', event => { const id = event.features?.[0]?.properties?.id; if (typeof id === 'string') props.onRoute(id); });
         map.on('mouseenter', 'corridor-hit', () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', 'corridor-hit', () => { map.getCanvas().style.cursor = ''; });
-        if (!disposed) { map.fitBounds(WORLD, { padding: 25, duration: 0 }); setReady({ lib, map }); }
+        if (!disposed) { const current = region(); if (current) frame(map, current.bounds, 0); setReady({ lib, map }); }
       });
+      map.on('dragstart', () => setRegion(undefined));
+      map.on('resize', () => { const current = region(); if (current) frame(map, current.bounds, 0); });
       map.on('error', event => { if (!disposed && 'sourceId' in event && event.sourceId === 'land') setFailed(true); });
     }).catch(() => { if (!disposed) setFailed(true); });
   });
@@ -120,7 +129,18 @@ export function ShipmentMap(props: Selection) {
     const current = ready();
     if (!current) return;
     const layers = routeLayers(views(), props.selected?.id);
-    setFeatures(current.map, 'lanes', layers.lanes); setFeatures(current.map, 'sailed', layers.sailed); setFeatures(current.map, 'ahead', layers.ahead);
+    setFeatures(current.map, 'sailed', layers.sailed); setFeatures(current.map, 'ahead', layers.ahead);
+  });
+  createEffect(() => {
+    const current = ready();
+    const focus = props.focusId;
+    if (!current || !focus || focus === lastFocus()) return;
+    const selected = views().find(view => view.id === focus);
+    const bounds = selected && boundsOf(selected.route);
+    if (!bounds) return;
+    setLastFocus(focus);
+    setRegion(undefined);
+    current.map.fitBounds(lngLatBounds(bounds), { padding: FRAME_PADDING, maxZoom: 4.2, duration: 700 });
   });
   createEffect(() => {
     const current = ready();
@@ -132,15 +152,17 @@ export function ShipmentMap(props: Selection) {
     const current = ready();
     if (!current) return;
     const option = props.inspected;
-    const key = `${frameWidth()}:` + (option ? `alternative:${option.id}` : props.corridor ? `route:${props.corridor.id}` : props.focusId ?? 'fleet');
+    const key = option ? `alternative:${option.id}` : props.corridor ? `route:${props.corridor.id}` : null;
     if (key === framed) return;
-    const focus = views().find(v => v.id === props.focusId);
-    const path = option ? [option.coordinates, props.dashboard?.ports.find(p => p.id === option.replaces)?.coordinates ?? option.coordinates] : props.corridor?.path ?? focus?.route ?? [];
-    const bounds = boundsOf(path);
-    const narrow = (container?.clientWidth ?? 500) < 500;
-    if (bounds) current.map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: narrow ? { top: 90, bottom: 160, left: 35, right: 35 } : FRAME_PADDING, maxZoom: option ? 6 : 4.2, duration: 600 });
-    else current.map.fitBounds(WORLD, { padding: 25, duration: 600 });
+    const was = framed;
     framed = key;
+    if (key === null) { if (was !== null && WORLD) { setRegion(WORLD); frame(current.map, WORLD.bounds, 600); } return; }
+    const path = option ? [option.coordinates, props.dashboard?.ports.find(p => p.id === option.replaces)?.coordinates ?? option.coordinates] : props.corridor?.path ?? [];
+    const bounds = boundsOf(path);
+    if (!bounds) return;
+    setRegion(undefined);
+    const narrow = (container?.clientWidth ?? 500) < 500;
+    current.map.fitBounds(lngLatBounds(bounds), { padding: narrow ? { top: 90, bottom: 160, left: 35, right: 35 } : FRAME_PADDING, maxZoom: option ? 6 : 4.2, duration: 600 });
   });
   createEffect(() => {
     const current = ready();
@@ -235,7 +257,7 @@ export function ShipmentMap(props: Selection) {
     warningTrigger = event.currentTarget; setPortPlace(place);
     ready()?.map.panTo([...place.coordinates], { duration: 250 });
   };
-  return <div class="map-canvas operating-map">
+  return <div class="map-canvas operating-map gz-map">
     <Show keyed when={warningHost()}>{host => <Portal mount={host}>
       <Show when={portPlace()} fallback={
         <Show when={warning()} fallback={<WarningGroup items={groupedWarnings()} onClose={closeWarning} onSelect={setWarningId} onLayout={() => { const position = detailPosition(); if (position) warningPopup?.setLngLat([...position]); }} onZoom={() => { const current = ready(); const position = warningGroup()?.coordinates; if (current && position) { closeWarning(); current.map.easeTo({ center: [...position], zoom: Math.min(current.map.getMaxZoom(), current.map.getZoom() + 2), duration: 450 }); } }} />}>
@@ -245,19 +267,41 @@ export function ShipmentMap(props: Selection) {
     </Portal>}</Show>
     <div ref={container} class="map-gl" tabIndex={-1} role="group" aria-label="Ship map. Select a ship to inspect its route. City badges show anchored ships, not arrivals or relevance." />
     <Show when={popupHost()}>{host => <Portal mount={host()}><button class="popup-dismiss" aria-label="Close ship popup" onClick={props.onDismiss}>×</button><button class="popup-open" onClick={props.onOpen}><span class="reference">{props.selected?.reference}</span><strong>{props.selected?.vessel}</strong><span class="popup-eta">ETA {props.selected && new Date(props.selected.eta).toLocaleString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} UTC</span><span class={`risk-badge ${props.selected?.risk}`}>{props.selected && riskLabel[props.selected.risk]}</span><span class="popup-brief">{props.selected && shipmentBrief(props.selected).text}</span><span class="popup-source">{props.selected && shipmentBrief(props.selected).source}</span><span class="popup-cta">Open voyage briefing →</span></button></Portal>}</Show>
-    <div class="map-projection" role="group" aria-label="Map projection" style={{ position: 'absolute', top: '18px', left: '18px', display: 'flex', gap: '4px', 'z-index': '3' }}><button type="button" aria-pressed={projection() === 'mercator'} onClick={() => setProjection('mercator')}>Map</button><button type="button" aria-pressed={projection() === 'globe'} onClick={() => setProjection('globe')}>Globe</button></div>
-    <button type="button" class="map-whole-world" style={{ position: 'absolute', top: '18px', right: '18px', 'z-index': '3' }} onClick={() => ready()?.map.fitBounds(WORLD, { padding: 25, duration: 700 })}>Whole world</button>
-    <Show when={ready()}>{runtime => <div style={{ display: 'none' }}>
-      <For each={ports().features}>{port => <MapMarker runtime={runtime()} position={port.geometry.coordinates}><button type="button" class="city-marker" data-port-id={port.properties.id} aria-haspopup="dialog" title={port.properties.label.replace('\n', ': ')} aria-label={`${port.properties.label.replace('\n', ': ')} port details`} onClick={event => openPort(event, port.properties.id)} style={{ position: 'relative', display: 'block', padding: '0', cursor: 'pointer', width: '10px', height: '10px', border: `1px solid ${PORT_COLOURS[port.properties.risk]}`, background: port.properties.risk === 'unreported' ? '#111315' : PORT_COLOURS[port.properties.risk] }}><Show when={port.properties.anchored !== null}><span class="city-count" style={{ position: 'absolute', left: '12px', top: '-9px', 'border-radius': '50%', background: PORT_COLOURS[port.properties.risk], color: '#111315', 'font-size': '10px', 'font-weight': '700', 'min-width': '15px', height: '15px', 'text-align': 'center', 'line-height': '15px' }}>{port.properties.anchored}</span></Show></button></MapMarker>}</For>
-      <For each={views()}>{ship => <MapMarker runtime={runtime()} position={ship.position}><button type="button" class={`pixel-vessel ${ship.risk}${props.selected?.id === ship.id ? ' selected' : ''}`} aria-label={`${ship.vessel}, ${riskLabel[ship.risk]}`} aria-pressed={props.selected?.id === ship.id} title={`${ship.vessel} · ${riskLabel[ship.risk]}`} onClick={() => { clearDetails(); props.onSelect(ship.id); }} style={{ position: 'relative', padding: '5px', color: RISK_COLOURS[ship.risk], background: 'transparent', border: props.selected?.id === ship.id ? '1px solid #8cc3a1' : '1px solid transparent' }}>
-        <svg class="pixel-ship" width="30" height="20" viewBox="0 0 15 10" shape-rendering="crispEdges" aria-hidden="true"><path fill="currentColor" d="M6 0h1v2h3v3h3v1h2v2h-2v1H2V8H0V6h3V3h3zm-1 4v1h2V4zm3 0v1h1V4z" /></svg>
-        <Show when={ship.risk !== 'on-track'}><span class="pixel-vessel-alert" aria-hidden="true" style={{ position: 'absolute', top: '-7px', right: '-7px', color: RISK_COLOURS[ship.risk] }}>{ship.risk === 'watch' ? '▲' : '!'}</span></Show>
-        <Show when={props.selected?.id === ship.id}><span class="pixel-vessel-name" style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', color: '#e8e4d6', 'white-space': 'nowrap', 'font-size': '11px' }}>{ship.vessel}</span></Show>
-      </button></MapMarker>}</For>
+    <div class="gz-map-projection" role="group" aria-label="Map projection">
+      <button type="button" aria-pressed={projection() === 'mercator'} onClick={() => setProjection('mercator')}>Map</button>
+      <button type="button" aria-pressed={projection() === 'globe'} onClick={() => setProjection('globe')}>Globe</button>
+    </div>
+    <Menu.Root positioning={{ placement: 'bottom-end' }} onSelect={details => { const picked = regions.find(value => value.id === details.value); const map = ready()?.map; if (picked && map) { setRegion(picked); frame(map, picked.bounds, 700); } }}>
+      <Menu.Trigger class="gz-map-region">{region()?.label ?? 'Region'}<ChevronDown size={16} /></Menu.Trigger>
+      <Portal><Menu.Positioner><Menu.Content class="gz-map-region-menu">
+        <Index each={regions}>{value => <Menu.Item value={value().id} class="gz-map-region-item" data-current={region()?.id === value().id ? '' : undefined}>{value().label}</Menu.Item>}</Index>
+      </Menu.Content></Menu.Positioner></Portal>
+    </Menu.Root>
+    <Show when={ready()}>{runtime => <div class="gz-map-staging">
+      <Index each={ports()}>{port => <MapMarker runtime={runtime()} position={port().geometry.coordinates}>
+        <button type="button" class={`gz-city ${port().properties.risk}`} data-port-id={port().properties.id} aria-haspopup="dialog" title={port().properties.label.replace('\n', ': ')} aria-label={`${port().properties.label.replace('\n', ': ')} port details`} onClick={event => openPort(event, port().properties.id)}>
+          <Show when={port().properties.anchored !== null}><span class="gz-city-count">{port().properties.anchored}</span></Show>
+          <Show when={props.selected?.destination === port().properties.id}><span class="gz-city-pill">{port().properties.name}</span></Show>
+        </button>
+      </MapMarker>}</Index>
+      <Index each={views()}>{ship => {
+        const selected = (): boolean => props.selected?.id === ship().id;
+        const status = (): string => statusLine(ship());
+        return <MapMarker runtime={runtime()} position={ship().position}>
+          <button type="button" class={`gz-ship ${ship().risk}`} classList={{ selected: selected() }} aria-label={`${ship().vessel}, ${status()}`} aria-pressed={selected()} title={`${ship().vessel} · ${status()}`} onClick={() => { clearDetails(); props.onSelect(ship().id); }}>
+            <PixelShip />
+            <RiskMark risk={ship().risk} />
+            <Show when={selected()}>
+              <svg class="gz-ship-brackets" viewBox="0 0 44 30" preserveAspectRatio="none" aria-hidden="true"><path d="M1 8V1h7M36 1h7v7M43 22v7h-7M8 29H1v-7" fill="none" stroke="currentColor" stroke-width="2" /></svg>
+              <span class="gz-ship-label"><strong>{ship().vessel}</strong><span>{status()}</span></span>
+            </Show>
+          </button>
+        </MapMarker>;
+      }}</Index>
     </div>}</Show>
     <Show when={props.inspected}><div class="alternative-map-caption">{props.inspected?.name} · indicative connection; revised ETA unconfirmed</div></Show>
     <Show when={failed()}><p class="map-fallback" role="status">The map could not be drawn. The fleet list retains every ship and ETA.</p></Show>
-    <p class="map-interaction-hint" style={{ position: 'absolute', bottom: '18px', width: '100%', 'text-align': 'center', color: '#aaa99e', 'font-size': '11px', 'pointer-events': 'none' }}>Drag to pan · Scroll to zoom</p>
+    <p class="gz-map-hint">Drag to pan · Scroll to zoom</p>
   </div>;
 }
 const backdrop = new URL('./world-coastline.svg', import.meta.url).href;

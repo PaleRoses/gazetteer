@@ -244,3 +244,34 @@ describe('bookings', () => {
     ledger.close();
   });
 });
+
+describe('the act 2 demo controls', () => {
+  test('are POST-only, for a member of the workspace, and answer with the dashboard the control produced', async () => {
+    const access = createAccess(':memory:');
+    const called: string[] = [];
+    const monitoring = {
+      ...monitoringFixture,
+      withdrawTruck: async (workspaceId: string) => { called.push(`withdraw:${workspaceId}`); return relaySuccess(dashboard); },
+      restartCargo: async (workspaceId: string) => { called.push(`restart:${workspaceId}`); return { status: 'unavailable' as const, message: 'The cargo agent is not ready yet.' }; },
+    };
+    const api = createApi({ access, monitoring, origin });
+    const owner = await signup(api, 'owner');
+    const other = await signup(api, 'other');
+    const mine = owner.workspaces[0];
+    if (!mine) throw new Error('Workspace missing');
+    const withdraw = `/api/workspaces/${mine.id}/withdraw-truck`;
+    const restart = `/api/workspaces/${mine.id}/restart-cargo`;
+    expect((await api(request(withdraw, undefined, {}))).status).toBe(401);
+    expect((await api(request(withdraw, other.cookie, {}))).status).toBe(403);
+    expect(called).toEqual([]);
+    const done = await api(request(withdraw, owner.cookie, {}));
+    expect(done.status).toBe(200);
+    expect((await done.json() as Dashboard).updatedAt).toBe(dashboard.updatedAt);
+    const refused = await api(request(restart, owner.cookie, {}));
+    expect(refused.status).toBe(503);
+    expect(called).toEqual([`withdraw:${mine.id}`, `restart:${mine.id}`]);
+    expect((await api(request(withdraw, owner.cookie))).status).toBe(405);
+    expect((await api(request(restart, owner.cookie))).status).toBe(405);
+    access.close();
+  });
+});
