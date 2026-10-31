@@ -134,3 +134,13 @@ describe('assessment pipeline', () => {
     expect(unexposed.shipment).toBe(laurel);
   });
 });
+
+describe('environment edge', () => {
+  test('no key means no model; a malformed workspace id fails as data, never as a throw', async () => {
+    const { assessmentFromEnv } = await import('../src/server/assessment');
+    expect(assessmentFromEnv({}).model).toBeNull();
+    const bad = assessmentFromEnv({ ANTHROPIC_API_KEY: 'k', ANTHROPIC_WORKSPACE_ID: 'default' });
+    expect(await bad.model!({ system: '', prompt: '' })).toEqual({ status: 'failed', message: expect.stringContaining('wrkspc_') });
+    expect(assessmentFromEnv({ ANTHROPIC_API_KEY: 'k', ANTHROPIC_WORKSPACE_ID: 'wrkspc_abc123' }).model).not.toBeNull();
+  });
+});

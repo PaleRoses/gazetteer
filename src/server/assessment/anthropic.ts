@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { z } from 'zod';
 import type { AssessDeps, AssessModel } from './assess';
 import { assessmentSchema } from './schema';
 
@@ -24,8 +25,13 @@ export const anthropicModel = (apiKey: string, model: string, workspaceId?: stri
 };
 
 /** Thin env edge: no ANTHROPIC_API_KEY means no model, which the pipeline reports as a deterministic fallback. */
+export const workspaceIdSchema = z.string().regex(/^wrkspc_[A-Za-z0-9]+$/, 'ANTHROPIC_WORKSPACE_ID must be a wrkspc_ id');
+
 export const assessmentFromEnv = (env: Readonly<Record<string, string | undefined>>): AssessDeps => {
   const modelId = env.GAZETTEER_ASSESSMENT_MODEL || assessmentModel;
   const key = env.ANTHROPIC_API_KEY;
-  return { model: key ? anthropicModel(key, modelId, env.ANTHROPIC_WORKSPACE_ID || undefined) : null, modelId };
+  if (!key) return { model: null, modelId };
+  if (!env.ANTHROPIC_WORKSPACE_ID) return { model: anthropicModel(key, modelId), modelId };
+  const workspace = workspaceIdSchema.safeParse(env.ANTHROPIC_WORKSPACE_ID);
+  return { model: workspace.success ? anthropicModel(key, modelId, workspace.data) : async () => ({ status: 'failed', message: workspace.error.issues[0]?.message ?? 'invalid workspace id' }), modelId };
 };
