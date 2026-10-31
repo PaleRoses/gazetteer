@@ -5,6 +5,13 @@ import type { NoticeSeverity } from '../../sources/notice';
 import { clip, heartbeat, reportId } from './report';
 
 type Level = 0 | 1 | 2;
+
+/**
+ * The hazard watch's alarm. Each feed declares how long a copy stays fresh: USGS's summary feed is "updated every minute" and served
+ * with max-age=60, NWS alerts with max-age=5, and GDACS declares nothing. A minute is the slowest declared lifetime, so a shorter alarm
+ * would read USGS's cached copy again. The shared sweep (sources/poll.ts) holds one fetch for every city for the same minute.
+ */
+export const hazardCheckMs = 60_000;
 const riskOf = (level: Level): PortRisk => (['normal', 'elevated', 'severe'] as const)[level];
 const severityRank: Readonly<Record<NoticeSeverity, number>> = { minor: 0, moderate: 1, severe: 2, extreme: 3 };
 

@@ -12,6 +12,7 @@ import type { RelayIdentity } from '../../relay/client';
 import { distanceKm } from '../../sources/geo';
 import type { LonLat } from '../../sources/notice';
 import { gfwDefaults, isInPort, type GfwParameters } from '../../telemetry/gfw';
+import { checkIntervalMs } from '../alarm';
 import { clip, heartbeat, plural, reportId } from './report';
 
 export type Level = 0 | 1 | 2;
@@ -43,6 +44,13 @@ export const anchorage: GfwParameters = { ...gfwDefaults, anchorageEntryKm: 30, 
 /** One stationary observation is posted once, when the situation starts, and never repeated, so it lapses after a day: twice GFW's 720-minute minimum stationary period. */
 export const anchoredTtlHours = 24;
 export const arrivalWindowHours = 48;
+
+/**
+ * The traffic watch's alarm, for when nothing is delivered. Its only provider is the ships: their posts are delivered and decided as
+ * they are said, so the alarm only reads Relay when no server delivers and slides the 48-hour window. A ship observes once per its own
+ * check, so a shorter alarm would read nothing new.
+ */
+export const trafficCheckMs = checkIntervalMs;
 
 export const countLevel = (band: Bands, previous: Level, value: number): Level => {
   const entered: Level = value >= band.severe.enter ? 2 : value >= band.elevated.enter ? 1 : 0;

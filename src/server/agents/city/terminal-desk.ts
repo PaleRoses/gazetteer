@@ -5,7 +5,7 @@ import { recoveryMessage, type RecoveryMessage } from '../../../core/recovery';
 import { terminalQuote } from '../../../core/services';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/types';
 import { ledgerAt } from '../../booking/ledger';
-import { postBoard, readBoard } from '../../relay/board';
+import { postBoard, readBoard, type BoardRead } from '../../relay/board';
 import type { RelayIdentity } from '../../relay/client';
 import { joinRelay } from '../../relay/connect';
 import { drainInbox, emptyInbox, mergeInbox, type Inbox } from '../../relay/inbox';
@@ -65,9 +65,11 @@ export class TerminalDesk extends Actor {
     return relaySuccess(null);
   }
 
-  /** The server heard these on the Relay stream: take them locally instead of reading Relay. */
+  /** The server heard these on the Relay stream: taken locally and answered in the same turn, not at the next alarm. */
   async deliver(batch: Inbox): Promise<void> {
-    if (this.state) this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, { board: batch.board, disruptions: [] }) };
+    if (!this.state) return;
+    this.state = { ...this.state, inbox: mergeInbox(this.state.inbox, { board: batch.board, disruptions: [] }) };
+    await this.decide(null);
   }
 
   /** Decides from what was delivered locally whatever Relay does; a Relay read only completes the history once. */
@@ -75,17 +77,22 @@ export class TerminalDesk extends Actor {
     await this.scheduleCheck();
     if (!this.state) return { status: 'unavailable', message: 'The terminal desk has not been initialized.' };
     const committed = this.state;
-    const heard = committed.inbox.board;
     const history = committed.synced || !committed.ready || !committed.relay ? null : await readBoard(committed.relay, null);
-    const fromRelay = history?.status === 'ok' ? history.value.messages : [];
-    const messages = [...new Map([...fromRelay, ...heard].map(message => [message.id, message] as const)).values()].filter(isRecovery);
-    const decided = hear(contextOf(committed), committed.memory, messages);
-    const latest = this.state ?? committed;
-    this.state = {
-      ...latest, memory: decided.memory, outbox: enqueue(latest.outbox, decided.posts),
-      synced: latest.synced || history?.status === 'ok', inbox: drainInbox(latest.inbox, { board: heard, disruptions: [] }),
-    };
+    await this.decide(history?.status === 'ok' ? history.value : null);
     return history?.status === 'unavailable' ? history : relaySuccess(null);
+  }
+
+  /** One decision from the memory, the delivered inbox and Relay's history when a check read it; it makes no Relay call of its own. */
+  private async decide(fromRelay: BoardRead | null): Promise<void> {
+    const committed = this.state;
+    if (!committed) return;
+    const heard = committed.inbox.board;
+    const messages = [...new Map([...(fromRelay?.messages ?? []), ...heard].map(message => [message.id, message] as const)).values()].filter(isRecovery);
+    const decided = hear(contextOf(committed), committed.memory, messages);
+    this.state = {
+      ...committed, memory: decided.memory, outbox: enqueue(committed.outbox, decided.posts),
+      synced: committed.synced || fromRelay !== null, inbox: drainInbox(committed.inbox, { board: heard, disruptions: [] }),
+    };
   }
 
   /** What this desk has decided that Relay has not acknowledged yet; the server echoes it at once and writes it to Relay itself. */
