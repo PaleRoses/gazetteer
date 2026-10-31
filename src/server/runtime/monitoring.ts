@@ -74,8 +74,8 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const hub = createHub();
   const relay = new AgentRelay({ workspaceKey });
   const board = createBoardModel(workspaceId => recentBoard(request => relay.messages.list(relayChannel(workspaceId), request)), { onHydrated: workspaceId => { if (hub.subscribers(workspaceId) > 0) void announce(workspaceId); } });
-  /** Relay is rate limited and slow: every Relay-touching actor call from here shares three slots. */
-  const relayLimit = createLimiter(3);
+  /** Relay is rate limited and slow: every Relay-touching actor call from here shares eight slots. */
+  const relayLimit = createLimiter(8);
 
   const portKey = (id: PortId): string => `port:${id}`;
   const shipKey = (id: string): string => `ship:${id}`;
@@ -88,9 +88,12 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     seedsByWorkspace.set(workspaceId, seeds);
     return seeds;
   };
-  /** Ready means initialised AND synced: the actor's one Relay read (its history) is paid here, in the background, so no later check waits on Relay. */
-  const bringUp = (initialize: () => Promise<RelayOutcome<null>>, sync: () => Promise<RelayOutcome<unknown>>) => async (): Promise<boolean> =>
-    (await initialize()).status === 'ok' && (await sync()).status === 'ok';
+  /** Ready means initialised. The actor's one Relay read (its history) follows in the background through the shared slots, so readiness never waits on it. */
+  const bringUp = (initialize: () => Promise<RelayOutcome<null>>, sync: () => Promise<RelayOutcome<unknown>>) => async (): Promise<boolean> => {
+    if ((await initialize()).status !== 'ok') return false;
+    void relayLimit(sync).catch(() => undefined);
+    return true;
+  };
   /** The first actor port in registry order creates the workspace channel; every other actor starts after it. */
   const tasksOf = (workspaceId: string): readonly StartupTask[] => {
     const creator = actorPorts[0] ? portKey(actorPorts[0].id) : undefined;
