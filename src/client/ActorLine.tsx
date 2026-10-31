@@ -2,7 +2,7 @@ import { ArrowRight } from 'lucide-solid';
 import { createEffect, createMemo, createSignal, Match, on, onCleanup, Show, Switch } from 'solid-js';
 import type { BoardAuthor, BoardMessage } from '../core/board';
 import type { Dashboard, Shipment } from '../core/types';
-import { portName, time } from './presentation';
+import { portName } from './presentation';
 import { PixelCrane, PixelShip, PixelTruck, RiskMark } from './sprites';
 import './styles/ticker.css';
 
@@ -32,6 +32,8 @@ const spriteOf = (author: BoardAuthor): Sprite => {
   const unhandled: never = author;
   return unhandled;
 };
+
+const clock = (value: string): string => new Date(value).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
 
 const placeOf = (author: BoardAuthor, dashboard: Dashboard): string => {
   switch (author.role) {
@@ -82,7 +84,7 @@ export function ActorLine(props: Readonly<{ dashboard: Dashboard; onOpenMessage:
   const current = createMemo(() => posts()[index() % (count() || 1)]);
   return <div class="actor-line"><Show when={current()} fallback={<p class="actor-waiting">{props.dashboard.board === undefined ? 'Actor messages have not been reported.' : 'No actor messages are available in this snapshot.'}</p>}>{message => <>
     <ActorSprite author={message().author} dashboard={props.dashboard} label={actorName(message().author, props.dashboard)} />
-    <a class="actor-dispatch" href={`#${encodeURIComponent(boardAnchor(message().id))}`} onClick={() => props.onOpenMessage(message().id)}><span class="actor-byline">{placeOf(message().author, props.dashboard)} · <time dateTime={message().at}>{time(message().at)} UTC</time></span><span class="actor-summary">{message().summary}</span></a>
+    <a class="actor-dispatch" href={`#${encodeURIComponent(boardAnchor(message().id))}`} onClick={() => props.onOpenMessage(message().id)}><span class="actor-byline">{placeOf(message().author, props.dashboard)} · <time dateTime={message().at}>{clock(message().at)} UTC</time></span><span class="actor-summary">{message().summary}</span></a>
     <a class="ticker-thread" href={`#${encodeURIComponent(boardAnchor(message().id))}`} onClick={() => props.onOpenMessage(message().id)}>View thread <ArrowRight size={20} stroke-width={1.75} aria-hidden="true" /></a>
     <Show when={count() > 1}><span class="ticker-divider" aria-hidden="true" /><button class="ticker-pause" type="button" aria-label="Pause actor ticker" aria-pressed={paused()} onClick={() => setPaused(value => !value)}><span /><span /></button></Show>
   </>}</Show></div>;
