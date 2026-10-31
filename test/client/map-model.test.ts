@@ -113,6 +113,9 @@ describe('route layers', () => {
     const view = need(views.find(value => value.id === other.properties?.id));
     expect(other.properties?.risk).toBe(view.risk);
     expect(other.geometry.coordinates[0]).toEqual([...need(splitAt(view.route, view.progress).ahead[0])]);
+    const voyage = need(routeLayers(views, 'gz-1043').voyages.features.find(feature => feature.properties?.id === other.properties?.id));
+    expect(voyage.geometry.coordinates).toEqual(view.route.map(point => [...point]));
+    expect(voyage.geometry.coordinates.at(-1)).toEqual(other.geometry.coordinates.at(-1));
     const unselected = routeLayers(views, undefined);
     expect(unselected.lanes.features.some(feature => feature.properties?.id === 'gz-1043')).toBe(true);
     expect(unselected.sailed.features).toEqual([]);
