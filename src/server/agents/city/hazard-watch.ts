@@ -3,8 +3,8 @@ import type { BoardMessage, HazardReport } from '../../../core/board';
 import type { PortId } from '../../../core/ports';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/types';
 import { postBoard } from '../../relay/board';
-import { attemptRelay, publishDisruption, registerParticipant, relayChannel, type RelayIdentity } from '../../relay/client';
-import { connect } from '../../relay/connect';
+import { attemptRelay, publishDisruption, type RelayIdentity } from '../../relay/client';
+import { joinRelay } from '../../relay/connect';
 import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
 import { toDisruption } from '../../sources/disruption';
 import { pollPort } from '../../sources/poll';
@@ -13,7 +13,7 @@ import { assessHazards, decideHazards } from './hazards';
 import { accept, adopt, waiting } from './outbox';
 
 type HazardState = Readonly<{
-  city: PortId; relay: RelayIdentity; ready: boolean;
+  city: PortId; relay: RelayIdentity | null; ready: boolean;
   outbox: readonly Disruption[]; published: readonly string[];
   /** The last report this watch decided; its sequence numbers the next one. */
   report: HazardReport | null;
@@ -46,18 +46,21 @@ export class HazardWatch extends Actor {
   }
 
   async initialize(workspaceId: string, city: PortId, workspaceKey: string, createChannel: boolean): Promise<RelayOutcome<null>> {
-    if (this.state?.ready) return relaySuccess(null);
+    if (this.state) return relaySuccess(null);
     await this.scheduleCheck();
-    if (!this.state) {
-      const registration = await attemptRelay(() => registerParticipant(workspaceKey, this.id, relayChannel(workspaceId)), 'Agent Relay registration is unavailable. Retry initialization.');
-      if (registration.status === 'unavailable') return registration;
-      this.state = { city, relay: registration.value, ready: false, outbox: [], published: [], report: null, boardOutbox: [] };
-    }
+    this.state = { city, relay: null, ready: false, outbox: [], published: [], report: null, boardOutbox: [] };
     this.state = adoptAwaiting(this.state, this.awaiting);
     this.awaiting = [];
-    const connection = await connect(this.state, createChannel);
-    if (connection.status === 'unavailable') return connection;
-    this.state = { ...this.state, ready: true };
+    return relaySuccess(null);
+  }
+
+  /** Relay membership, off the readiness path: the server calls this in the background and retries it with backoff. Registered once, remembered at once. */
+  async join(workspaceId: string, workspaceKey: string, createChannel: boolean): Promise<RelayOutcome<null>> {
+    if (!this.state) return { status: 'unavailable', message: 'Not initialized.' };
+    if (this.state.ready) return relaySuccess(null);
+    const member = await joinRelay(this.state, { name: this.id, workspaceId, workspaceKey, createChannel }, relay => { this.state = this.state && { ...this.state, relay }; });
+    if (member.status === 'unavailable') return member;
+    this.state = this.state && { ...this.state, relay: member.value, ready: true };
     return relaySuccess(null);
   }
 
@@ -98,7 +101,7 @@ export class HazardWatch extends Actor {
    * writes it to Relay itself: an actor that awaited Relay would hold its own queue for as long as Relay takes.
    */
   async unpublished(): Promise<Outgoing<Disruption> | null> {
-    return this.state ? { relay: this.state.relay, board: this.state.boardOutbox, disruptions: this.state.outbox } : null;
+    return this.state ? { relay: this.state.ready ? this.state.relay : null, board: this.state.boardOutbox, disruptions: this.state.outbox } : null;
   }
 
   /** Relay acknowledged these: board posts leave the outbox, disruptions move to `published`. */
@@ -106,7 +109,7 @@ export class HazardWatch extends Actor {
     if (!this.state) return;
     const done = this.state.outbox.filter(event => sent.disruptions.includes(event.id));
     this.state = {
-      ...this.state, ready: true,
+      ...this.state,
       outbox: without(this.state.outbox, sent.disruptions), published: [...this.state.published, ...done.map(event => event.id)],
       boardOutbox: without(this.state.boardOutbox, sent.board),
     };
@@ -116,11 +119,11 @@ export class HazardWatch extends Actor {
   async publish(): Promise<RelayOutcome<null>> {
     const outgoing = await this.unpublished();
     if (!outgoing || !this.state) return { status: 'unavailable', message: 'The hazard watch has not been initialized.' };
-    const connection = await connect(this.state, this.state.city === 'singapore');
-    if (connection.status === 'unavailable') return connection;
+    const { relay } = outgoing;
+    if (!relay) return { status: 'unavailable', message: 'Not yet a member of the Relay channel.' };
     const sent = await transmit(outgoing, {
-      post: message => postBoard(outgoing.relay, message),
-      publish: disruption => attemptRelay(() => publishDisruption(outgoing.relay, disruption), 'Agent Relay publication is unavailable. The disruption remains queued for retry.'),
+      post: message => postBoard(relay, message),
+      publish: disruption => attemptRelay(() => publishDisruption(relay, disruption), 'Agent Relay publication is unavailable. The disruption remains queued for retry.'),
     });
     await this.acknowledge({ board: sent.board, disruptions: sent.disruptions });
     return sent.failure ? { status: 'unavailable', message: sent.failure } : relaySuccess(null);

@@ -13,9 +13,9 @@ import type { TerminalDesk } from '../../../../src/server/agents/city/terminal-d
 import type { TrafficWatch } from '../../../../src/server/agents/city/traffic-watch';
 import type { Disruption } from '../../../../src/core/types';
 
-type HazardClient = Pick<HazardWatch, 'initialize' | 'simulate' | 'check' | 'publish' | 'queued'>;
+type HazardClient = Pick<HazardWatch, 'initialize' | 'join' | 'simulate' | 'check' | 'publish' | 'queued'>;
 const methods = [
-  { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' }, { name: 'publish', result: 'value' }, { name: 'queued', result: 'value' },
+  { name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' }, { name: 'publish', result: 'value' }, { name: 'queued', result: 'value' },
 ] as const;
 const disruption: Disruption = {
   id: 'restart-test-disruption', portId: 'singapore', delayHours: 6,
@@ -79,6 +79,7 @@ test('a disruption simulated before registration, across a restart, is published
       expect(await port.queued()).toBe(1);
       expect(relay.sent.size).toBe(0);
       expect(await port.initialize('workspace', 'singapore', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
+      expect(await port.join('workspace', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
       expect(await port.check()).toEqual({ status: 'ok', value: null });
       expect(await port.publish()).toEqual({ status: 'ok', value: null });
       expect(relay.sent.has(disruption.id)).toBe(true);
@@ -101,9 +102,9 @@ test('a disruption simulated before registration, across a restart, is published
   }
 }, 180_000);
 
-type TrafficClient = Pick<TrafficWatch, 'initialize' | 'deliver' | 'check' | 'unpublished'>;
+type TrafficClient = Pick<TrafficWatch, 'initialize' | 'join' | 'deliver' | 'check' | 'unpublished'>;
 const trafficMethods = [
-  { name: 'initialize', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'unpublished', result: 'value' },
+  { name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'unpublished', result: 'value' },
 ] as const;
 
 test('with Relay down for the whole check, a traffic watch still decides from what was delivered locally and queues its report', async () => {
@@ -122,6 +123,7 @@ test('with Relay down for the whole check, a traffic watch still decides from wh
       const transport = createActorTransport({ projectId: runtime.connection.projectId, controlPlaneUrl: runtime.connection.controlPlaneUrl, apiKey: runtime.connection.apiKey, homeRegion: runtime.connection.storageRegion });
       const watch = createActorStub<TrafficClient>('TrafficWatch', 'offline-test-city-singapore-traffic', trafficMethods, transport);
       expect(await watch.initialize('workspace', 'singapore', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
+      expect(await watch.join('workspace', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
       relay.outage.down = true;
       await watch.deliver({ board: [stopped('a'), stopped('b')], disruptions: [] });
       expect((await watch.check()).status).toBe('unavailable');
@@ -137,9 +139,9 @@ test('with Relay down for the whole check, a traffic watch still decides from wh
   }
 }, 180_000);
 
-type DeskClient = Pick<TerminalDesk, 'initialize' | 'deliver' | 'check' | 'unpublished'>;
+type DeskClient = Pick<TerminalDesk, 'initialize' | 'join' | 'deliver' | 'check' | 'unpublished'>;
 const deskMethods = [
-  { name: 'initialize', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'unpublished', result: 'value' },
+  { name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'deliver', result: 'void' }, { name: 'check', result: 'value' }, { name: 'unpublished', result: 'value' },
 ] as const;
 
 test('the terminal desk answers from the world\'s Rotterdam windows with Relay down, and its offer waits in the outbox', async () => {
@@ -158,12 +160,50 @@ test('the terminal desk answers from the world\'s Rotterdam windows with Relay d
       const transport = createActorTransport({ projectId: runtime.connection.projectId, controlPlaneUrl: runtime.connection.controlPlaneUrl, apiKey: runtime.connection.apiKey, homeRegion: runtime.connection.storageRegion });
       const desk = createActorStub<DeskClient>('TerminalDesk', 'desk-test-city-rotterdam-terminal', deskMethods, transport);
       expect(await desk.initialize('workspace', 'rotterdam', 'workspace-key', true, join(dataDir, 'bookings.sqlite'), anchor)).toEqual({ status: 'ok', value: null });
+      expect(await desk.join('workspace', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
       relay.outage.down = true;
       await desk.deliver({ board: [ask], disruptions: [] });
       expect((await desk.check()).status).toBe('unavailable');
       const queued = (await desk.unpublished())?.board ?? [];
       expect(queued).toMatchObject([{ kind: 'recovery.offer', caseId: 'case-1', answers: ['case-1/request/open/unload'], offer: { service: 'unload', at: later(8), priceEur: 140 } }]);
       expect(relay.sent.size).toBe(0);
+    } finally { await runtime.stop(); }
+  } finally {
+    relay.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+}, 180_000);
+
+test('an actor is ready and deciding with Relay down from the very first moment: initialize never calls Relay, nothing is posted, and the report waits for a membership', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'gazetteer-cold-'));
+  const relay = fakeRelay();
+  relay.outage.down = true;
+  const project = projectWith({ RELAY_BASE_URL: relay.url, GAZETTEER_LIVE_SOURCES: 'off' });
+  const singapore = portById.get('singapore')!;
+  const observedAt = new Date(Date.now() - 3_600_000).toISOString();
+  const stopped = (shipmentId: string): ShipObservation => ({
+    id: `obs:${shipmentId}`, kind: 'ship.observation', author: { role: 'ship', id: shipmentId, vessel: shipmentId }, at: observedAt, summary: 'stopped',
+    shipmentId, signals: ['stationary-outside-port'], position: [singapore.coordinates[0], singapore.coordinates[1] + 0.1], nearPort: 'singapore', provider: 'test', observedAt,
+  });
+  try {
+    const runtime = await startLocalActors({ project, projectId: 'gazetteer-cold', entrypoint: 'src/server/agents/index.ts', dataDir, apiKey: randomUUID(), quiet: true });
+    try {
+      const transport = createActorTransport({ projectId: runtime.connection.projectId, controlPlaneUrl: runtime.connection.controlPlaneUrl, apiKey: runtime.connection.apiKey, homeRegion: runtime.connection.storageRegion });
+      const watch = createActorStub<TrafficClient>('TrafficWatch', 'cold-test-city-singapore-traffic', trafficMethods, transport);
+      const started = Date.now();
+      expect(await watch.initialize('workspace', 'singapore', 'workspace-key', true)).toEqual({ status: 'ok', value: null });
+      expect(Date.now() - started).toBeLessThan(5_000);
+      await watch.deliver({ board: [stopped('a'), stopped('b')], disruptions: [] });
+      expect((await watch.check()).status).toBe('ok');
+      const outgoing = await watch.unpublished();
+      expect(outgoing?.relay).toBeNull();
+      expect(outgoing?.board.map(message => message.kind)).toEqual(['city.traffic']);
+      expect((await watch.join('workspace', 'workspace-key', true)).status).toBe('unavailable');
+      expect((await watch.unpublished())?.relay).toBeNull();
+      relay.outage.down = false;
+      expect((await watch.join('workspace', 'workspace-key', true)).status).toBe('ok');
+      expect((await watch.unpublished())?.relay).not.toBeNull();
     } finally { await runtime.stop(); }
   } finally {
     relay.stop();

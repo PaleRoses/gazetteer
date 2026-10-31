@@ -31,22 +31,22 @@ import { createHub, type Subscribe } from './hub';
 import { actorClients, createRecovery } from './recovery';
 import { attemptRelay, disruptionFrom, publishDisruption, relayChannel, workspaceOfChannel } from '../relay/client';
 
-type TrafficClient = Pick<TrafficWatch, 'initialize' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
-type HazardClient = Pick<HazardWatch, 'initialize' | 'simulate' | 'check' | 'resume' | 'queued' | 'unpublished' | 'acknowledge'>;
+type TrafficClient = Pick<TrafficWatch, 'initialize' | 'join' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
+type HazardClient = Pick<HazardWatch, 'initialize' | 'join' | 'simulate' | 'check' | 'resume' | 'queued' | 'unpublished' | 'acknowledge'>;
 /** What the runtime asks of every agent stationed at a city, whatever element it watches. */
-type WatchClient = Pick<TrafficClient & HazardClient, 'initialize' | 'check' | 'resume' | 'unpublished' | 'acknowledge'>;
-type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'snapshot' | 'ask' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge' | 'pause'>;
+type WatchClient = Pick<TrafficClient & HazardClient, 'initialize' | 'join' | 'check' | 'resume' | 'unpublished' | 'acknowledge'>;
+type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'join' | 'snapshot' | 'ask' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge' | 'pause'>;
 const trafficMethods = [
-  { name: 'initialize', result: 'value' }, { name: 'check', result: 'value' }, { name: 'resume', result: 'void' },
+  { name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'check', result: 'value' }, { name: 'resume', result: 'void' },
   { name: 'deliver', result: 'void' }, { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof TrafficClient })[];
 const hazardMethods = [
-  { name: 'initialize', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' },
+  { name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'simulate', result: 'void' }, { name: 'check', result: 'value' },
   { name: 'resume', result: 'void' }, { name: 'queued', result: 'value' }, { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof HazardClient })[];
 const shipmentMethods = [
   { name: 'pause', result: 'void' },
-  { name: 'initialize', result: 'value' }, { name: 'snapshot', result: 'value' }, { name: 'ask', result: 'value' }, { name: 'check', result: 'value' },
+  { name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'snapshot', result: 'value' }, { name: 'ask', result: 'value' }, { name: 'check', result: 'value' },
   { name: 'resume', result: 'void' }, { name: 'deliver', result: 'void' }, { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof ShipmentClient })[];
 
@@ -115,20 +115,32 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   /** The seeds ARE each shipment actor's initial state, so the dashboard may show them honestly before the actor is ready. */
   const seedsOf = operations.fleet;
   const revisionKey = (seed: Shipment): string => `${shipKey(seed.id)}:${seed.voyage?.updatedAt ?? 'seed'}`;
-  /** Ready means initialised. The actor's one Relay read (its history) follows in the background through the shared slots, so readiness never waits on it. */
-  const bringUp = (initialize: () => Promise<RelayOutcome<null>>, sync: () => Promise<RelayOutcome<unknown>>) => async (): Promise<boolean> => {
-    if ((await initialize()).status !== 'ok') return false;
-    void relayLimit(sync).catch(() => undefined);
-    return true;
-  };
-  /** The first actor port in registry order creates the workspace channel; every other actor starts after it. */
+  /**
+   * Ready means initialised from local state alone: no Relay call stands between a started workspace and an actor that can hear, decide and
+   * queue. Membership (register, join) and then the actor's one history read follow in the background through the shared slots, with backoff.
+   */
+  const memberTask = (key: string, after: string | undefined, run: () => Promise<RelayOutcome<null>>, join: () => Promise<RelayOutcome<null>>, sync: () => Promise<RelayOutcome<unknown>>): StartupTask => ({
+    key, ...(after ? { after } : {}),
+    run: async () => (await run()).status === 'ok',
+    follow: async () => {
+      if ((await join()).status !== 'ok') return false;
+      void relayLimit(sync).catch(() => undefined);
+      return true;
+    },
+  });
+  /** The first actor port in registry order creates the workspace channel; every other actor joins after it. */
   const tasksOf = (workspaceId: string): readonly StartupTask[] => {
     const creatorWatch = watchesOf(workspaceId)[0];
     const creator = creatorWatch ? cityKey(creatorWatch.city, creatorWatch.element) : undefined;
-    const afterCreator = creator ? { after: creator } : {};
     return [
-      ...watchesOf(workspaceId).map((value, index): StartupTask => ({ key: cityKey(value.city, value.element), ...(index > 0 ? afterCreator : {}), run: bringUp(() => watch(workspaceId, value.city, value.element).initialize(workspaceId, value.city, workspaceKey, index === 0), () => watch(workspaceId, value.city, value.element).check()) })),
-      ...seedsOf(workspaceId).map((seed): StartupTask => ({ key: revisionKey(seed), ...afterCreator, run: bringUp(() => shipment(workspaceId, seed.id).initialize(workspaceId, seed, workspaceKey), () => shipment(workspaceId, seed.id).check()) })),
+      ...watchesOf(workspaceId).map((value, index): StartupTask => {
+        const actor = watch(workspaceId, value.city, value.element);
+        return memberTask(cityKey(value.city, value.element), index > 0 ? creator : undefined, () => actor.initialize(workspaceId, value.city, workspaceKey, index === 0), () => actor.join(workspaceId, workspaceKey, index === 0), () => actor.check());
+      }),
+      ...seedsOf(workspaceId).map((seed): StartupTask => {
+        const actor = shipment(workspaceId, seed.id);
+        return memberTask(revisionKey(seed), creator, () => actor.initialize(workspaceId, seed, workspaceKey), () => actor.join(workspaceId, workspaceKey, false), () => actor.check());
+      }),
     ];
   };
   /**
@@ -209,6 +221,7 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
       relayHealth: { state: relayHealth.failingSince ? 'reconnecting' : 'live', since: relayHealth.failingSince, lastPostAt: relayHealth.lastPostAt },
       ...(recovery.view(workspaceId) ? { recovery: recovery.view(workspaceId) } : {}),
       ...(status.complete ? {} : { startup: { ready: status.ready, total: status.total, ...(queued > 0 ? { queued } : {}) } }),
+      ...(status.joined === status.total ? {} : { relayMembership: { joined: status.joined, total: status.total } }),
     };
     hub.publishDashboard(workspaceId, built);
     return relaySuccess(built);
@@ -260,10 +273,11 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const publishCity = createCoalescer(async key => {
     const [workspaceId, id, element] = key.split('\u0000') as [string, PortId, CityElement];
     const outgoing = await watch(workspaceId, id, element).unpublished();
-    if (!outgoing || outgoing.board.length + outgoing.disruptions.length === 0) return;
+    if (!outgoing?.relay || outgoing.board.length + outgoing.disruptions.length === 0) return;
+    const { relay } = outgoing;
     const sent = await relayLimit(() => transmit(outgoing, {
-      post: message => postBoard(outgoing.relay, message),
-      publish: disruption => attemptRelay(() => publishDisruption(outgoing.relay, disruption), 'Agent Relay publication is unavailable.'),
+      post: message => postBoard(relay, message),
+      publish: disruption => attemptRelay(() => publishDisruption(relay, disruption), 'Agent Relay publication is unavailable.'),
     }));
     noteTransmit(sent);
     await watch(workspaceId, id, element).acknowledge({ board: sent.board, disruptions: sent.disruptions });
@@ -271,8 +285,9 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
   const publishShip = createCoalescer(async key => {
     const [workspaceId, id] = key.split('\u0000') as [string, string];
     const outgoing = await shipment(workspaceId, id).unpublished();
-    if (!outgoing || outgoing.board.length === 0) return;
-    const sent = await relayLimit(() => transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) }));
+    if (!outgoing?.relay || outgoing.board.length === 0) return;
+    const { relay } = outgoing;
+    const sent = await relayLimit(() => transmit(outgoing, { post: message => postBoard(relay, message), publish: () => Promise.resolve(relaySuccess(null)) }));
     noteTransmit(sent);
     await shipment(workspaceId, id).acknowledge(sent.board);
   });
@@ -309,7 +324,9 @@ export async function createMonitoring(options: Readonly<{ dataDir?: string; wor
     clients: actorClients(transport), workspaceKey, bookingsPath: resolve(dataDir, '..', 'bookings.sqlite'), limit: relayLimit,
     meridianStar: workspaceId => shipment(workspaceId, 'gz-1042').snapshot(),
     send: async outgoing => {
-      const sent = await relayLimit(() => transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) }));
+      const { relay } = outgoing;
+      if (!relay) return { board: [], disruptions: [], failure: null };
+      const sent = await relayLimit(() => transmit(outgoing, { post: message => postBoard(relay, message), publish: () => Promise.resolve(relaySuccess(null)) }));
       noteTransmit(sent);
       return sent;
     },

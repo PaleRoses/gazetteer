@@ -25,7 +25,8 @@ export async function flush(
 }
 
 /** What an actor hands the server to write to Relay on its behalf: its identity and everything not yet acknowledged. */
-export type Outgoing<D> = Readonly<{ relay: Readonly<{ token: string; channel: string }>; board: readonly BoardMessage[]; disruptions: readonly D[] }>;
+/** `relay` is null until the actor has joined the channel: nothing is written then, and everything waits in its outbox. */
+export type Outgoing<D> = Readonly<{ relay: Readonly<{ token: string; channel: string }> | null; board: readonly BoardMessage[]; disruptions: readonly D[] }>;
 
 /** What remains after `sent` ids were acknowledged by Relay. */
 export const without = <A extends Readonly<{ id: string }>>(queue: readonly A[], sent: readonly string[]): readonly A[] => queue.filter(item => !sent.includes(item.id));

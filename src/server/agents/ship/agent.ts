@@ -18,11 +18,11 @@ import { demoEnabled, telemetryBinding } from '../../telemetry/simulation';
 import type { Cursor } from '../../relay/cursor';
 import { drainInbox, emptyInbox, mergeInbox, type Inbox } from '../../relay/inbox';
 import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
-import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } from '../../relay/client';
+import type { RelayIdentity } from '../../relay/client';
 import { checkIntervalMs } from '../alarm';
-import { connect } from '../../relay/connect';
+import { joinRelay } from '../../relay/connect';
 
-type ShipmentState = Readonly<{ paused?: boolean; shipment: Shipment; relay: RelayIdentity; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; baseRisk?: Risk; reactions?: Reactions; mind?: string | null; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
+type ShipmentState = Readonly<{ paused?: boolean; shipment: Shipment; relay: RelayIdentity | null; ready: boolean; checkedAt: string | null; assessmentCache?: AssessmentCache; cursor?: Cursor | null; mmsi?: string; telemetry?: TelemetryState; board?: ShipBoardMemory; baseRisk?: Risk; reactions?: Reactions; mind?: string | null; seen?: readonly BoardMessage[]; inbox?: Inbox; synced?: boolean; boardOutbox?: readonly BoardMessage[] }>;
 const assessment = shipMindFromEnv(process.env, query);
 const asker = shipAskerFromEnv(process.env, query);
 export type ShipAnswer = Readonly<{ status: 'answered'; answer: string; cited: readonly string[]; mind: string; session: string | null }> | Readonly<{ status: 'unavailable'; message: string }>;
@@ -61,16 +61,19 @@ export class ShipmentAgent extends Actor {
       this.state = { ...this.state, shipment, assessmentCache: {}, telemetry: undefined, board: undefined, baseRisk: 'on-track', reactions: undefined, mind: null, seen: [], inbox: emptyInbox, boardOutbox: [] };
       await this.scheduleCheck();
     }
-    if (this.state?.ready) return relaySuccess(null);
+    if (this.state) return relaySuccess(null);
     await this.scheduleCheck();
-    if (!this.state) {
-      const registration = await attemptRelay(() => registerParticipant(workspaceKey, this.id, relayChannel(workspaceId)), 'Agent Relay registration is unavailable. Retry initialization.');
-      if (registration.status === 'unavailable') return registration;
-      this.state = { shipment, relay: registration.value, ready: false, checkedAt: null, ...(mmsi ? { mmsi } : {}) };
-    }
-    const connection = await connect(this.state, false);
-    if (connection.status === 'unavailable') return connection;
-    this.state = { ...this.state, ready: true };
+    this.state = { shipment, relay: null, ready: false, checkedAt: null, ...(mmsi ? { mmsi } : {}) };
+    return relaySuccess(null);
+  }
+
+  /** Relay membership, off the readiness path: the server calls this in the background and retries it with backoff. Registered once, remembered at once. */
+  async join(workspaceId: string, workspaceKey: string, createChannel: boolean): Promise<RelayOutcome<null>> {
+    if (!this.state) return { status: 'unavailable', message: 'Not initialized.' };
+    if (this.state.ready) return relaySuccess(null);
+    const member = await joinRelay(this.state, { name: this.id, workspaceId, workspaceKey, createChannel }, relay => { this.state = this.state && { ...this.state, relay }; });
+    if (member.status === 'unavailable') return member;
+    this.state = this.state && { ...this.state, relay: member.value, ready: true };
     return relaySuccess(null);
   }
 
@@ -97,8 +100,8 @@ export class ShipmentAgent extends Actor {
   private async readHistory(start: ShipmentState): Promise<void> {
     if (this.reading || this.history || Date.now() < this.retryAt) return;
     this.reading = true;
-    const connection = await connect(start, false).catch((): RelayOutcome<null> => ({ status: 'unavailable', message: 'Agent Relay channel is unavailable. Monitoring will retry.' }));
-    const read = connection.status === 'unavailable' ? connection : await readChannel(start.relay, start.cursor ?? null).catch((): RelayOutcome<ChannelRead> => ({ status: 'unavailable', message: 'Agent Relay history is unavailable. Monitoring will retry.' }));
+    const member = start.ready ? start.relay : null;
+    const read = !member ? { status: 'unavailable' as const, message: 'Not yet a member of the Relay channel.' } : await readChannel(member, start.cursor ?? null).catch((): RelayOutcome<ChannelRead> => ({ status: 'unavailable', message: 'Agent Relay history is unavailable. Monitoring will retry.' }));
     if (read.status === 'ok') { this.history = read.value; this.failures = 0; this.failure = null; }
     else { this.failures += 1; this.failure = read.message; this.retryAt = Date.now() + Math.min(60_000, 2_000 * 2 ** this.failures); }
     this.reading = false;
@@ -123,7 +126,7 @@ export class ShipmentAgent extends Actor {
 
   /** What this ship has decided to say that Relay has not acknowledged yet; the server echoes it locally and writes it to Relay itself. */
   async unpublished(): Promise<Outgoing<Disruption> | null> {
-    return this.state && !this.state.paused && !this.paused ? { relay: this.state.relay, board: this.state.boardOutbox ?? [], disruptions: [] } : null;
+    return this.state && !this.state.paused && !this.paused ? { relay: this.state.ready ? this.state.relay : null, board: this.state.boardOutbox ?? [], disruptions: [] } : null;
   }
 
   async acknowledge(sent: readonly string[]): Promise<void> {
@@ -134,7 +137,9 @@ export class ShipmentAgent extends Actor {
   async publish(): Promise<RelayOutcome<null>> {
     const outgoing = await this.unpublished();
     if (!outgoing) return { status: 'unavailable', message: 'Port monitoring has not been initialized.' };
-    const sent = await transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) });
+    const { relay } = outgoing;
+    if (!relay) return { status: 'unavailable', message: 'Not yet a member of the Relay channel.' };
+    const sent = await transmit(outgoing, { post: message => postBoard(relay, message), publish: () => Promise.resolve(relaySuccess(null)) });
     await this.acknowledge(sent.board);
     return sent.failure ? { status: 'unavailable', message: sent.failure } : relaySuccess(null);
   }

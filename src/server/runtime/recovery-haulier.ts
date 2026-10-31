@@ -5,10 +5,10 @@ import type { RelayOutcome } from '../../core/types';
 import type { HaulierAgent } from '../agents/haulier/agent';
 
 /** The haulier half of act 2's runtime wiring: how to reach a city's HaulierAgent, bring it up with the world's trucks, and withdraw one. Pure over a client, so the runtime composes it and a test can drive it. */
-export type HaulierClient = Pick<HaulierAgent, 'initialize' | 'withdraw' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
+export type HaulierClient = Pick<HaulierAgent, 'initialize' | 'join' | 'withdraw' | 'check' | 'resume' | 'deliver' | 'unpublished' | 'acknowledge'>;
 
 const haulierMethods = [
-  { name: 'initialize', result: 'value' }, { name: 'withdraw', result: 'value' }, { name: 'check', result: 'value' }, { name: 'resume', result: 'void' },
+  { name: 'initialize', result: 'value' }, { name: 'join', result: 'value' }, { name: 'withdraw', result: 'value' }, { name: 'check', result: 'value' }, { name: 'resume', result: 'void' },
   { name: 'deliver', result: 'void' }, { name: 'unpublished', result: 'value' }, { name: 'acknowledge', result: 'void' },
 ] satisfies readonly (ActorRpcMethod & { name: keyof HaulierClient })[];
 

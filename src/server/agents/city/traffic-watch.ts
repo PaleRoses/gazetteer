@@ -3,15 +3,15 @@ import type { BoardMessage } from '../../../core/board';
 import { portById, type PortId } from '../../../core/ports';
 import { relaySuccess, type Disruption, type RelayOutcome } from '../../../core/types';
 import { postBoard, readBoard } from '../../relay/board';
-import { attemptRelay, registerParticipant, relayChannel, type RelayIdentity } from '../../relay/client';
-import { connect } from '../../relay/connect';
+import type { RelayIdentity } from '../../relay/client';
+import { joinRelay } from '../../relay/connect';
 import { drainInbox, emptyInbox, mergeInbox, type Inbox } from '../../relay/inbox';
 import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
 import { checkIntervalMs } from '../alarm';
 import { emptyTrafficMemory, watchTraffic, type BoardIo, type TrafficMemory } from './traffic';
 
 type TrafficState = Readonly<{
-  city: PortId; relay: RelayIdentity; ready: boolean; memory: TrafficMemory;
+  city: PortId; relay: RelayIdentity | null; ready: boolean; memory: TrafficMemory;
   /** Heard by the server on the Relay stream; `synced` = the actor has read Relay once since it started, so it may live on the inbox alone. */
   inbox: Inbox; synced: boolean;
   /** Decided but not yet acknowledged by Relay: durable, retried in order, and visible to the server at once through unpublished(). */
@@ -37,16 +37,19 @@ export class TrafficWatch extends Actor {
   }
 
   async initialize(workspaceId: string, city: PortId, workspaceKey: string, createChannel: boolean): Promise<RelayOutcome<null>> {
-    if (this.state?.ready) return relaySuccess(null);
+    if (this.state) return relaySuccess(null);
     await this.scheduleCheck();
-    if (!this.state) {
-      const registration = await attemptRelay(() => registerParticipant(workspaceKey, this.id, relayChannel(workspaceId)), 'Agent Relay registration is unavailable. Retry initialization.');
-      if (registration.status === 'unavailable') return registration;
-      this.state = { city, relay: registration.value, ready: false, memory: emptyTrafficMemory, inbox: emptyInbox, synced: false, outbox: [] };
-    }
-    const connection = await connect(this.state, createChannel);
-    if (connection.status === 'unavailable') return connection;
-    this.state = { ...this.state, ready: true };
+    this.state = { city, relay: null, ready: false, memory: emptyTrafficMemory, inbox: emptyInbox, synced: false, outbox: [] };
+    return relaySuccess(null);
+  }
+
+  /** Relay membership, off the readiness path: the server calls this in the background and retries it with backoff. Registered once, remembered at once. */
+  async join(workspaceId: string, workspaceKey: string, createChannel: boolean): Promise<RelayOutcome<null>> {
+    if (!this.state) return { status: 'unavailable', message: 'Not initialized.' };
+    if (this.state.ready) return relaySuccess(null);
+    const member = await joinRelay(this.state, { name: this.id, workspaceId, workspaceKey, createChannel }, relay => { this.state = this.state && { ...this.state, relay }; });
+    if (member.status === 'unavailable') return member;
+    this.state = this.state && { ...this.state, relay: member.value, ready: true };
     return relaySuccess(null);
   }
 
@@ -63,7 +66,7 @@ export class TrafficWatch extends Actor {
     if (!place) return relaySuccess(null);
     const heard = committed.inbox.board;
     // Relay only completes the history; the watch decides from what it holds and what was delivered locally, whatever Relay does.
-    const history = committed.synced ? null : await readBoard(committed.relay, committed.memory.cursor);
+    const history = committed.synced || !committed.ready || !committed.relay ? null : await readBoard(committed.relay, committed.memory.cursor);
     const fromRelay = history?.status === 'ok' ? history.value : null;
     const messages = [...new Map([...(fromRelay?.messages ?? []), ...heard].map(message => [message.id, message] as const)).values()];
     const read: BoardIo['read'] = async () => relaySuccess({ messages, cursor: fromRelay?.cursor ?? committed.memory.cursor });
@@ -79,7 +82,7 @@ export class TrafficWatch extends Actor {
 
   /** What this watch has decided that Relay has not acknowledged yet; the server echoes it at once and writes it to Relay itself. */
   async unpublished(): Promise<Outgoing<Disruption> | null> {
-    return this.state ? { relay: this.state.relay, board: this.state.outbox, disruptions: [] } : null;
+    return this.state ? { relay: this.state.ready ? this.state.relay : null, board: this.state.outbox, disruptions: [] } : null;
   }
 
   /** Relay acknowledged these board posts: they leave the outbox. */
@@ -91,9 +94,9 @@ export class TrafficWatch extends Actor {
   async publish(): Promise<RelayOutcome<null>> {
     const outgoing = await this.unpublished();
     if (!outgoing || !this.state) return { status: 'unavailable', message: 'The traffic watch has not been initialized.' };
-    const connection = await connect(this.state, this.state.city === 'singapore');
-    if (connection.status === 'unavailable') return connection;
-    const sent = await transmit(outgoing, { post: message => postBoard(outgoing.relay, message), publish: () => Promise.resolve(relaySuccess(null)) });
+    const { relay } = outgoing;
+    if (!relay) return { status: 'unavailable', message: 'Not yet a member of the Relay channel.' };
+    const sent = await transmit(outgoing, { post: message => postBoard(relay, message), publish: () => Promise.resolve(relaySuccess(null)) });
     await this.acknowledge({ board: sent.board, disruptions: [] });
     return sent.failure ? { status: 'unavailable', message: sent.failure } : relaySuccess(null);
   }

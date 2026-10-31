@@ -3,7 +3,7 @@ import { parseBoardMessage, type BoardMessage, type TrafficReport, type ShipObse
 import { demoShipments } from '../../../../src/core/demo';
 import { positionAlong, voyageRoute } from '../../../../src/core/routes';
 import type { RelayOutcome } from '../../../../src/core/types';
-import { applyAssessment, type AssessedShipment } from '../../../../src/server/assessment/apply';
+import { applyAssessment, applyFallback, type AssessedShipment } from '../../../../src/server/assessment/apply';
 import { assessNotice } from '../../../../src/server/assessment/assess';
 import type { AssessableNotice } from '../../../../src/server/assessment/exposure';
 import type { Assessment } from '../../../../src/server/assessment/schema';
@@ -58,6 +58,17 @@ describe('ship board decisions', () => {
     expect(cleared.map(item => item.message)).toEqual([expect.objectContaining({ kind: 'ship.observation', id: `obs:cleared:${situation.id}`, signals: [] })]);
     expect(parseBoardMessage(cleared[0]!.message)).toBeDefined();
     expect(decideBoard(apply(remembered, cleared), { shipment: watched, situation: null, now })).toEqual([]);
+  });
+
+  test('an arithmetic fallback is posted as a rule-based assessment that the board accepts, never as a method of its own', () => {
+    const fallback = applyFallback(meridian, notice, 'no model API key configured', now);
+    expect(fallback.assessments?.[0]?.method).toBe('deterministic-fallback');
+    const memory = apply(emptyBoardMemory, decideBoard(emptyBoardMemory, { shipment: meridian, situation: null, now }));
+    const posted = decideBoard(memory, { shipment: fallback, situation: null, now }).map(item => item.message).filter(message => message.kind === 'ship.assessment');
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ method: 'rule-based', confidence: null, citedEvidence: [notice.id], delayHours: { likely: 36 } });
+    expect(parseBoardMessage(posted[0])).toBeDefined();
+    expect(posted[0]!.summary).toContain('Deterministic fallback');
   });
 
   test('a changed risk or ETA posts one assessment and an ETA notice per port ahead, with the right previous ETA', () => {

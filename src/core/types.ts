@@ -36,6 +36,8 @@ export type Dashboard = Readonly<{
   /** Present only while the workspace's actors are still starting; the shipments shown for the rest are their seed state. `queued` counts simulated disruptions waiting for their port actor. */
   startup?: Readonly<{ ready: number; total: number; queued?: number }>;
   /** The board transport, as data: `reconnecting` since T while posts fail, `live` with the last acknowledged post at T. Never a status code. */
+  /** Present while some actors have not yet joined Relay: the on-Relay count, separate from readiness (an actor is ready once it can decide from local state). */
+  relayMembership?: Readonly<{ joined: number; total: number }>;
   relayHealth?: Readonly<{ state: 'live' | 'reconnecting'; since: string | null; lastPostAt: string | null }>;
   /** Act 2: the cargo agent's case and the workspace's reservations; absent until the recovery actors have started. */
   recovery?: RecoveryView;

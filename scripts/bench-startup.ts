@@ -149,9 +149,9 @@ const workspaceKeyOf = (): string => {
 type WatchClient = Pick<TrafficWatch, 'initialize' | 'check' | 'resume'> & Pick<HazardWatch, 'initialize' | 'check' | 'resume'>;
 type ShipmentClient = Pick<ShipmentAgent, 'initialize' | 'check' | 'resume'>;
 /** The split API the server is gaining: initialize without Relay, then adopt an identity registered and joined by the server. */
-type SplitWatch = Readonly<{ initialize(workspaceId: string, portId: PortId): Promise<RelayOutcome<null>>; adopt(identity: RelayIdentity): Promise<RelayOutcome<null>>; check(): Promise<RelayOutcome<unknown>>; resume(): Promise<void> }>;
-type SplitShip = Readonly<{ initialize(workspaceId: string, seed: Shipment): Promise<RelayOutcome<null>>; adopt(identity: RelayIdentity): Promise<RelayOutcome<null>>; check(): Promise<RelayOutcome<unknown>>; resume(): Promise<void> }>;
-const methods = ['initialize', 'check', 'resume', 'adopt'].map((name): ActorRpcMethod => ({ name, result: name === 'resume' ? 'void' : 'value' }));
+type SplitWatch = Readonly<{ initialize(workspaceId: string, portId: PortId): Promise<RelayOutcome<null>>; join(workspaceId: string, workspaceKey: string, createChannel: boolean): Promise<RelayOutcome<null>>; check(): Promise<RelayOutcome<unknown>>; resume(): Promise<void> }>;
+type SplitShip = Readonly<{ initialize(workspaceId: string, seed: Shipment): Promise<RelayOutcome<null>>; join(workspaceId: string, workspaceKey: string, createChannel: boolean): Promise<RelayOutcome<null>>; check(): Promise<RelayOutcome<unknown>>; resume(): Promise<void> }>;
+const methods = ['initialize', 'check', 'resume', 'join'].map((name): ActorRpcMethod => ({ name, result: name === 'resume' ? 'void' : 'value' }));
 
 type Spec = Readonly<{ index: number; kind: 'watch' | 'ship'; element: 'traffic' | 'hazards'; key: string; name: string; portId: PortId; seed: Shipment }>;
 /** Roughly one city watch to three ships, the watches alternating between the traffic and hazard element; actor 0 is Singapore's traffic watch, which creates the channel. */
@@ -205,7 +205,7 @@ async function execute(run: Run, root: string, key: string): Promise<Result> {
     const cold = { coldFirstMs: [firstWatch.ms, firstShip.ms] as const, coldBurstMs: burst.ms, warmMs: warm.ms };
 
     if (run.mode === 'after') {
-      const present = await probeWatch().adopt({ token: 'probe', channel }).then(() => true, () => false);
+      const present = await probeWatch().join(workspaceId, key, false).then(() => true, () => false);
       if (!present) {
         return { run, skipped: 'after mode: API not present', runtimeStartMs: started.ms, ...cold, readyMs: Number.NaN, syncDoneMs: Number.NaN, records: [], initQueue: [], syncQueue: [], hits: [], alarmNoise: 0, failures: 0 };
       }
@@ -282,14 +282,12 @@ async function execute(run: Run, root: string, key: string): Promise<Result> {
     const creatorJoined = deferred();
     const attach = async (spec: Spec): Promise<void> => {
       const record = recordOf(spec);
-      const registered = await relayLimit(() => timed(() => registerParticipant(key, spec.name, channel)));
-      record.registerMs = registered.ms;
       if (spec.index > 0) await creatorJoined.promise;
-      const joined = await relayLimit(() => timed(() => joinChannel(registered.value, spec.index === 0)));
-      record.joinMs = joined.ms;
-      if (spec.index === 0) creatorJoined.resolve();
       const client = spec.kind === 'watch' ? watch<SplitWatch>(spec) : ship<SplitWatch>(spec.name);
-      await client.adopt(registered.value);
+      const joined = await relayLimit(() => timed(() => client.join(workspaceId, key, spec.index === 0)));
+      record.joinMs = joined.ms;
+      if (joined.value.status !== 'ok') throw new Error(joined.value.message);
+      if (spec.index === 0) creatorJoined.resolve();
       record.attachedAt = now();
       await sync(spec, () => client.check());
     };

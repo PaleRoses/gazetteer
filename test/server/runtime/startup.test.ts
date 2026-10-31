@@ -42,10 +42,10 @@ describe('createStartup', () => {
     const started = Date.now();
     startup.ensure('w');
     expect(Date.now() - started).toBeLessThan(20);
-    expect(startup.status('w')).toEqual({ ready: 0, total: 4, complete: false });
+    expect(startup.status('w')).toMatchObject({ ready: 0, total: 4, complete: false });
     releases.get('a')?.();
     await settled(() => startup.isReady('w', 'a'));
-    expect(startup.status('w')).toEqual({ ready: 1, total: 4, complete: false });
+    expect(startup.status('w')).toMatchObject({ ready: 1, total: 4, complete: false });
     await settled(() => releases.has('d'));
     ['b', 'c', 'd'].forEach(key => releases.get(key)?.());
     await settled(() => startup.status('w').complete);
@@ -55,24 +55,34 @@ describe('createStartup', () => {
   test('concurrency across tasks and workspaces never exceeds the shared cap', async () => {
     let active = 0;
     let peak = 0;
-    const task = (key: string): StartupTask => ({ key, run: async () => { active += 1; peak = Math.max(peak, active); await pause(3); active -= 1; return true; } });
+    const task = (key: string): StartupTask => ({ key, run: async () => true, follow: async () => { active += 1; peak = Math.max(peak, active); await pause(3); active -= 1; return true; } });
     const startup = createStartup({ tasksOf: () => ['1', '2', '3', '4', '5', '6', '7', '8'].map(task), limit: createLimiter(3), sleep: noWait });
     startup.ensure('w1'); startup.ensure('w2');
     await settled(() => startup.status('w1').complete && startup.status('w2').complete);
     expect(peak).toBe(3);
   });
 
-  test('joiners wait for the channel creator and never start before it is ready', async () => {
+  test('joiners wait for the channel creator\'s membership, which is retried until it succeeds, while every actor is ready at once', async () => {
     const order: string[] = [];
     let creatorAttempts = 0;
     const tasks: readonly StartupTask[] = [
-      { key: 'creator', run: async () => { creatorAttempts += 1; order.push(`creator#${creatorAttempts}`); return creatorAttempts > 1; } },
-      { key: 'joiner', after: 'creator', run: async () => { order.push('joiner'); return true; } },
+      { key: 'creator', run: async () => true, follow: async () => { creatorAttempts += 1; order.push(`creator#${creatorAttempts}`); return creatorAttempts > 1; } },
+      { key: 'joiner', after: 'creator', run: async () => true, follow: async () => { order.push('joiner'); return true; } },
     ];
     const startup = createStartup({ tasksOf: () => tasks, limit: createLimiter(3), sleep: noWait });
     startup.ensure('w');
     await settled(() => startup.status('w').complete);
+    expect(startup.status('w')).toMatchObject({ ready: 2, total: 2 });
+    await settled(() => startup.status('w').joined === 2);
     expect(order).toEqual(['creator#1', 'creator#2', 'joiner']);
+  });
+
+  test('readiness never waits on Relay: with every membership failing, all actors are ready and none has joined', async () => {
+    const tasks: readonly StartupTask[] = ['a', 'b', 'c'].map(key => ({ key, run: async () => true, follow: async () => false }));
+    const startup = createStartup({ tasksOf: () => tasks, limit: createLimiter(3), sleep: () => new Promise<void>(() => undefined) });
+    startup.ensure('w');
+    await settled(() => startup.status('w').complete);
+    expect(startup.status('w')).toMatchObject({ ready: 3, joined: 0, total: 3, complete: true });
   });
 
   test('a failing actor is retried with growing, capped backoff until it succeeds, and throws count as failures', async () => {
@@ -117,6 +127,6 @@ test('new fleet actors and revised voyages join an already started workspace wit
   await settled(() => startup.status('fleet').complete);
   expect(runs).toEqual(['port', 'ship:v1', 'ship:v2', 'new-ship']);
   expect(startup.isReady('fleet', 'new-ship')).toBe(true);
-  expect(startup.status('fleet')).toEqual({ ready: 3, total: 3, complete: true });
+  expect(startup.status('fleet')).toMatchObject({ ready: 3, total: 3, complete: true });
   startup.close();
 });

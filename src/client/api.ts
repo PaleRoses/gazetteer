@@ -30,11 +30,13 @@ const intelligenceSchema = z.object({
   diversions: z.array(z.object({ id: z.string(), shipmentId: z.string(), name: z.string(), replaces: portId, coordinates: coordinate, reason: z.string(), constraint: z.string() })),
   checkedAt: z.string(), unavailableProviders: z.array(z.string()), sourcesEnabled: z.boolean(),
 });
+/** A post that breaks the board protocol is dropped by itself; it never takes the fleet, the ports or the other posts down with it. */
+const boardPosts = z.array(z.unknown()).transform(items => items.flatMap(item => { const parsed = boardMessage.safeParse(item); return parsed.success ? [parsed.data] : []; }));
 export const dashboardSchema: z.ZodType<Dashboard> = z.object({
   shipments: z.array(shipment),
   ports: z.array(z.object({ id: portId, name: z.string(), country: z.string(), coordinates: coordinate })),
   updatedAt: z.string(), mode: z.enum(['simulation', 'mixed']), runtime: z.string(), relay: z.string(),
-  portStatus: z.array(portStatus).optional(), board: z.array(boardMessage).optional(),
+  portStatus: z.array(portStatus).optional(), board: boardPosts.optional(),
   relayHealth: z.object({ state: z.enum(['live', 'reconnecting']), since: z.string().nullable(), lastPostAt: z.string().nullable() }).optional(),
   startup: z.object({ ready: z.number(), total: z.number(), queued: z.number().optional() }).optional(),
   operations: operationsSchema.optional(), intelligence: intelligenceSchema.optional(),
