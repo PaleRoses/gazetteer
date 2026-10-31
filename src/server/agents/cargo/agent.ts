@@ -9,11 +9,12 @@ import { connect } from '../../relay/connect';
 import { drainInbox, emptyInbox, mergeInbox, type Inbox } from '../../relay/inbox';
 import { enqueue, transmit, without, type Outgoing } from '../../relay/outbox';
 import { checkIntervalMs } from '../alarm';
-import { hear, negotiate, openCase, reconcile, settle, type Booking, type CaseState } from './negotiate.js';
+import { cycle, executeOn } from './cycle.js';
+import { hear, openCase, reconcile, type Booking, type CaseState } from './negotiate.js';
 
 type CargoState = Readonly<{
   workspaceId: string; relay: RelayIdentity; ready: boolean;
-  /** The ledger file, given by the server at initialization; the cargo agent only reads it, the providers write it. */
+  /** The ledger file, given by the server at initialization; the cargo agent writes its holds, confirms and releases there. */
   bookingsPath: string;
   /** The commitments and the whole case: durable, so a restarted agent resumes mid-negotiation and re-decides the same ids and keys. */
   recovery: CaseState;
@@ -27,9 +28,10 @@ const ledgers = new Map<string, Bookings>();
 const ledgerAt = (path: string): Bookings => ledgers.get(path) ?? (() => { const opened = createBookings(path); ledgers.set(path, opened); return opened; })();
 const isRecovery = (message: BoardMessage): message is RecoveryMessage => recoveryMessage.safeParse(message).success;
 
+
 /**
  * The refrigerated container's own agent: it remembers its commitments and negotiates its recovery on the board. Deterministic and labelled
- * rule-based; the providers write the ledger when they hear its holds, confirms and releases, and it reads the ledger back as the truth.
+ * rule-based. It owns the ledger writes (hold, confirm, release by caseId:offerId) and reads the ledger back each cycle as the truth.
  */
 export class CargoAgent extends Actor {
   @Persisted private state: CargoState | null = null;
@@ -82,12 +84,10 @@ export class CargoAgent extends Actor {
     const messages = [...new Map([...read.value.messages, ...heard].map(message => [message.id, message] as const)).values()].filter(isRecovery);
     const ledger = ledgerAt(committed.bookingsPath);
     const known = reconcile(hear(committed.recovery, messages), key => ledger.find(key)?.status);
-    const now = new Date().toISOString();
-    const decided = negotiate(known, now);
-    const settled = settle(decided.state, decided.actions, now);
+    const done = cycle(known, new Date().toISOString(), executeOn(ledger, committed.workspaceId, this.id));
     const latest = this.state ?? committed;
     this.state = {
-      ...latest, recovery: settled.state, outbox: enqueue(latest.outbox, [...decided.messages, ...settled.messages]), synced: true,
+      ...latest, recovery: done.state, outbox: enqueue(latest.outbox, done.messages), synced: true,
       inbox: drainInbox(latest.inbox, { board: heard, disruptions: [] }),
     };
     return relaySuccess(null);
