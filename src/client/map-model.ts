@@ -49,13 +49,17 @@ export const portFeatures = (ports: Dashboard['ports'], statuses?: Dashboard['po
 const line = (id: string, coordinates: Route, risk?: Shipment['risk']): Feature<LineString> => ({ type: 'Feature', properties: { id, ...(risk === undefined ? {} : { risk }) }, geometry: { type: 'LineString', coordinates: coordinates.map(point => [...point]) } });
 const collection = (features: readonly Feature<LineString>[]): FeatureCollection<LineString> => ({ type: 'FeatureCollection', features: [...features] });
 
-export type RouteLayers = Readonly<{ sailed: FeatureCollection<LineString>; ahead: FeatureCollection<LineString> }>;
+export type RouteLayers = Readonly<{ lanes: FeatureCollection<LineString>; sailed: FeatureCollection<LineString>; ahead: FeatureCollection<LineString> }>;
 
-/** Only the selected voyage is drawn, split at the ship into the sailed and the remaining legs. */
+/** Every other ship shows the voyage still ahead of it, tagged with its risk; the selected voyage is split at the ship into its sailed and remaining legs. */
 export const routeLayers = (views: readonly VesselView[], selectedId: string | undefined): RouteLayers => {
   const selected = views.find(view => view.id === selectedId);
   const split = selected && splitAt(selected.route, selected.progress);
   return {
+    lanes: collection(views.flatMap(view => {
+      const ahead = view.id === selectedId ? [] : splitAt(view.route, view.progress).ahead;
+      return ahead.length > 1 ? [line(view.id, ahead, view.risk)] : [];
+    })),
     sailed: collection(selected && split ? [line(selected.id, split.sailed, selected.risk)] : []),
     ahead: collection(selected && split ? [line(selected.id, split.ahead, selected.risk)] : []),
   };

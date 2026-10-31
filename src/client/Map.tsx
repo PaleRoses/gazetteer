@@ -8,7 +8,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type { Dashboard, Diversion, MonitoredRoute, Port, Shipment } from '../core/types';
 import type { LngLat } from '../core/routes';
 import { boundsOf, cameraFor, fleetPorts, globeZoom, portFeatures, regions, routeLayers, statusLine, vesselViews, type Bounds, type Region } from './map-model';
-import { PixelShip, RiskMark } from './sprites';
+import { PixelShip, riskColour, RiskMark, selectionColour } from './sprites';
 import './styles/map.css';
 import { riskLabel, shipmentBrief } from './brief';
 import { WarningDetails } from './WarningDetails';
@@ -22,7 +22,7 @@ type MapLibre = typeof import('maplibre-gl');
 type Runtime = Readonly<{ lib: MapLibre; map: MapLibreMap }>;
 type Selection = Readonly<{ dashboard: Dashboard | null; selected: Shipment | undefined; focusId: string | null; onSelect: (id: string) => void; onOpen: () => void; onDismiss: () => void; onClear: () => void; showPopup: boolean; inspected: Diversion | null; corridor?: MonitoredRoute; routeMode?: boolean; onRoute: (id: string) => void }>;
 type Projection = 'mercator' | 'globe';
-const COLOURS = { ocean: '#0b0b0b', land: '#2a2a2a', coast: '#3a3a3a', route: '#5fe3c0', corridor: '#d8d8d8', alternative: '#b9a7d6' } as const;
+const COLOURS = { ocean: '#0b0b0b', land: '#2a2a2a', coast: '#4a4a4a', corridor: '#d8d8d8', alternative: '#b9a7d6' } as const;
 const FRAME_PADDING = { top: 90, bottom: 75, left: 70, right: 70 } as const;
 const WORLD = regions[0];
 const style = (origin: string): StyleSpecification => ({
@@ -31,12 +31,13 @@ const style = (origin: string): StyleSpecification => ({
   layers: [
     { id: 'ocean', type: 'background', paint: { 'background-color': COLOURS.ocean } },
     { id: 'land', type: 'fill', source: 'land', paint: { 'fill-color': COLOURS.land } },
-    { id: 'coast', type: 'line', source: 'land', paint: { 'line-color': COLOURS.coast, 'line-width': 0.8 } },
+    { id: 'coast', type: 'line', source: 'land', layout: { 'line-join': 'round' }, paint: { 'line-color': COLOURS.coast, 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.7, 4, 1.1, 9, 1.8] } },
     { id: 'corridors', type: 'line', source: 'corridors', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.corridor, 'line-width': 5, 'line-opacity': 0.3 } },
     { id: 'corridor-hit', type: 'line', source: 'corridors', paint: { 'line-color': COLOURS.corridor, 'line-width': 24, 'line-opacity': 0.01 } },
     { id: 'alternative', type: 'line', source: 'alternative', paint: { 'line-color': COLOURS.alternative, 'line-width': 2, 'line-dasharray': [3, 3] } },
-    { id: 'sailed', type: 'line', source: 'sailed', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 2, 'line-dasharray': [0.1, 2.6], 'line-opacity': 0.45 } },
-    { id: 'ahead', type: 'line', source: 'ahead', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': COLOURS.route, 'line-width': 2.4, 'line-dasharray': [0.1, 2.4], 'line-opacity': 0.95 } },
+    { id: 'lanes', type: 'line', source: 'lanes', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['match', ['get', 'risk'], 'delayed', riskColour.delayed, 'watch', riskColour.watch, riskColour['on-track']], 'line-width': 1.3, 'line-dasharray': [2, 3], 'line-opacity': 0.32 } },
+    { id: 'sailed', type: 'line', source: 'sailed', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': selectionColour, 'line-width': 2, 'line-dasharray': [0.1, 2.6], 'line-opacity': 0.45 } },
+    { id: 'ahead', type: 'line', source: 'ahead', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': selectionColour, 'line-width': 2.4, 'line-dasharray': [0.1, 2.4], 'line-opacity': 0.95 } },
   ],
 });
 
@@ -111,7 +112,7 @@ export function ShipmentMap(props: Selection) {
       if (disposed) return;
       lib.setWorkerUrl(workerUrl);
       const base = style(window.location.origin);
-      const map = new lib.Map({ container: host, style: { ...base, sources: { ...base.sources, sailed: { type: 'geojson', data: empty }, ahead: { type: 'geojson', data: empty }, corridors: { type: 'geojson', data: empty }, alternative: { type: 'geojson', data: empty } } }, center: [15, 18], zoom: 0.8, minZoom: 0, maxZoom: 9, attributionControl: false, dragRotate: false, pitchWithRotate: false });
+      const map = new lib.Map({ container: host, style: { ...base, sources: { ...base.sources, lanes: { type: 'geojson', data: empty }, sailed: { type: 'geojson', data: empty }, ahead: { type: 'geojson', data: empty }, corridors: { type: 'geojson', data: empty }, alternative: { type: 'geojson', data: empty } } }, center: [15, 18], zoom: 0.8, minZoom: 0, maxZoom: 9, attributionControl: false, dragRotate: false, pitchWithRotate: false });
       created = map;
       const updatePortLabels = () => host.classList.toggle('port-labels-visible', map.getZoom() >= 4);
       updatePortLabels();
@@ -146,7 +147,7 @@ export function ShipmentMap(props: Selection) {
     const current = ready();
     if (!current) return;
     const layers = routeLayers(views(), props.selected?.id);
-    setFeatures(current.map, 'sailed', layers.sailed); setFeatures(current.map, 'ahead', layers.ahead);
+    setFeatures(current.map, 'lanes', layers.lanes); setFeatures(current.map, 'sailed', layers.sailed); setFeatures(current.map, 'ahead', layers.ahead);
   });
   createEffect(() => {
     const current = ready();

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { demoShipments } from '../../src/core/demo';
 import { ports } from '../../src/core/ports';
 import type { PortBulletin, PortStatus, TrafficReport } from '../../src/core/board';
-import { distanceKm, routeLengthKm, voyageRoute } from '../../src/core/routes';
+import { distanceKm, routeLengthKm, splitAt, voyageRoute } from '../../src/core/routes';
 import { boundsOf, cameraFor, fleetPorts, globeZoom, regions, portFeatures, routeLayers, statusLine, vesselView, vesselViews } from '../../src/client/map-model';
 
 const now = new Date('2026-10-31T12:00:00Z');
@@ -106,10 +106,17 @@ describe('route layers', () => {
     expect(need(ahead[ahead.length - 1])).toEqual([...need(need(views.find(view => view.id === 'gz-1043')).route.at(-1))]);
   });
 
-  test('with nothing selected no voyage is drawn', () => {
-    const layers = routeLayers(views, undefined);
-    expect(layers.sailed.features).toEqual([]);
-    expect(layers.ahead.features).toEqual([]);
+  test('every other ship keeps its remaining voyage in its risk, starting at the ship; the selected one is only in the split overlay', () => {
+    const lanes = routeLayers(views, 'gz-1043').lanes.features;
+    expect(lanes.some(feature => feature.properties?.id === 'gz-1043')).toBe(false);
+    const other = need(lanes[0]);
+    const view = need(views.find(value => value.id === other.properties?.id));
+    expect(other.properties?.risk).toBe(view.risk);
+    expect(other.geometry.coordinates[0]).toEqual([...need(splitAt(view.route, view.progress).ahead[0])]);
+    const unselected = routeLayers(views, undefined);
+    expect(unselected.lanes.features.some(feature => feature.properties?.id === 'gz-1043')).toBe(true);
+    expect(unselected.sailed.features).toEqual([]);
+    expect(unselected.ahead.features).toEqual([]);
   });
 });
 
